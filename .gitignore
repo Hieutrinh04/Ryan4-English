@@ -38,3 +38,12 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+
+# dev server logs & build artifacts
+.dev-server.*.log
+tsconfig.tsbuildinfo
+*.tar.gz
+
+# scratch dirs
+/tmp/
+/.tmp_xlsx/

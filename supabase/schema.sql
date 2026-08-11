@@ -3,7 +3,8 @@ create extension if not exists "pgcrypto";
 create table public.words (
   id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade,
   term text not null, part_of_speech text, ipa text, meaning_vi text not null, definition_en text,
-  example text not null, example_cloze text not null, topic text, source text, note text, is_starred boolean not null default false,
+  example text not null, example_vi text, example_cloze text not null, topic text, source text, note text, is_starred boolean not null default false,
+  study_day int check (study_day between 0 and 6),
   deleted_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
 create unique index words_user_term_active_idx on public.words(user_id, lower(term)) where deleted_at is null;
@@ -41,3 +42,7 @@ create policy "users own words" on public.words for all using (auth.uid() = user
 create policy "users own word states" on public.word_states for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "users own review logs" on public.review_logs for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "users own daily stats" on public.daily_stats for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Migration cho database đã tạo trước đó (chạy một lần, an toàn nếu lặp lại):
+-- alter table public.words add column if not exists example_vi text;
+-- alter table public.words add column if not exists study_day int check (study_day between 0 and 6);
