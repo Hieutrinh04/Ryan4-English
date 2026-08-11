@@ -1892,96 +1892,263 @@ function FlashcardsMode({ words, setMode, toggleStar }: { words: WordCard[]; set
   );
 }
 
-// Chế độ Học: mỗi từ đi qua hai bậc — chọn đáp án đúng rồi tự gõ lại — mới tính là thuộc.
+// Chế độ Học kiểu Quizlet: chia vòng, mỗi vòng vài từ, hỏi từ trắc nghiệm lên tự gõ,
+// sai thì hỏi lại trong cùng vòng, có màn chốt vòng và tiến trình lưu lại giữa các lần mở.
+const learnProgressKey = "lexilo:learn:v1";
+const roundSize = 7;
+type LearnDirection = "vi_en" | "en_vi" | "both";
+function readLearnProgress(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(learnProgressKey);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function writeLearnProgress(levels: Record<string, number>) {
+  try {
+    localStorage.setItem(learnProgressKey, JSON.stringify(levels));
+  } catch {
+    // Bỏ qua khi trình duyệt chặn.
+  }
+}
+
 function LearnMode({ words, setMode }: { words: WordCard[]; setMode: (m: PracticeMode) => void }) {
-  const pool = useMemo(() => words.slice(0, 40), [words]);
-  const [levels, setLevels] = useState<Record<string, number>>(() => Object.fromEntries(pool.map((word) => [word.id, 0])));
-  const [queue, setQueue] = useState<string[]>(() => pool.map((word) => word.id));
+  const [starredOnly, setStarredOnly] = useState(false);
+  const [direction, setDirection] = useState<LearnDirection>("vi_en");
+  const [showSettings, setShowSettings] = useState(false);
+  const [levels, setLevels] = useState<Record<string, number>>(() => (typeof window === "undefined" ? {} : readLearnProgress()));
+  const [queue, setQueue] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    const stored = readLearnProgress();
+    return words.filter((word) => (stored[word.id] ?? 0) < 2).slice(0, roundSize).map((word) => word.id);
+  });
+  const [roundLog, setRoundLog] = useState<{ id: string; correct: boolean }[]>([]);
+  const [phase, setPhase] = useState<"question" | "checkpoint">("question");
+  const [round, setRound] = useState(1);
   const [typed, setTyped] = useState("");
-  const [feedback, setFeedback] = useState<{ correct: boolean } | null>(null);
+  const [feedback, setFeedback] = useState<{ correct: boolean; expected: string } | null>(null);
   const [asked, setAsked] = useState(0);
+
+  const pool = useMemo(() => words.filter((word) => !starredOnly || word.starred), [words, starredOnly]);
   const byId = useMemo(() => new Map(pool.map((word) => [word.id, word])), [pool]);
-  const current = queue.length ? byId.get(queue[0]) : undefined;
+
+  useEffect(() => {
+    writeLearnProgress(levels);
+  }, [levels]);
+
+  const remaining = useMemo(() => pool.filter((word) => (levels[word.id] ?? 0) < 2), [pool, levels]);
+  const mastered = pool.length - remaining.length;
+
+  // Nạp vòng kế tiếp một cách tường minh, không dựa vào effect.
+  function loadRound(nextLevels = levels, nextPool = pool) {
+    setQueue(
+      nextPool
+        .filter((word) => (nextLevels[word.id] ?? 0) < 2)
+        .slice(0, roundSize)
+        .map((word) => word.id),
+    );
+    setRoundLog([]);
+    setPhase("question");
+    setFeedback(null);
+    setTyped("");
+  }
+
+  // Hàng đợi có thể chứa id không còn trong pool sau khi đổi tuỳ chọn.
+  const activeQueue = queue.filter((id) => byId.has(id));
+  const current = activeQueue.length ? byId.get(activeQueue[0]) : undefined;
   const level = current ? (levels[current.id] ?? 0) : 0;
-  const options = useMemo(() => (current && level === 0 ? seededOrder([current, ...pickDistractors(pool, current, asked)], asked) : []), [current, level, pool, asked]);
-  const mastered = pool.filter((word) => (levels[word.id] ?? 0) >= 2).length;
+  // "Trộn" đảo chiều theo từng câu để không đoán được kiểu hỏi.
+  const askViToEn = direction === "vi_en" || (direction === "both" && asked % 2 === 0);
+  const prompt = current ? (askViToEn ? current.meaning : current.term) : "";
+  const expected = current ? (askViToEn ? current.term : current.meaning) : "";
+  const options = useMemo(() => {
+    if (!current || level !== 0) return [];
+    return seededOrder([current, ...pickDistractors(pool, current, asked)], asked);
+  }, [current, level, pool, asked]);
 
   function answer(correct: boolean) {
     if (!current || feedback) return;
-    setFeedback({ correct });
+    setFeedback({ correct, expected });
     setLevels((previous) => ({ ...previous, [current.id]: correct ? Math.min(2, (previous[current.id] ?? 0) + 1) : 0 }));
+    setRoundLog((log) => [...log, { id: current.id, correct }]);
   }
   function advance() {
     if (!current) return;
-    const nextLevel = levels[current.id] ?? 0;
-    // Thuộc rồi thì bỏ khỏi hàng đợi, chưa thuộc thì đẩy xuống cuối để gặp lại.
-    setQueue((previous) => (nextLevel >= 2 ? previous.slice(1) : [...previous.slice(1), previous[0]]));
+    const answeredRight = feedback?.correct ?? false;
+    const stillLearning = (levels[current.id] ?? 0) < 2;
+    const rest = activeQueue.slice(1);
+    // Sai thì gặp lại ngay trong vòng này; đúng nhưng chưa lên bậc 2 thì để cuối vòng.
+    const next = !answeredRight ? [...rest.slice(0, 2), activeQueue[0], ...rest.slice(2)] : stillLearning ? [...rest, activeQueue[0]] : rest;
+    setQueue(next);
     setTyped("");
     setFeedback(null);
     setAsked((value) => value + 1);
-  }
-  function restart() {
-    setLevels(Object.fromEntries(pool.map((word) => [word.id, 0])));
-    setQueue(pool.map((word) => word.id));
-    setTyped("");
-    setFeedback(null);
-    setAsked(0);
+    if (!next.length) setPhase("checkpoint");
   }
 
-  if (!current)
+  function resetAll() {
+    const cleared = {};
+    setLevels(cleared);
+    setRound(1);
+    setAsked(0);
+    loadRound(cleared, pool);
+  }
+
+  const settingsPanel = showSettings && (
+    <div className="learn-settings">
+      <label>
+        Hướng hỏi
+        <select value={direction} onChange={(event) => setDirection(event.target.value as LearnDirection)}>
+          <option value="vi_en">Việt → Anh</option>
+          <option value="en_vi">Anh → Việt</option>
+          <option value="both">Trộn hai chiều</option>
+        </select>
+      </label>
+      <label className="learn-check">
+        <input
+          type="checkbox"
+          checked={starredOnly}
+          onChange={(event) => {
+            const next = event.target.checked;
+            setStarredOnly(next);
+            setRound(1);
+            loadRound(levels, words.filter((word) => !next || word.starred));
+          }}
+        />
+        Chỉ học từ đã gắn sao
+      </label>
+      <button onClick={resetAll}>Xoá tiến trình đã học</button>
+    </div>
+  );
+
+  if (!pool.length)
+    return (
+      <div className="page practice-session">
+        <PracticeModeBar mode="learn" setMode={setMode} />
+        <div className="panel practice-card">
+          <h2>Chưa có từ nào để học</h2>
+          <p className="page-sub">{starredOnly ? "Không có từ nào được gắn sao." : "Hãy thêm từ vựng trước."}</p>
+          {starredOnly && (
+            <button className="primary" onClick={() => setStarredOnly(false)}>
+              Học tất cả từ
+            </button>
+          )}
+        </div>
+      </div>
+    );
+
+  if (!remaining.length)
     return (
       <div className="page practice-session">
         <PracticeModeBar mode="learn" setMode={setMode} />
         <div className="panel practice-card">
           <span className="summary-mark">✓</span>
-          <h2>Đã thuộc hết {pool.length} từ</h2>
-          <p className="page-sub">Bạn đã trả lời đúng cả hai bậc cho mọi từ trong lượt học này.</p>
+          <h2>Đã thuộc cả {pool.length} từ</h2>
+          <p className="page-sub">Mỗi từ đều đã trả lời đúng ở cả hai bậc.</p>
           <div className="summary-actions">
-            <button onClick={() => setMode("menu")}>Chọn chế độ khác</button>
-            <button className="primary" onClick={restart}>
-              Học lại
+            <button onClick={() => setMode("test")}>Làm bài kiểm tra</button>
+            <button className="primary" onClick={resetAll}>
+              Học lại từ đầu
             </button>
           </div>
         </div>
       </div>
     );
 
+  if (phase === "checkpoint") {
+    const dung = roundLog.filter((entry) => entry.correct).length;
+    const sai = roundLog.filter((entry) => !entry.correct);
+    return (
+      <div className="page practice-session">
+        <PracticeModeBar mode="learn" setMode={setMode} />
+        <div className="panel practice-card checkpoint">
+          <span className="eyebrow">CHỐT VÒNG {round}</span>
+          <h2>
+            {dung} đúng · {sai.length} cần ôn lại
+          </h2>
+          <div className="learn-progress-line">
+            <i style={{ width: `${(mastered / pool.length) * 100}%` }} />
+          </div>
+          <p className="page-sub">
+            Đã thuộc {mastered}/{pool.length} từ
+          </p>
+          {!!sai.length && (
+            <ul className="checkpoint-list">
+              {[...new Set(sai.map((entry) => entry.id))].map((id) => {
+                const word = byId.get(id);
+                return word ? (
+                  <li key={id}>
+                    <b>{word.term}</b>
+                    <span>{word.meaning}</span>
+                  </li>
+                ) : null;
+              })}
+            </ul>
+          )}
+          <button
+            className="primary"
+            onClick={() => {
+              setRound((value) => value + 1);
+              loadRound();
+            }}
+          >
+            Tiếp tục vòng {round + 1} →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!current) return null;
+
   return (
     <div className="page practice-session">
       <PracticeModeBar mode="learn" setMode={setMode} />
-      <div className="learn-progress">
+      <div className="learn-head">
         <span>
-          Đã thuộc <b>{mastered}</b>/{pool.length}
+          Vòng {round} · còn {queue.length} thẻ
         </span>
-        <i style={{ width: `${(mastered / pool.length) * 100}%` }} />
-        <span>Còn {queue.length} thẻ trong lượt</span>
+        <div className="learn-progress-line">
+          <i style={{ width: `${(mastered / pool.length) * 100}%` }} />
+        </div>
+        <span>
+          Đã thuộc {mastered}/{pool.length}
+        </span>
+        <button className="settings-button" onClick={() => setShowSettings((value) => !value)}>
+          ⚙ Tuỳ chọn
+        </button>
       </div>
+      {settingsPanel}
       <div className="panel practice-card">
-        <span className="learn-label">{level === 0 ? "BẬC 1 · CHỌN ĐÁP ÁN" : "BẬC 2 · TỰ GÕ LẠI"}</span>
-        <h2>{current.meaning}</h2>
+        <span className="learn-label">
+          {level === 0 ? "BẬC 1 · CHỌN ĐÁP ÁN" : "BẬC 2 · TỰ GÕ LẠI"} · {askViToEn ? "VIỆT → ANH" : "ANH → VIỆT"}
+        </span>
+        <h2>{prompt}</h2>
         {level === 0 ? (
           <div className="choice-grid">
             {options.map((option) => (
               <button key={option.id} disabled={!!feedback} className={feedback && option.id === current.id ? "is-answer" : ""} onClick={() => answer(option.id === current.id)}>
-                {option.term}
+                {askViToEn ? option.term : option.meaning}
               </button>
             ))}
           </div>
         ) : (
           <>
-            <p className="learn-cloze">{current.cloze}</p>
+            {askViToEn && <p className="learn-cloze">{current.cloze}</p>}
             <input
               className="listen-input"
               value={typed}
               disabled={!!feedback}
               onChange={(event) => setTyped(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && typed.trim()) answer(normalizeAnswer(typed) === normalizeAnswer(current.term));
+                if (event.key === "Enter" && typed.trim()) answer(normalizeAnswer(typed) === normalizeAnswer(expected));
               }}
-              placeholder="Nhập từ tiếng Anh…"
+              placeholder={askViToEn ? "Nhập từ tiếng Anh…" : "Nhập nghĩa tiếng Việt…"}
             />
             {!feedback && (
-              <button className="primary" disabled={!typed.trim()} onClick={() => answer(normalizeAnswer(typed) === normalizeAnswer(current.term))}>
+              <button className="primary" disabled={!typed.trim()} onClick={() => answer(normalizeAnswer(typed) === normalizeAnswer(expected))}>
                 Kiểm tra
               </button>
             )}
@@ -1990,7 +2157,7 @@ function LearnMode({ words, setMode }: { words: WordCard[]; setMode: (m: Practic
         {feedback && (
           <div className={feedback.correct ? "practice-result good" : "practice-result"}>
             <span>
-              {feedback.correct ? "Đúng rồi!" : `Đáp án: ${current.term}`}
+              {feedback.correct ? "Đúng rồi!" : `Đáp án: ${feedback.expected}`}
               {!feedback.correct && <small className="learn-hint"> · {current.example}</small>}
             </span>
             <button onClick={advance}>Tiếp →</button>
@@ -2001,72 +2168,130 @@ function LearnMode({ words, setMode }: { words: WordCard[]; setMode: (m: Practic
   );
 }
 
-type TestQuestion = { kind: "mc" | "written" | "tf"; word: WordCard; options?: WordCard[]; shown?: WordCard };
-// Chế độ Kiểm tra: sinh đề trộn ba dạng câu, làm hết rồi mới chấm.
+type TestKind = "written" | "mc" | "tf" | "match";
+type TestQuestion = { kind: TestKind; word: WordCard; options?: WordCard[]; shown?: WordCard; group?: WordCard[]; pairs?: WordCard[] };
+type TestAnswer = string | Record<string, string>;
+const testKindLabels: Record<TestKind, string> = { written: "Tự viết", mc: "Trắc nghiệm", tf: "Đúng/Sai", match: "Nối cặp" };
+
 function TestMode({ words, setMode }: { words: WordCard[]; setMode: (m: PracticeMode) => void }) {
-  const sizes = [5, 10, 20].filter((size) => size <= words.length);
-  const [size, setSize] = useState(sizes[sizes.length - 1] ?? words.length);
+  const [starredOnly, setStarredOnly] = useState(false);
+  const pool = useMemo(() => words.filter((word) => !starredOnly || word.starred), [words, starredOnly]);
+  const sizes = [5, 10, 20, 30].filter((size) => size <= pool.length);
+  const [size, setSize] = useState(10);
+  const [kinds, setKinds] = useState<TestKind[]>(["written", "mc", "tf", "match"]);
+  const [answerWith, setAnswerWith] = useState<"term" | "meaning">("term");
   const [seed, setSeed] = useState(1);
   const [started, setStarted] = useState(false);
-  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [answers, setAnswers] = useState<Record<number, TestAnswer>>({});
   const [submitted, setSubmitted] = useState(false);
 
   const questions = useMemo<TestQuestion[]>(() => {
-    const chosen = seededOrder(words, seed).slice(0, Math.min(size, words.length));
+    if (!kinds.length || pool.length < 2) return [];
+    const chosen = seededOrder(pool, seed).slice(0, Math.min(size, pool.length));
     return chosen.map((word, position) => {
-      const kind = (["mc", "written", "tf"] as const)[(position + seed) % 3];
-      if (kind === "mc") return { kind, word, options: seededOrder([word, ...pickDistractors(words, word, seed + position)], seed + position) };
+      const kind = kinds[(position + seed) % kinds.length];
+      if (kind === "mc") return { kind, word, options: seededOrder([word, ...pickDistractors(pool, word, seed + position)], seed + position) };
       if (kind === "tf") {
-        const wrong = pickDistractors(words, word, seed + position, 1)[0];
+        const wrong = pickDistractors(pool, word, seed + position, 1)[0];
         const showTrue = (position + seed) % 2 === 0 || !wrong;
         return { kind, word, shown: showTrue ? word : wrong };
       }
+      if (kind === "match") {
+        const group = [word, ...pickDistractors(pool, word, seed + position, 3)];
+        return { kind, word, group, pairs: seededOrder(group, seed + position + 11) };
+      }
       return { kind, word };
     });
-  }, [words, size, seed]);
+  }, [pool, size, seed, kinds]);
 
-  function isCorrect(question: TestQuestion, given?: string) {
-    if (!given) return false;
+  function isCorrect(question: TestQuestion, given?: TestAnswer) {
+    if (given === undefined) return false;
     if (question.kind === "mc") return given === question.word.id;
-    if (question.kind === "written") return normalizeAnswer(given) === normalizeAnswer(question.word.term);
-    return given === (question.shown?.id === question.word.id ? "true" : "false");
+    if (question.kind === "written") return typeof given === "string" && normalizeAnswer(given) === normalizeAnswer(answerWith === "term" ? question.word.term : question.word.meaning);
+    if (question.kind === "tf") return given === (question.shown?.id === question.word.id ? "true" : "false");
+    if (typeof given !== "object") return false;
+    return (question.group ?? []).every((item) => given[item.id] === item.id);
+  }
+  function isAnswered(question: TestQuestion, given?: TestAnswer) {
+    if (given === undefined) return false;
+    if (question.kind === "match") return typeof given === "object" && (question.group ?? []).every((item) => given[item.id]);
+    return typeof given === "string" && given.trim() !== "";
   }
   const score = questions.filter((question, position) => isCorrect(question, answers[position])).length;
+  const answered = questions.filter((question, position) => isAnswered(question, answers[position])).length;
+
+  function toggleKind(kind: TestKind) {
+    setKinds((previous) => (previous.includes(kind) ? (previous.length > 1 ? previous.filter((item) => item !== kind) : previous) : [...previous, kind]));
+  }
 
   if (!started)
     return (
       <div className="page practice-session">
         <PracticeModeBar mode="test" setMode={setMode} />
         <div className="eyebrow">KIỂM TRA</div>
-        <h1>Tạo bài kiểm tra</h1>
-        <p className="page-sub">Đề trộn ba dạng: chọn đáp án, đúng/sai và tự viết. Chấm điểm sau khi nộp bài.</p>
-        <div className="test-setup">
-          <div className="test-sizes">
-            {(sizes.length ? sizes : [words.length]).map((option) => (
-              <button key={option} className={size === option ? "active" : ""} onClick={() => setSize(option)}>
-                {option} câu
-              </button>
-            ))}
+        <h1>Thiết lập bài kiểm tra</h1>
+        <p className="page-sub">Chọn số câu, dạng câu và cách trả lời. Chấm điểm sau khi nộp bài.</p>
+        <div className="test-config">
+          <div className="test-field">
+            <b>Số câu</b>
+            <div className="test-sizes">
+              {(sizes.length ? sizes : [pool.length]).map((option) => (
+                <button key={option} className={size === option ? "active" : ""} onClick={() => setSize(option)}>
+                  {option}
+                </button>
+              ))}
+            </div>
           </div>
-          <button
-            className="primary"
-            onClick={() => {
-              setAnswers({});
-              setSubmitted(false);
-              setStarted(true);
-            }}
-          >
-            Bắt đầu làm bài →
-          </button>
+          <div className="test-field">
+            <b>Dạng câu hỏi</b>
+            <div className="test-kinds">
+              {(Object.keys(testKindLabels) as TestKind[]).map((kind) => (
+                <label key={kind} className={kinds.includes(kind) ? "active" : ""}>
+                  <input type="checkbox" checked={kinds.includes(kind)} onChange={() => toggleKind(kind)} />
+                  {testKindLabels[kind]}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="test-field">
+            <b>Trả lời bằng</b>
+            <div className="test-sizes">
+              <button className={answerWith === "term" ? "active" : ""} onClick={() => setAnswerWith("term")}>
+                Tiếng Anh
+              </button>
+              <button className={answerWith === "meaning" ? "active" : ""} onClick={() => setAnswerWith("meaning")}>
+                Tiếng Việt
+              </button>
+            </div>
+          </div>
+          <label className="learn-check">
+            <input type="checkbox" checked={starredOnly} onChange={(event) => setStarredOnly(event.target.checked)} />
+            Chỉ kiểm tra từ đã gắn sao
+          </label>
         </div>
+        <button
+          className="primary test-submit"
+          disabled={pool.length < 2}
+          onClick={() => {
+            setAnswers({});
+            setSubmitted(false);
+            setSeed((value) => value + 1);
+            setStarted(true);
+          }}
+        >
+          {pool.length < 2 ? "Cần ít nhất 2 từ" : "Bắt đầu làm bài →"}
+        </button>
       </div>
     );
+
+  const askText = (word: WordCard) => (answerWith === "term" ? word.meaning : word.term);
+  const answerText = (word: WordCard) => (answerWith === "term" ? word.term : word.meaning);
 
   return (
     <div className="page practice-session">
       <PracticeModeBar mode="test" setMode={setMode} />
       <button className="back" onClick={() => setStarted(false)}>
-        ← Đổi số câu
+        ← Đổi thiết lập
       </button>
       {submitted && (
         <div className={score === questions.length ? "test-score perfect" : "test-score"}>
@@ -2082,7 +2307,7 @@ function TestMode({ words, setMode }: { words: WordCard[]; setMode: (m: Practice
               setSubmitted(false);
             }}
           >
-            Làm đề khác →
+            Đề khác →
           </button>
         </div>
       )}
@@ -2094,14 +2319,41 @@ function TestMode({ words, setMode }: { words: WordCard[]; setMode: (m: Practice
             <div className={submitted ? (correct ? "panel test-question ok" : "panel test-question wrong") : "panel test-question"} key={position}>
               <div className="test-head">
                 <span className="eyebrow">
-                  CÂU {position + 1} · {question.kind === "mc" ? "CHỌN ĐÁP ÁN" : question.kind === "written" ? "TỰ VIẾT" : "ĐÚNG HAY SAI"}
+                  CÂU {position + 1} · {testKindLabels[question.kind].toUpperCase()}
                 </span>
                 {submitted && <span className="test-mark">{correct ? "✓" : "✗"}</span>}
               </div>
-              {question.kind === "tf" ? (
+              {question.kind === "match" ? (
+                <div className="match-question">
+                  {(question.group ?? []).map((item) => (
+                    <div key={item.id}>
+                      <span>{askText(item)}</span>
+                      <select
+                        disabled={submitted}
+                        value={typeof given === "object" ? (given[item.id] ?? "") : ""}
+                        onChange={(event) =>
+                          setAnswers((previous) => {
+                            const current = typeof previous[position] === "object" ? { ...(previous[position] as Record<string, string>) } : {};
+                            current[item.id] = event.target.value;
+                            return { ...previous, [position]: current };
+                          })
+                        }
+                      >
+                        <option value="">— chọn —</option>
+                        {(question.pairs ?? []).map((choice) => (
+                          <option value={choice.id} key={choice.id}>
+                            {answerText(choice)}
+                          </option>
+                        ))}
+                      </select>
+                      {submitted && typeof given === "object" && given[item.id] !== item.id && <em className="test-answer-inline">{answerText(item)}</em>}
+                    </div>
+                  ))}
+                </div>
+              ) : question.kind === "tf" ? (
                 <>
                   <h3>
-                    {question.word.term} = {question.shown?.meaning}
+                    {askText(question.word)} = {question.shown ? answerText(question.shown) : ""}
                   </h3>
                   <div className="choice-grid">
                     {[
@@ -2116,24 +2368,30 @@ function TestMode({ words, setMode }: { words: WordCard[]; setMode: (m: Practice
                 </>
               ) : question.kind === "mc" ? (
                 <>
-                  <h3>{question.word.meaning}</h3>
+                  <h3>{askText(question.word)}</h3>
                   <div className="choice-grid">
                     {question.options?.map((option) => (
                       <button key={option.id} disabled={submitted} className={given === option.id ? "selected" : ""} onClick={() => setAnswers((previous) => ({ ...previous, [position]: option.id }))}>
-                        {option.term}
+                        {answerText(option)}
                       </button>
                     ))}
                   </div>
                 </>
               ) : (
                 <>
-                  <h3>{question.word.meaning}</h3>
-                  <input className="listen-input" disabled={submitted} value={given ?? ""} onChange={(event) => setAnswers((previous) => ({ ...previous, [position]: event.target.value }))} placeholder="Viết từ tiếng Anh…" />
+                  <h3>{askText(question.word)}</h3>
+                  <input
+                    className="listen-input"
+                    disabled={submitted}
+                    value={typeof given === "string" ? given : ""}
+                    onChange={(event) => setAnswers((previous) => ({ ...previous, [position]: event.target.value }))}
+                    placeholder={answerWith === "term" ? "Viết từ tiếng Anh…" : "Viết nghĩa tiếng Việt…"}
+                  />
                 </>
               )}
-              {submitted && !correct && (
+              {submitted && !correct && question.kind !== "match" && (
                 <p className="test-answer">
-                  Đáp án: <b>{question.kind === "tf" ? (question.shown?.id === question.word.id ? "Đúng" : "Sai") : question.word.term}</b> · {question.word.example}
+                  Đáp án: <b>{question.kind === "tf" ? (question.shown?.id === question.word.id ? "Đúng" : "Sai") : answerText(question.word)}</b> · {question.word.example}
                 </p>
               )}
             </div>
@@ -2141,13 +2399,14 @@ function TestMode({ words, setMode }: { words: WordCard[]; setMode: (m: Practice
         })}
       </div>
       {!submitted && (
-        <button className="primary test-submit" disabled={Object.keys(answers).length < questions.length} onClick={() => setSubmitted(true)}>
-          {Object.keys(answers).length < questions.length ? `Còn ${questions.length - Object.keys(answers).length} câu chưa làm` : "Nộp bài"}
+        <button className="primary test-submit" disabled={answered < questions.length} onClick={() => setSubmitted(true)}>
+          {answered < questions.length ? `Còn ${questions.length - answered} câu chưa làm` : "Nộp bài"}
         </button>
       )}
     </div>
   );
 }
+
 
 function MatchGame({ words, close }: { words: WordCard[]; close: () => void }) {
   const pool = words.slice(0, Math.min(6, words.length));
