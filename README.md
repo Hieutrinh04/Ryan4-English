@@ -1,100 +1,71 @@
-# vinext-starter
+# Lexilo
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+Ứng dụng học từ vựng tiếng Anh theo hộp Leitner, có sẵn bộ 983 từ theo chủ đề và
+các chế độ luyện tập kiểu Quizlet. Giao diện tiếng Việt.
 
-## Prerequisites
-
-- Node.js `>=22.13.0`
-
-## Quick Start
+## Chạy thử
 
 ```bash
 npm install
 npm run dev
-npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+Mở http://localhost:3000. Không cần cấu hình gì — app chạy được ngay ở chế độ lưu
+trên máy.
 
-## Included Shape
+## Tính năng
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+**Ôn tập theo lịch Leitner** — 6 hộp, khoảng cách ôn giãn dần 1/3/7/14/30/90 ngày.
+Mỗi thẻ chấm bốn mức Quên / Khó / Được / Dễ, quên thì gặp lại ngay hôm sau.
+Phiên ôn có 5 kiểu thẻ đổi được giữa chừng: Việt→Anh, Anh→Việt, trắc nghiệm,
+nghe viết, và trộn.
 
-## Workspace Auth Headers
+**Luyện tập** — Thẻ ghi nhớ (có đếm thẻ, xáo trộn, tự động phát, theo dõi
+đã biết/đang học), Học (chia vòng 7 từ, từ trắc nghiệm lên tự gõ, lưu tiến độ),
+Kiểm tra (trộn 4 dạng câu, chấm điểm cuối bài), Nối cặp, Nghe và viết,
+Chép chính tả.
 
-Signed-in visitors receive both `oai-authenticated-user-id` and `oai-authenticated-user-email`. Private Sites require every visitor to sign in; public Sites may also have anonymous visitors, for whom neither header is present.
+**Tổ chức từ vựng** — Từ tự thêm xếp theo ngày học trong tuần; bộ 983 từ chia
+theo 27 thư mục chủ đề. Nhập từ Excel hoặc dán danh sách, xuất CSV/Quizlet.
 
-The user ID is stable for the same user on the same Site and different across Sites. Email and name are intended for display or contact purposes.
+**Tra từ tự động** — Thêm một từ là app tự điền IPA, nghĩa, định nghĩa Anh–Anh,
+câu ví dụ kèm bản dịch, cụm nên học, đồng/trái nghĩa và chủ đề IELTS.
 
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
+**Theo dõi** — Đếm ngược ngày thi, chuỗi ngày học liên tiếp, bảng Leitner theo
+nhóm, nhắc ôn các từ đến hạn.
 
-Treat the full name as optional and fall back to email when it is absent:
+## Dữ liệu
 
-```tsx
-import { headers } from "next/headers";
+Mặc định mọi thứ lưu trong `localStorage` của trình duyệt. Muốn đồng bộ nhiều
+thiết bị thì tạo một dự án Supabase, chạy [`supabase/schema.sql`](supabase/schema.sql)
+rồi đặt biến môi trường trong `.env.local`:
 
-export default async function Home() {
-  const requestHeaders = await headers();
-  const userId = requestHeaders.get("oai-authenticated-user-id");
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+Các file dữ liệu dựng sẵn trong `public/`:
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+| File | Nội dung |
+|---|---|
+| `vocabulary-1000.json` | 983 từ theo 27 chủ đề |
+| `vocabulary-examples.json` | Câu ví dụ riêng cho từng từ kèm bản dịch |
+| `vocabulary-enrichment.json` | Định nghĩa, đồng/trái nghĩa, cụm, chủ đề IELTS |
+| `usage-details.json` | Ngữ cảnh cho 2484 từ đồng/trái nghĩa |
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+Sinh lại bằng các script trong `scripts/` (gọi ra từ điển và Datamuse, mất vài phút).
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+## Lệnh
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+```bash
+npm run dev     # máy chủ phát triển
+npm run build   # dựng bản production
+npm test        # dựng rồi chạy toàn bộ kiểm thử
+npm run lint    # kiểm tra mã
+```
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+## Công nghệ
 
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+React 19 + [vinext](https://github.com/cloudflare/vinext) trên Cloudflare Workers,
+Supabase (tuỳ chọn), không dùng thư viện UI ngoài.

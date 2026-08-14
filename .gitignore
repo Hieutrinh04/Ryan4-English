@@ -51,3 +51,7 @@ tsconfig.tsbuildinfo
 # thư mục tạm & phụ thuộc của script
 /.tmp/
 scripts/node_modules/
+
+# cấu hình công cụ dev cục bộ, không đưa lên repo
+/.claude/
+/.openai/
