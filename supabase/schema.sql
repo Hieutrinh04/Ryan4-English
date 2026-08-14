@@ -4,7 +4,11 @@ create table public.words (
   id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade,
   term text not null, part_of_speech text, ipa text, meaning_vi text not null, definition_en text,
   example text not null, example_vi text, example_cloze text not null, topic text, source text, note text, is_starred boolean not null default false,
+  collocation text, collocation_vi text,
+  synonyms text[] not null default '{}', antonyms text[] not null default '{}', related text[] not null default '{}', paraphrases text[] not null default '{}', ielts_topics text[] not null default '{}',
+  synonym_details jsonb not null default '[]', antonym_details jsonb not null default '[]', related_details jsonb not null default '[]',
   study_day int check (study_day between 0 and 6),
+  enrichment_checked_at timestamptz,
   deleted_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
 create unique index words_user_term_active_idx on public.words(user_id, lower(term)) where deleted_at is null;
@@ -46,3 +50,14 @@ create policy "users own daily stats" on public.daily_stats for all using (auth.
 -- Migration cho database đã tạo trước đó (chạy một lần, an toàn nếu lặp lại):
 -- alter table public.words add column if not exists example_vi text;
 -- alter table public.words add column if not exists study_day int check (study_day between 0 and 6);
+-- alter table public.words add column if not exists collocation text;
+-- alter table public.words add column if not exists collocation_vi text;
+-- alter table public.words add column if not exists synonyms text[] not null default '{}';
+-- alter table public.words add column if not exists antonyms text[] not null default '{}';
+-- alter table public.words add column if not exists related text[] not null default '{}';
+-- alter table public.words add column if not exists paraphrases text[] not null default '{}';
+-- alter table public.words add column if not exists ielts_topics text[] not null default '{}';
+-- alter table public.words add column if not exists enrichment_checked_at timestamptz;
+-- alter table public.words add column if not exists synonym_details jsonb not null default '[]';
+-- alter table public.words add column if not exists antonym_details jsonb not null default '[]';
+-- alter table public.words add column if not exists related_details jsonb not null default '[]';

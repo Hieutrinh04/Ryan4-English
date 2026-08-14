@@ -2,6 +2,7 @@
 
 /* Bảng màu tối là mặc định. Đặt data-theme="light" trên <html> để quay lại bản sáng. */
 :root{
+  color-scheme:dark;
   --bg:#0f0e23;--surface:#1c1b3a;--surface-2:#252347;--soft:#2b2960;
   --ink:#f2f2f8;--muted:#a09cbb;--text-2:#bcb8d4;--text-3:#8e8aa8;
   --line:#33325c;--line-accent:#4b4790;
@@ -13,6 +14,7 @@
   --on-accent:#ffffff;
 }
 :root[data-theme="light"]{
+  color-scheme:light;
   --bg:#f8f7fb;--surface:#ffffff;--surface-2:#faf9fc;--soft:#efedff;
   --ink:#29273c;--muted:#8b879d;--text-2:#6f6b7c;--text-3:#9994a5;
   --line:#eceaf2;--line-accent:#ded9ff;

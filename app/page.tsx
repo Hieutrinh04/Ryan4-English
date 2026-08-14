@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLesson, type DictationLevel } from "../lib/dictation-lessons";
 
@@ -15,6 +15,9 @@ const reviewModes: { value: ReviewMode; label: string }[] = [
   { value: "mixed", label: "Trộn" },
 ];
 const rotatingModes: ReviewMode[] = ["vi_en", "en_vi", "quiz", "listen"];
+const DAILY_REVIEW_LIMIT = 30;
+const DAILY_NEW_LIMIT = 8;
+const PDF_DAILY_PREVIEW_LIMIT = 20;
 type WordCard = {
   id: string;
   term: string;
@@ -35,13 +38,47 @@ type WordCard = {
   reviewCount?: number;
   partOfSpeech?: string;
   note?: string;
+  collocation?: string;
+  collocationVi?: string;
+  synonyms?: string[];
+  antonyms?: string[];
+  related?: string[];
+  synonymDetails?: UsageDetail[];
+  antonymDetails?: UsageDetail[];
+  relatedDetails?: UsageDetail[];
+  paraphrases?: string[];
+  ieltsTopics?: string[];
   addedDate?: string;
   studyDay?: number;
   lastReviewedAt?: string;
   source?: string;
+  enrichmentCheckedAt?: string;
 };
+type UsageDetail = { term: string; meaningVi: string; example: string; exampleVi: string };
 
 type ImportedVocabulary = { number: number; term: string; partOfSpeech: string; ipa: string; meaning: string; topic: string; source: string };
+type WeeklyVocabulary = { id: string; term: string; meaning: string; partOfSpeech: string; studyDay: number; topic: string; source: string };
+
+// Định nghĩa, đồng/trái nghĩa, từ cùng chủ đề và chủ đề IELTS của bộ PDF, sinh sẵn bằng
+// scripts/enrich-vocabulary.mjs để người dùng không phải tra lại 973 từ trên máy mình.
+type EnrichmentMap = Record<string, { definition?: string; synonyms?: string[]; antonyms?: string[]; related?: string[]; ieltsTopics?: string[]; collocation?: string; collocationVi?: string; paraphrases?: string[] }>;
+
+// Ngữ cảnh của từng từ đồng/trái nghĩa, lưu chung một bảng tra theo từ vì các từ này
+// lặp lại rất nhiều giữa các mục từ. App tự ghép lại thành danh sách cho mỗi từ.
+type UsageMap = Record<string, { meaningVi: string; example: string; exampleVi: string }>;
+// Ghép nghĩa tiếng Việt vào sau mỗi từ khi đã có ngữ cảnh: "dynamic (năng động) · quiet (im lặng)".
+// Thẻ ôn tập cần gọn nên chỉ hiện nghĩa, phần câu ví dụ để dành cho màn chi tiết.
+function withMeanings(terms: string[], details: UsageDetail[] | undefined) {
+  const byTerm = new Map((details ?? []).map((item) => [item.term, item.meaningVi]));
+  return terms.map((term) => (byTerm.get(term) ? `${term} (${byTerm.get(term)})` : term)).join(" · ");
+}
+
+function detailsFrom(terms: string[] | undefined, usage: UsageMap): UsageDetail[] {
+  return (terms ?? [])
+    .slice(0, 4)
+    .map((term) => (usage[term] ? { term, ...usage[term] } : null))
+    .filter((item): item is UsageDetail => item !== null);
+}
 
 // Câu ví dụ riêng cho từng từ, soạn sẵn trong public/vocabulary-examples.json: term → [câu tiếng Anh, bản dịch].
 type ExampleMap = Record<string, [string, string]>;
@@ -85,7 +122,9 @@ const naturalExampleVi = (term: string) => `Tôi đang học cách dùng từ �
 function scheduleFor(card: WordCard, rating: Rating) {
   const box = rating === "again" ? (card.box === 6 ? 2 : 1) : Math.min(6, card.box + (rating === "easy" ? 2 : rating === "good" ? 1 : 0));
   const base = [0, 1, 3, 7, 14, 30, 90][box];
-  const interval = rating === "hard" ? Math.max(1, Math.round((card.intervalDays ?? 1) * 0.6)) : Math.round(base * (rating === "easy" ? 1.3 : 1));
+  // Quên thì luôn gặp lại sau 1 ngày, đúng như lib/srs.ts. Nếu lấy theo hộp mới thì từ
+  // đã thuộc (hộp 6) tụt về hộp 2 sẽ được hẹn tận 3 ngày dù vừa quên.
+  const interval = rating === "again" ? 1 : rating === "hard" ? Math.max(1, Math.round((card.intervalDays ?? 1) * 0.6)) : Math.round(base * (rating === "easy" ? 1.3 : 1));
   return { box, interval };
 }
 
@@ -101,11 +140,38 @@ function weekdayIndex(date = new Date()) {
 
 // Từ do người dùng thêm được giữ lại trên máy, để mất kết nối Supabase cũng không mất dữ liệu khi tải lại trang.
 const localWordsKey = "lexilo:words:v1";
+const localWordsBackupKey = "lexilo:words:backup:v1";
+const weeklyImportKey = "lexilo:weekly-import:v1";
+// Danh sách từ đã xoá. writeLocalWords chỉ gộp thêm chứ không bao giờ bớt (để một lần nạp
+// lỗi không thổi bay cả kho), nên nếu không ghi nhận riêng thì từ đã xoá sẽ sống lại sau F5.
+const activeTabKey = "lexilo:tab:v1";
+const deletedIdsKey = "lexilo:deleted:v1";
+function readDeletedIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(deletedIdsKey);
+    const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+function markDeleted(id: string) {
+  try {
+    const ids = readDeletedIds();
+    ids.add(id);
+    // Giữ 500 mục gần nhất là thừa đủ, tránh phình vô hạn.
+    localStorage.setItem(deletedIdsKey, JSON.stringify([...ids].slice(-500)));
+  } catch {
+    // Bỏ qua khi trình duyệt chặn.
+  }
+}
 function readLocalWords(): WordCard[] {
   try {
-    const raw = localStorage.getItem(localWordsKey);
+    const raw = localStorage.getItem(localWordsKey) || localStorage.getItem(localWordsBackupKey);
     const parsed = raw ? (JSON.parse(raw) as WordCard[]) : [];
-    return Array.isArray(parsed) ? parsed.filter((word) => word?.id && word.term) : [];
+    if (!Array.isArray(parsed)) return [];
+    const deleted = readDeletedIds();
+    return parsed.filter((word) => word?.id && word.term && !deleted.has(word.id));
   } catch {
     return [];
   }
@@ -113,12 +179,22 @@ function readLocalWords(): WordCard[] {
 // Từ đã lên được Supabase sẽ quay về theo đúng id, nên gộp theo id là đủ để không nhân đôi.
 // Tiến trình học được đắp lại sau cùng, áp cho cả từ cá nhân lẫn bộ PDF.
 function mergeStoredWords(loaded: WordCard[]) {
-  const ids = new Set(loaded.map((word) => word.id));
-  return applyProgress([...readLocalWords().filter((word) => !ids.has(word.id)), ...loaded]);
+  const deleted = readDeletedIds();
+  const kept = loaded.filter((word) => !deleted.has(word.id));
+  const ids = new Set(kept.map((word) => word.id));
+  return applyProgress([...readLocalWords().filter((word) => !ids.has(word.id)), ...kept]);
 }
 function writeLocalWords(words: WordCard[]) {
   try {
-    localStorage.setItem(localWordsKey, JSON.stringify(words.filter((word) => !isPdfVocabulary(word))));
+    const personal = words.filter((word) => !isPdfVocabulary(word) && !isSeedWord(word));
+    const current = readLocalWords().filter((word) => !isSeedWord(word));
+    // Không cho một lần nạp lỗi/rỗng xóa kho từ đã lưu trước đó.
+    const merged = new Map(current.map((word) => [word.id, word]));
+    for (const word of personal) merged.set(word.id, word);
+    for (const id of readDeletedIds()) merged.delete(id);
+    const serialized = JSON.stringify([...merged.values()]);
+    localStorage.setItem(localWordsKey, serialized);
+    localStorage.setItem(localWordsBackupKey, serialized);
   } catch {
     // Hết dung lượng hoặc trình duyệt chặn — bỏ qua, dữ liệu vẫn còn trong phiên hiện tại.
   }
@@ -154,7 +230,92 @@ function writeProgress(words: WordCard[]) {
 }
 function applyProgress(words: WordCard[]) {
   const store = readProgress();
-  return words.map((word) => (store[word.id] ? { ...word, ...store[word.id] } : word));
+  return words.map((word) => {
+    const saved = store[word.id];
+    if (!saved) return word;
+    const merged = { ...word, ...saved };
+    // Với bộ Excel theo tuần, tên file là nguồn xác định folder; tiến độ cũ chỉ giữ
+    // Leitner/trạng thái và không được chuyển từ sang một ngày khác.
+    return word.source?.endsWith(".xlsx") ? { ...merged, studyDay: word.studyDay } : merged;
+  });
+}
+
+// Ngày thi mục tiêu, để đếm ngược trên trang chủ.
+type ExamGoal = { date: string; label: string };
+const examKey = "lexilo:exam:v1";
+function readExam(): ExamGoal | null {
+  try {
+    const raw = localStorage.getItem(examKey);
+    const parsed = raw ? (JSON.parse(raw) as ExamGoal) : null;
+    return parsed?.date ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function writeExam(goal: ExamGoal | null) {
+  try {
+    if (goal) localStorage.setItem(examKey, JSON.stringify(goal));
+    else localStorage.removeItem(examKey);
+  } catch {
+    // Bỏ qua khi trình duyệt chặn.
+  }
+}
+function daysUntil(date: string) {
+  const target = new Date(`${date}T00:00:00`);
+  const today = new Date(`${localDateString()}T00:00:00`);
+  return Math.round((target.getTime() - today.getTime()) / 86400000);
+}
+
+// Chuỗi ngày học: lưu danh sách ngày có ít nhất một thẻ được chấm.
+const streakKey = "lexilo:streak:v1";
+function readStudyDays(): string[] {
+  try {
+    const raw = localStorage.getItem(streakKey);
+    const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+    return Array.isArray(parsed) ? [...new Set(parsed.filter((item) => typeof item === "string"))].sort() : [];
+  } catch {
+    return [];
+  }
+}
+function markStudiedToday(): string[] {
+  const days = readStudyDays();
+  const today = localDateString();
+  if (days.includes(today)) return days;
+  // Giữ hai năm gần nhất là đủ cho mọi thống kê hiện có.
+  const next = [...days, today].slice(-730);
+  try {
+    localStorage.setItem(streakKey, JSON.stringify(next));
+  } catch {
+    // Bỏ qua khi trình duyệt chặn.
+  }
+  return next;
+}
+function streakFrom(days: string[]) {
+  if (!days.length) return { current: 0, best: 0, studiedToday: false };
+  const set = new Set(days);
+  const today = localDateString();
+  const studiedToday = set.has(today);
+  const shift = (date: string, step: number) => {
+    const value = new Date(`${date}T00:00:00`);
+    value.setDate(value.getDate() + step);
+    return localDateString(value);
+  };
+  // Chuỗi vẫn được tính là đang chạy nếu hôm nay chưa học nhưng hôm qua có.
+  let cursor = studiedToday ? today : shift(today, -1);
+  let current = 0;
+  while (set.has(cursor)) {
+    current += 1;
+    cursor = shift(cursor, -1);
+  }
+  let best = 0;
+  let run = 0;
+  let previous = "";
+  for (const day of days) {
+    run = previous && shift(previous, 1) === day ? run + 1 : 1;
+    best = Math.max(best, run);
+    previous = day;
+  }
+  return { current, best, studiedToday };
 }
 
 // Phiên ôn đang dở, để đóng tab rồi quay lại vẫn học tiếp đúng chỗ.
@@ -181,6 +342,156 @@ function writeSession(session: StoredSession | null) {
 
 function isPdfVocabulary(word: WordCard) {
   return word.source?.includes("MochiMochi") || word.id.startsWith("pdf-");
+}
+
+// Câu ví dụ do app tự dựng lúc nhập (chưa tra từ điển) phải được coi như ô trống,
+// nếu không thì "Dán danh sách" tạo ra cả trăm từ dùng chung một khuôn câu và
+// mergeEnrichment sẽ giữ nguyên vì thấy ô đã có chữ.
+function isGeneratedExample(word: WordCard) {
+  const example = word.example?.trim();
+  if (!example) return true;
+  return example === naturalExample(word.term) || example === fallbackExample(word.term);
+}
+
+// Từ thêm từ trước khi có các trường mới (cụm, đồng/trái nghĩa, chủ đề IELTS…) sẽ thiếu dữ liệu.
+function missingFields(word: WordCard) {
+  const missing: string[] = [];
+  if (isGeneratedExample(word)) missing.push("câu ví dụ thật");
+  if (!word.meaning?.trim() || word.meaning === "Chưa bổ sung nghĩa" || word.meaning === "Chưa có nghĩa") missing.push("nghĩa tiếng Việt");
+  if (!word.ipa || word.ipa === "/…/") missing.push("ipa");
+  if (!word.definition?.trim()) missing.push("định nghĩa");
+  if (!word.exampleVi?.trim()) missing.push("nghĩa câu ví dụ");
+  if (!word.collocation?.trim() || !word.collocationVi?.trim()) missing.push("cụm nên học");
+  if (!word.synonyms?.length) missing.push("đồng nghĩa");
+  if (!word.related?.length) missing.push("từ cùng chủ đề");
+  if (word.synonyms?.length && !word.synonymDetails?.length) missing.push("ngữ cảnh từ đồng nghĩa");
+  if (word.antonyms?.length && !word.antonymDetails?.length) missing.push("ngữ cảnh từ trái nghĩa");
+  if (word.related?.length && !word.relatedDetails?.length) missing.push("ngữ cảnh từ cùng chủ đề");
+  if (!word.paraphrases?.length) missing.push("paraphrase");
+  if (!word.ieltsTopics?.length) missing.push("chủ đề IELTS");
+  return missing;
+}
+function needsEnrichment(word: WordCard) {
+  const missingMeaning = !word.meaning?.trim() || word.meaning === "Chưa bổ sung nghĩa" || word.meaning === "Chưa có nghĩa";
+  const missingUsageDetails = (!!word.synonyms?.length && !word.synonymDetails?.length) || (!!word.antonyms?.length && !word.antonymDetails?.length) || (!!word.related?.length && !word.relatedDetails?.length);
+  return !isPdfVocabulary(word) && !isSeedWord(word) && (missingMeaning || missingUsageDetails || (!word.enrichmentCheckedAt && missingFields(word).length > 0));
+}
+type EnrichPayload = {
+  meaning_vi?: string;
+  ipa?: string;
+  part_of_speech?: string;
+  definition_en?: string;
+  example?: string;
+  example_vi?: string;
+  collocation?: string;
+  collocation_vi?: string;
+  synonyms?: string[];
+  antonyms?: string[];
+  related?: string[];
+  synonym_details?: UsageDetail[];
+  antonym_details?: UsageDetail[];
+  related_details?: UsageDetail[];
+  paraphrases?: string[];
+  ielts_topics?: string[];
+};
+// Chỉ đắp vào ô đang trống — không bao giờ đè lên nội dung người dùng đã tự sửa.
+function mergeEnrichment(word: WordCard, data: EnrichPayload): WordCard {
+  const keepText = (current: string | undefined, incoming: string | undefined, placeholder?: string) => (current?.trim() && current !== placeholder ? current : (incoming?.trim() ?? current ?? ""));
+  const keepList = (current: string[] | undefined, incoming: string[] | undefined) => (current?.length ? current : (incoming ?? []));
+  // Câu khuôn do app tự dựng thì cho phép thay; câu người dùng tự viết thì giữ nguyên.
+  const templated = isGeneratedExample(word);
+  const example = templated ? (data.example?.trim() || word.example || "") : word.example;
+  const exampleVi = templated ? (data.example_vi?.trim() || word.exampleVi || "") : keepText(word.exampleVi, data.example_vi);
+  return {
+    ...word,
+    enrichmentCheckedAt: new Date().toISOString(),
+    meaning: keepText(word.meaning, data.meaning_vi, word.meaning === "Chưa có nghĩa" ? "Chưa có nghĩa" : "Chưa bổ sung nghĩa"),
+    ipa: keepText(word.ipa, data.ipa, "/…/") || "/…/",
+    partOfSpeech: word.partOfSpeech?.trim() ? word.partOfSpeech : (data.part_of_speech ?? ""),
+    definition: keepText(word.definition, data.definition_en),
+    example,
+    exampleVi,
+    // Câu đổi thì chỗ trống phải khoét lại theo câu mới.
+    cloze: templated && example !== word.example ? clozeFor(word.term, example) : word.cloze?.includes("_____") ? word.cloze : clozeFor(word.term, example),
+    collocation: keepText(word.collocation, data.collocation),
+    collocationVi: keepText(word.collocationVi, data.collocation_vi),
+    synonyms: keepList(word.synonyms, data.synonyms),
+    antonyms: keepList(word.antonyms, data.antonyms),
+    related: keepList(word.related, data.related),
+    synonymDetails: word.synonymDetails?.length ? word.synonymDetails : (data.synonym_details ?? []),
+    antonymDetails: word.antonymDetails?.length ? word.antonymDetails : (data.antonym_details ?? []),
+    relatedDetails: word.relatedDetails?.length ? word.relatedDetails : (data.related_details ?? []),
+    paraphrases: keepList(word.paraphrases, data.paraphrases),
+    ieltsTopics: keepList(word.ieltsTopics, data.ielts_topics),
+  };
+}
+
+// Một dòng dạng "flew (v): đã bay" hoặc "rescue: giải thoát" — kiểu ghi chép tay phổ biến nhất.
+function parseTermLine(line: string): Omit<WordCard, "id" | "lapses"> | null {
+  const separator = line.indexOf(":");
+  if (separator < 0) return null;
+  const left = line.slice(0, separator).trim();
+  const meaning = line.slice(separator + 1).trim();
+  if (!left || !meaning) return null;
+  const partMatch = left.match(/\(([^)]*)\)\s*$/);
+  const term = (partMatch ? left.slice(0, partMatch.index).trim() : left).replace(/\s+/g, " ");
+  if (!term) return null;
+  return {
+    term,
+    partOfSpeech: partMatch ? partMatch[1].trim() : "",
+    ipa: "/…/",
+    meaning,
+    example: naturalExample(term),
+    exampleVi: naturalExampleVi(term),
+    cloze: clozeFor(term, naturalExample(term)),
+    definition: "",
+    topic: "Từ vựng chung",
+    box: 1,
+    status: "new",
+    reviewCount: 0,
+    addedDate: localDateString(),
+  };
+}
+
+function isSeedWord(word: WordCard) {
+  return ["1", "2", "3", "4", "5"].includes(word.id);
+}
+
+function weeklyWordCards(items: WeeklyVocabulary[], examples: ExampleMap): WordCard[] {
+  return items.map((item) => ({
+    ...item,
+    ipa: "/…/",
+    example: examples[item.term.trim().toLowerCase()]?.[0] || naturalExample(item.term),
+    exampleVi: examples[item.term.trim().toLowerCase()]?.[1] || naturalExampleVi(item.term),
+    cloze: clozeFor(item.term, examples[item.term.trim().toLowerCase()]?.[0] || naturalExample(item.term)),
+    definition: "",
+    box: 1,
+    lapses: 0,
+    status: "new" as const,
+    reviewCount: 0,
+  }));
+}
+
+function takeWeeklyImport(items: WeeklyVocabulary[], examples: ExampleMap) {
+  try {
+    const existingByTerm = new Map(readLocalWords().map((word) => [word.term.trim().toLowerCase(), word]));
+    const deletedIds = readDeletedIds();
+    // Luôn bù các mục còn thiếu. Cách này tự phục hồi nếu một lần nạp trước chỉ kịp ghi
+    // dấu hoàn tất nhưng chưa kịp lưu từ. Nếu từ đã tồn tại, giữ tiến độ/nội dung đã học
+    // nhưng đưa nó về đúng folder của workbook thay vì tạo một bản trùng.
+    const fresh = weeklyWordCards(items, examples)
+      .filter((word) => !deletedIds.has(word.id) || existingByTerm.has(word.term.trim().toLowerCase()))
+      .map((word) => {
+        const existing = existingByTerm.get(word.term.trim().toLowerCase());
+        // Kho câu của workbook đã được rà soát riêng; luôn sửa câu hệ thống cũ của
+        // chính bộ Excel, đồng thời giữ nguyên tiến độ và các trường đã bổ sung khác.
+        return existing ? { ...word, ...existing, example: word.example, exampleVi: word.exampleVi, cloze: word.cloze, studyDay: word.studyDay, source: word.source, topic: "Từ vựng chung" } : word;
+      });
+    localStorage.setItem(weeklyImportKey, JSON.stringify({ importedAt: new Date().toISOString(), count: fresh.length }));
+    return fresh;
+  } catch {
+    return weeklyWordCards(items, examples);
+  }
 }
 
 const initialWords: WordCard[] = [
@@ -258,23 +569,34 @@ const weekDays = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 const heat = [0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 4, 2, 0, 1, 1, 2, 4, 3, 1, 2, 0, 3, 4, 2, 1, 3, 4, 1, 2, 1, 3, 4, 2, 3, 0, 4, 3, 2, 4, 3, 1, 2, 1, 2, 3, 2, 4, 3, 1, 3, 4, 4, 2, 3, 1, 0, 2, 3, 1, 4, 4, 2, 1, 4, 3, 2, 3, 4, 1, 2, 2, 4, 3, 4, 2, 3, 1, 3, 4, 2, 4, 3, 2, 1];
 
 export default function Home() {
+  // Luôn khởi tạo "home" để HTML dựng sẵn khớp với client; trang đã lưu được khôi phục sau khi hydrate.
   const [tab, setTab] = useState<"home" | "words" | "practice" | "stats">("home");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [reviewing, setReviewing] = useState(false);
   const [reviewQueue, setReviewQueue] = useState<WordCard[]>([]);
   const [revealed, setRevealed] = useState(false);
   const [index, setIndex] = useState(0);
   const [words, setWords] = useState(initialWords);
   const [showAdd, setShowAdd] = useState(false);
+  const [showBulkAdd, setShowBulkAdd] = useState(false);
+  const [detailWord, setDetailWord] = useState<WordCard | null>(null);
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState("");
   const [reviewMode, setReviewMode] = useState<ReviewMode>("vi_en");
   const [choice, setChoice] = useState<string | null>(null);
   const [cloudStatus, setCloudStatus] = useState<"connecting" | "synced" | "demo">("connecting");
   const [userId, setUserId] = useState<string | null>(null);
+  // Bản sao dạng ref để handler onAuthStateChange (đăng ký một lần) luôn đọc được id hiện tại.
+  const userIdRef = useRef<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [showAuth, setShowAuth] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [pendingSession, setPendingSession] = useState<StoredSession | null>(null);
+  const [backfill, setBackfill] = useState<{ done: number; total: number; failed: number } | null>(null);
+  const [exam, setExam] = useState<ExamGoal | null>(null);
+  const [studyDays, setStudyDays] = useState<string[]>([]);
+  // Điểm số của phiên đang chạy, dùng để quyết định có chúc mừng ở màn tổng kết hay không.
+  const [sessionRatings, setSessionRatings] = useState<Rating[]>([]);
   const startedAt = useRef(Date.now());
   const card = reviewQueue[index];
 
@@ -295,6 +617,24 @@ export default function Home() {
   // Chưa có từ cá nhân (chế độ demo) thì luyện tập và thống kê chạy trên bộ PDF thay vì hiện màn hình trống.
   const studyPool = personalWords.length ? personalWords : words;
 
+  // Chủ đề chỉ đọc được sau khi hydrate: nếu đọc localStorage lúc khởi tạo state thì HTML
+  // dựng sẵn (luôn "dark") sẽ khác client và React báo lỗi hydration.
+  useEffect(() => {
+    const saved = localStorage.getItem("lexilo:theme");
+    const nextTheme = saved === "light" ? "light" : "dark";
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- đồng bộ một lần với localStorage, không tạo vòng lặp render
+    setTheme(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+  }, []);
+  function toggleTheme() {
+    setTheme((current) => {
+      const next = current === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("lexilo:theme", next);
+      return next;
+    });
+  }
+
   useEffect(() => {
     let active = true;
     async function loadExamples(): Promise<ExampleMap> {
@@ -305,13 +645,32 @@ export default function Home() {
         return {};
       }
     }
+    async function loadEnrichment(): Promise<EnrichmentMap> {
+      try {
+        const response = await fetch("/vocabulary-enrichment.json");
+        return response.ok ? ((await response.json()) as EnrichmentMap) : {};
+      } catch {
+        return {};
+      }
+    }
+    async function loadUsage(): Promise<UsageMap> {
+      try {
+        const response = await fetch("/usage-details.json");
+        return response.ok ? ((await response.json()) as UsageMap) : {};
+      } catch {
+        return {};
+      }
+    }
     async function loadLocalVocabulary() {
-      const [response, examples] = await Promise.all([fetch("/vocabulary-1000.json"), loadExamples()]);
+      const [response, weeklyResponse, weeklyExamplesResponse, examples, extras, usage] = await Promise.all([fetch("/vocabulary-1000.json"), fetch("/weekly-vocabulary.json"), fetch("/weekly-examples.json"), loadExamples(), loadEnrichment(), loadUsage()]);
       const vocabulary = (await response.json()) as ImportedVocabulary[];
+      const weeklyVocabulary = weeklyResponse.ok ? ((await weeklyResponse.json()) as WeeklyVocabulary[]) : [];
+      const weeklyExamples = weeklyExamplesResponse.ok ? ((await weeklyExamplesResponse.json()) as ExampleMap) : {};
       if (!active) return;
       setWords(
-        mergeStoredWords(vocabulary.map((item) => {
+        mergeStoredWords([...takeWeeklyImport(weeklyVocabulary, weeklyExamples), ...vocabulary.map((item) => {
           const { example, exampleVi } = exampleFor(item.term, examples);
+          const extra = extras[item.term.trim().toLowerCase()];
           return {
             id: `pdf-${item.number}`,
             term: item.term,
@@ -320,7 +679,7 @@ export default function Home() {
             example,
             exampleVi,
             cloze: clozeFor(item.term, example),
-            definition: "Vocabulary imported from the MochiMochi topic list.",
+            definition: extra?.definition || "Vocabulary imported from the MochiMochi topic list.",
             topic: item.topic,
             box: 1,
             lapses: 0,
@@ -328,8 +687,17 @@ export default function Home() {
             status: "new" as const,
             reviewCount: 0,
             source: item.source,
+            synonyms: extra?.synonyms ?? [],
+            antonyms: extra?.antonyms ?? [],
+            related: extra?.related ?? [],
+            ieltsTopics: extra?.ieltsTopics ?? [],
+            collocation: extra?.collocation ?? "",
+            collocationVi: extra?.collocationVi ?? "",
+            paraphrases: extra?.paraphrases ?? [],
+            synonymDetails: detailsFrom(extra?.synonyms, usage),
+            antonymDetails: detailsFrom(extra?.antonyms, usage),
           };
-        })),
+        })]),
       );
     }
     async function connect() {
@@ -338,19 +706,16 @@ export default function Home() {
         setCloudStatus("demo");
         return;
       }
-      let {
+      const {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session) {
-        const result = await supabase.auth.signInAnonymously();
-        session = result.data.session;
-        if (result.error || !session) {
-          await loadLocalVocabulary();
-          if (active) setCloudStatus("demo");
-          return;
-        }
+        await loadLocalVocabulary();
+        if (active) setCloudStatus("demo");
+        return;
       }
       setUserId(session.user.id);
+      userIdRef.current = session.user.id;
       setUserEmail(session.user.email ?? null);
       const { data, error } = await supabase.from("words").select("*, word_states(box,lapse_count,direction,due_date,status,interval_days,review_count,last_reviewed_at)").is("deleted_at", null).order("created_at", { ascending: false });
       if (!active) return;
@@ -361,7 +726,7 @@ export default function Home() {
       }
       let cloudWords = data ?? [];
       try {
-        const [vocabularyResponse, examples] = await Promise.all([fetch("/vocabulary-1000.json"), loadExamples()]);
+        const [vocabularyResponse, examples, extras, usage] = await Promise.all([fetch("/vocabulary-1000.json"), loadExamples(), loadEnrichment(), loadUsage()]);
         const vocabulary = (await vocabularyResponse.json()) as ImportedVocabulary[];
         const mergedVocabulary = new Map<string, ImportedVocabulary>();
         for (const item of vocabulary) {
@@ -386,13 +751,22 @@ export default function Home() {
                 part_of_speech: item.partOfSpeech,
                 ipa: item.ipa,
                 meaning_vi: item.meaning,
-                definition_en: "Vocabulary imported from the MochiMochi topic list.",
+                definition_en: extras[item.term.trim().toLowerCase()]?.definition || "Vocabulary imported from the MochiMochi topic list.",
                 example: exampleFor(item.term, examples).example,
                 example_vi: exampleFor(item.term, examples).exampleVi,
                 example_cloze: clozeFor(item.term, exampleFor(item.term, examples).example),
                 topic: item.topic,
                 source: item.source,
                 note: `Mục số ${item.number} trong tài liệu PDF`,
+                synonyms: extras[item.term.trim().toLowerCase()]?.synonyms ?? [],
+                antonyms: extras[item.term.trim().toLowerCase()]?.antonyms ?? [],
+                related: extras[item.term.trim().toLowerCase()]?.related ?? [],
+                ielts_topics: extras[item.term.trim().toLowerCase()]?.ieltsTopics ?? [],
+                collocation: extras[item.term.trim().toLowerCase()]?.collocation ?? null,
+                collocation_vi: extras[item.term.trim().toLowerCase()]?.collocationVi ?? null,
+                paraphrases: extras[item.term.trim().toLowerCase()]?.paraphrases ?? [],
+                synonym_details: detailsFrom(extras[item.term.trim().toLowerCase()]?.synonyms, usage),
+                antonym_details: detailsFrom(extras[item.term.trim().toLowerCase()]?.antonyms, usage),
               })),
             )
             .select();
@@ -408,9 +782,59 @@ export default function Home() {
       } catch (importError) {
         console.error("Không thể nhập bộ từ vựng PDF", importError);
       }
-      if (cloudWords.length)
-        setWords(
-          mergeStoredWords(cloudWords.map((row) => {
+      try {
+        const localPersonal = readLocalWords().filter((word) => !isPdfVocabulary(word) && !isSeedWord(word));
+        const existingTerms = new Set(cloudWords.map((row) => String(row.term).trim().toLowerCase()));
+        const missingPersonal = localPersonal.filter((word) => !existingTerms.has(word.term.trim().toLowerCase()));
+        for (const word of missingPersonal) {
+          const { data: inserted, error: insertError } = await supabase.from("words").insert({
+            id: word.id,
+            user_id: session.user.id,
+            term: word.term,
+            part_of_speech: word.partOfSpeech || null,
+            ipa: word.ipa,
+            meaning_vi: word.meaning,
+            definition_en: word.definition || null,
+            example: word.example,
+            example_vi: word.exampleVi || null,
+            example_cloze: word.cloze,
+            topic: word.topic,
+            note: word.note || null,
+            collocation: word.collocation || null,
+            collocation_vi: word.collocationVi || null,
+            synonyms: word.synonyms || [],
+            antonyms: word.antonyms || [],
+            related: word.related || [],
+            synonym_details: word.synonymDetails || [],
+            antonym_details: word.antonymDetails || [],
+            related_details: word.relatedDetails || [],
+            paraphrases: word.paraphrases || [],
+            ielts_topics: word.ieltsTopics || [],
+            study_day: word.studyDay ?? null,
+            is_starred: !!word.starred,
+          }).select().single();
+          if (insertError) throw insertError;
+          const { error: stateError } = await supabase.from("word_states").insert(
+            ["vi_en", "en_vi"].map((direction) => ({
+              word_id: inserted.id,
+              user_id: session.user.id,
+              direction,
+              box: word.box || 1,
+              interval_days: word.intervalDays || 0,
+              due_date: word.dueDate || localDateString(),
+              review_count: word.reviewCount || 0,
+              lapse_count: word.lapses || 0,
+              status: word.status || "new",
+              last_reviewed_at: word.lastReviewedAt || null,
+            })),
+          );
+          if (stateError) throw stateError;
+          cloudWords = [inserted, ...cloudWords];
+        }
+      } catch (migrationError) {
+        console.error("Không thể chuyển từ cá nhân trên máy lên tài khoản", migrationError);
+      }
+      const mappedCloudWords = cloudWords.map((row) => {
             const state = row.word_states?.find((item: { direction: string }) => item.direction === "vi_en") ?? row.word_states?.[0];
             return {
               id: row.id,
@@ -432,24 +856,76 @@ export default function Home() {
               reviewCount: state?.review_count ?? 0,
               partOfSpeech: row.part_of_speech ?? "",
               note: row.note ?? "",
+              collocation: row.collocation ?? "",
+            collocationVi: row.collocation_vi ?? "",
+              synonyms: row.synonyms ?? [],
+              antonyms: row.antonyms ?? [],
+            related: row.related ?? [],
+              synonymDetails: row.synonym_details ?? [],
+              antonymDetails: row.antonym_details ?? [],
+              relatedDetails: row.related_details ?? [],
+              paraphrases: row.paraphrases ?? [],
+              ieltsTopics: row.ielts_topics ?? [],
               addedDate: row.created_at?.slice(0, 10),
               studyDay: typeof row.study_day === "number" ? row.study_day : undefined,
               lastReviewedAt: state?.last_reviewed_at,
               source: row.source ?? "",
+              enrichmentCheckedAt: row.enrichment_checked_at ?? undefined,
             };
-          })),
-        );
+          });
+      // Luôn hợp nhất dữ liệu trên máy, kể cả khi cloud trả về rỗng hoặc chỉ có bộ PDF.
+      // Nếu không làm vậy, từ cá nhân có thể biến mất khỏi giao diện sau khi phiên ẩn danh thay đổi.
+      const [weeklyResponse, weeklyExamplesResponse] = await Promise.all([fetch("/weekly-vocabulary.json"), fetch("/weekly-examples.json")]);
+      const weeklyVocabulary = weeklyResponse.ok ? ((await weeklyResponse.json()) as WeeklyVocabulary[]) : [];
+      const weeklyExamples = weeklyExamplesResponse.ok ? ((await weeklyExamplesResponse.json()) as ExampleMap) : {};
+      const weeklyTerms = new Set(weeklyVocabulary.map((word) => word.term.trim().toLowerCase()));
+      const correctedCloudWords = mappedCloudWords.map((word) => {
+        const pair = weeklyExamples[word.term.trim().toLowerCase()];
+        if (!pair || (!word.source?.endsWith(".xlsx") && !weeklyTerms.has(word.term.trim().toLowerCase()))) return word;
+        return { ...word, example: pair[0], exampleVi: pair[1], cloze: clozeFor(word.term, pair[0]) };
+      });
+      const cloudTerms = new Set(correctedCloudWords.map((word) => word.term.trim().toLowerCase()));
+      setWords(mergeStoredWords([...takeWeeklyImport(weeklyVocabulary, weeklyExamples).filter((word) => !cloudTerms.has(word.term.trim().toLowerCase())), ...correctedCloudWords]));
       setCloudStatus("synced");
     }
     connect().finally(() => {
       if (!active) return;
+      // Khôi phục ở đây (sau khi hydrate) thay vì lúc khởi tạo state, nếu không HTML dựng sẵn
+      // sẽ là "home" còn client là trang đã lưu — React báo lỗi hydration.
+      const savedTab = localStorage.getItem(activeTabKey);
+      if (savedTab === "words" || savedTab === "practice" || savedTab === "stats") setTab(savedTab);
       setPendingSession(readSession());
+      setExam(readExam());
+      setStudyDays(readStudyDays());
       setHydrated(true);
     });
     return () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!supabase) return;
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      const nextId = session?.user?.id ?? null;
+      // Supabase phát lại SIGNED_IN mỗi lần tab được focus để làm mới token. Nếu cứ thế tải lại
+      // thì rời tab rồi quay lại là mất trang đang xem — chỉ tải lại khi danh tính thật sự đổi.
+      const changedAccount = event === "SIGNED_IN" && !!userIdRef.current && !!nextId && nextId !== userIdRef.current;
+      if (event === "SIGNED_OUT" || changedAccount) window.location.reload();
+      else if (nextId) userIdRef.current = nextId;
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    // Chỉ ghi sau khi đã khôi phục xong, nếu không giá trị "home" ban đầu sẽ đè lên trang đã lưu.
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(activeTabKey, tab);
+    } catch {
+      // Trình duyệt chặn lưu trữ — bỏ qua.
+    }
+  }, [tab, hydrated]);
 
   // Ghi lại từ cá nhân sau mỗi thay đổi; chỉ bật sau khi nạp xong để không ghi đè bằng dữ liệu mẫu.
   useEffect(() => {
@@ -471,6 +947,75 @@ export default function Home() {
     if (reviewQueue.length && index < reviewQueue.length) setPendingSession({ ids: reviewQueue.map((word) => word.id), index, mode: reviewMode });
     setReviewing(false);
   }
+  // Tra lại lần lượt từng từ còn thiếu dữ liệu và đắp vào các ô trống.
+  // Chạy tuần tự có giãn nhịp vì mỗi lần tra gọi tới từ điển, Datamuse và dịch máy.
+  // Không truyền gì thì quét cả kho; truyền danh sách thì chỉ tra đúng những từ đó
+  // (dùng ngay sau khi dán danh sách, lúc state chưa kịp cập nhật).
+  async function fillMissingFields(only?: WordCard[]) {
+    const targets = (only ?? words).filter(needsEnrichment);
+    if (!targets.length || backfill) return;
+    setBackfill({ done: 0, total: targets.length, failed: 0 });
+    let failed = 0;
+    for (const [position, word] of targets.entries()) {
+      try {
+        const response = await fetch("/api/ai/enrich", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ term: word.term, part_of_speech: word.partOfSpeech }),
+        });
+        const data = (await response.json()) as EnrichPayload & { error?: string };
+        if (!response.ok) throw new Error(data.error ?? "Tra từ thất bại");
+        const enriched = mergeEnrichment(word, data);
+        setWords((current) => current.map((item) => (item.id === word.id ? mergeEnrichment(item, data) : item)));
+        // setWords được lưu xuống máy bởi effect phía trên; tài khoản đã đăng nhập cần
+        // cập nhật trực tiếp lên cloud để lần tải lại không lấy bản cũ từ database đè lên.
+        if (supabase && userIdRef.current) {
+          const cloudPayload = {
+              ipa: enriched.ipa,
+              meaning_vi: enriched.meaning,
+              part_of_speech: enriched.partOfSpeech || null,
+              definition_en: enriched.definition || null,
+              example: enriched.example,
+              example_vi: enriched.exampleVi || null,
+              example_cloze: enriched.cloze,
+              collocation: enriched.collocation || null,
+              collocation_vi: enriched.collocationVi || null,
+              synonyms: enriched.synonyms || [],
+              antonyms: enriched.antonyms || [],
+              related: enriched.related || [],
+              synonym_details: enriched.synonymDetails || [],
+              antonym_details: enriched.antonymDetails || [],
+              related_details: enriched.relatedDetails || [],
+              paraphrases: enriched.paraphrases || [],
+              ielts_topics: enriched.ieltsTopics || [],
+              updated_at: new Date().toISOString(),
+          };
+          const { error: saveError } = await supabase
+            .from("words")
+            .update({
+              ...cloudPayload,
+              enrichment_checked_at: enriched.enrichmentCheckedAt,
+            })
+            .eq("id", word.id);
+          if (saveError) {
+            // Database cũ có thể chưa chạy migration enrichment_checked_at. Vẫn lưu toàn bộ
+            // nội dung vừa tra bằng các cột sẵn có và không báo nhầm là "không tra được".
+            const legacyCloudPayload = Object.fromEntries(Object.entries(cloudPayload).filter(([column]) => !["synonym_details", "antonym_details", "related_details"].includes(column)));
+            const { error: fallbackSaveError } = await supabase.from("words").update(legacyCloudPayload).eq("id", word.id);
+            if (fallbackSaveError) console.error(`Đã tra xong nhưng chưa đồng bộ được “${word.term}”`, fallbackSaveError);
+          }
+        }
+      } catch (error) {
+        failed += 1;
+        console.error(`Không bổ sung được dữ liệu cho “${word.term}”`, error);
+      }
+      setBackfill({ done: position + 1, total: targets.length, failed });
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    // Giữ kết quả trên màn hình một lúc cho người dùng đọc rồi mới ẩn.
+    setTimeout(() => setBackfill(null), 4000);
+  }
+
   function resumeSession() {
     if (!pendingSession) return;
     const byId = new Map(words.map((word) => [word.id, word]));
@@ -534,21 +1079,22 @@ export default function Home() {
     setRevealed(false);
     setAnswer("");
     setChoice(null);
+    setSessionRatings([]);
     startedAt.current = Date.now();
   }
   function startReview(dayIndex?: number | "pdf") {
     const belongsToPdf = isPdfVocabulary;
     if (dayIndex === "pdf") {
-      launchReview(words.filter((word) => belongsToPdf(word) && wordState(word).key !== "mastered"));
+      launchReview(buildCollectionQueue(words.filter(belongsToPdf)));
       return;
     }
     const belongsToDay = (word: WordCard) => !belongsToPdf(word) && (dayIndex === undefined || addedDayIndex(word) === dayIndex);
-    let queue = words.filter((word) => belongsToDay(word) && isDueForReview(word));
-    if (!queue.length) queue = words.filter((word) => belongsToDay(word) && wordState(word).key !== "mastered");
+    const candidates = words.filter(belongsToDay);
+    const queue = dayIndex === undefined ? buildTodayQueue(candidates) : buildCollectionQueue(candidates);
     launchReview(queue);
   }
-  function startPdfTopicReview(topic: string) {
-    launchReview(words.filter((word) => isPdfVocabulary(word) && word.topic.split(" · ").includes(topic) && wordState(word).key !== "mastered"));
+  function startTopicReview(topic: string) {
+    launchReview(buildCollectionQueue(words.filter((word) => word.topic.split(" · ").includes(topic))));
   }
   function rate(rating: Rating) {
     const { box: after, interval } = scheduleFor(card, rating);
@@ -565,6 +1111,8 @@ export default function Home() {
     };
     setWords((current) => current.map((word) => (word.id !== card.id ? word : updated)));
     void persistReview(card, updated, rating, Date.now() - startedAt.current);
+    setStudyDays(markStudiedToday());
+    setSessionRatings((current) => [...current, rating]);
     setIndex((value) => value + 1);
     setRevealed(false);
     setAnswer("");
@@ -632,8 +1180,19 @@ export default function Home() {
       example_cloze: word.cloze,
       topic: word.topic,
       note: word.note,
+      collocation: word.collocation || null,
+      collocation_vi: word.collocationVi || null,
+      synonyms: word.synonyms || [],
+      antonyms: word.antonyms || [],
+      related: word.related || [],
+      synonym_details: word.synonymDetails || [],
+      antonym_details: word.antonymDetails || [],
+      related_details: word.relatedDetails || [],
+      paraphrases: word.paraphrases || [],
+      ielts_topics: word.ieltsTopics || [],
       study_day: word.studyDay ?? null,
       is_starred: !!word.starred,
+      enrichment_checked_at: word.enrichmentCheckedAt || null,
       created_at: word.addedDate ? new Date(word.addedDate).toISOString() : undefined,
     });
     if (error) {
@@ -669,7 +1228,7 @@ export default function Home() {
     window.speechSynthesis?.speak(new SpeechSynthesisUtterance(term));
   }
 
-  if (reviewing && (!reviewQueue.length || index >= reviewQueue.length)) return <SessionSummary total={reviewQueue.length} close={() => setReviewing(false)} restart={() => { setIndex(0); setRevealed(false); setAnswer(""); setChoice(null); startedAt.current = Date.now(); }} />;
+  if (reviewing && (!reviewQueue.length || index >= reviewQueue.length)) return <SessionSummary total={reviewQueue.length} ratings={sessionRatings} streak={streakFrom(studyDays)} close={() => setReviewing(false)} restart={() => { setIndex(0); setRevealed(false); setAnswer(""); setChoice(null); setSessionRatings([]); startedAt.current = Date.now(); }} />;
   if (reviewing)
     return (
       <ReviewView
@@ -718,14 +1277,19 @@ export default function Home() {
           </button>
         </nav>
         <div className="sidebar-bottom">
+          <button className="theme-toggle" onClick={toggleTheme} aria-label={`Chuyển sang chế độ ${theme === "dark" ? "sáng" : "tối"}`}>
+            <span>{theme === "dark" ? "☀" : "☾"}</span>
+            <b>{theme === "dark" ? "Chế độ sáng" : "Chế độ tối"}</b>
+          </button>
           <button className="quick-add" onClick={() => setShowAdd(true)}>
             ＋ Thêm từ mới <kbd>⌘ K</kbd>
           </button>
+          <button className="quick-add bulk-add-trigger" onClick={() => setShowBulkAdd(true)}>☷ Dán danh sách</button>
           <button className="profile" onClick={() => setShowAuth(true)}>
             <span className="avatar">RY</span>
             <span>
-              <b>{userEmail ?? "Ryan"}</b>
-              <small>{cloudStatus === "synced" ? (userEmail ? "● Đã đồng bộ Supabase" : "● Đồng bộ ẩn danh") : cloudStatus === "connecting" ? "Đang kết nối…" : "◐ Chỉ lưu trên máy này"}</small>
+              <b>{userEmail ?? "Đăng nhập"}</b>
+              <small>{cloudStatus === "synced" ? "● Đã đồng bộ theo tài khoản" : cloudStatus === "connecting" ? "Đang kết nối…" : "◐ Chưa đăng nhập · chỉ lưu trên máy"}</small>
             </span>
             <span>•••</span>
           </button>
@@ -738,9 +1302,10 @@ export default function Home() {
             <span className="brand-mark">L</span>
             <span>Lexilo</span>
           </div>
-          <button onClick={() => setShowAdd(true)} aria-label="Thêm từ">
-            ＋
-          </button>
+          <div className="mobile-head-actions">
+            <button onClick={toggleTheme} aria-label={`Chuyển sang chế độ ${theme === "dark" ? "sáng" : "tối"}`}>{theme === "dark" ? "☀" : "☾"}</button>
+            <button onClick={() => setShowAdd(true)} aria-label="Thêm từ">＋</button>
+          </div>
         </header>
         {pendingSession && (
           <div className="resume-bar">
@@ -765,7 +1330,7 @@ export default function Home() {
             </button>
           </div>
         )}
-        {tab === "home" && <Dashboard words={words} startReview={startReview} openWords={() => setTab("words")} startWordReview={(id) => launchReview(words.filter((word) => word.id === id))} />}
+        {tab === "home" && <Dashboard words={words} startReview={startReview} startTopicReview={startTopicReview} openWords={() => setTab("words")} openPractice={() => setTab("practice")} startWordReview={(id) => launchReview(words.filter((word) => word.id === id))} startDueReview={() => launchReview(words.filter(isDueAgain))} exam={exam} setExam={(goal) => { setExam(goal); writeExam(goal); }} streak={streakFrom(studyDays)} />}
         {tab === "words" && (
           <Words
             words={filtered}
@@ -773,13 +1338,17 @@ export default function Home() {
             setQuery={setQuery}
             toggleStar={toggleStar}
             add={() => setShowAdd(true)}
-            startTopicReview={startPdfTopicReview}
+            bulkAdd={() => setShowBulkAdd(true)}
+            startTopicReview={startTopicReview}
             startDayReview={(day) => startReview(day)}
+            fillMissingFields={() => void fillMissingFields()}
+            backfill={backfill}
             setStudyDay={(id, day) => {
               setWords((current) => current.map((word) => (word.id !== id ? word : { ...word, studyDay: day })));
               if (supabase) void supabase.from("words").update({ study_day: day, updated_at: new Date().toISOString() }).eq("id", id);
             }}
             remove={(id) => {
+              markDeleted(id);
               setWords((current) => current.filter((w) => w.id !== id));
               if (supabase) void supabase.from("words").update({ deleted_at: new Date().toISOString() }).eq("id", id);
             }}
@@ -795,9 +1364,10 @@ export default function Home() {
                 void persistWord(created);
               });
             }}
+            openWordDetail={(id) => setDetailWord(words.find((word) => word.id === id) ?? null)}
           />
         )}
-        {tab === "practice" && <Practice words={studyPool} toggleStar={toggleStar} />}
+        {tab === "practice" && <Practice words={words} toggleStar={toggleStar} />}
         {tab === "stats" && <Stats words={studyPool} scopeLabel={personalWords.length ? "Từ của tôi" : "Bộ từ vựng PDF"} />}
       </section>
 
@@ -817,6 +1387,7 @@ export default function Home() {
       </nav>
       {showAdd && (
         <AddWord
+          existingWords={words.filter((word) => !isPdfVocabulary(word) && !isSeedWord(word))}
           close={() => setShowAdd(false)}
           save={(word) => {
             const created = {
@@ -831,18 +1402,36 @@ export default function Home() {
           }}
         />
       )}
-      {showAuth && <AuthModal close={() => setShowAuth(false)} />}
+      {showBulkAdd && (
+        <BulkAddWords
+          existingWords={words.filter((word) => !isPdfVocabulary(word) && !isSeedWord(word))}
+          close={() => setShowBulkAdd(false)}
+          save={(items) => {
+            const created = items.map((item) => ({ ...item, id: crypto.randomUUID(), box: 1, lapses: 0 }));
+            setWords((current) => [...created, ...current]);
+            created.forEach((word) => void persistWord(word));
+            setShowBulkAdd(false);
+            setTab("words");
+            // Từ dán vào chỉ có mỗi chữ, nên tra bổ sung ngay thay vì bắt người dùng bấm thêm một nút.
+            void fillMissingFields(created);
+          }}
+        />
+      )}
+      {detailWord && <WordDetail word={detailWord} close={() => setDetailWord(null)} study={() => { const selected = detailWord; setDetailWord(null); launchReview(words.filter((word) => word.id === selected.id)); }} speak={speak} />}
+      {showAuth && <AuthModal close={() => setShowAuth(false)} signedInEmail={userEmail} />}
     </main>
   );
 }
 
-function Dashboard({ words, startReview, openWords, startWordReview }: { words: WordCard[]; startReview: (dayIndex?: number | "pdf") => void; openWords: () => void; startWordReview: (id: string) => void }) {
+function Dashboard({ words, startReview, startTopicReview, openWords, openPractice, startWordReview, startDueReview, exam, setExam, streak }: { words: WordCard[]; startReview: (dayIndex?: number | "pdf") => void; startTopicReview: (topic: string) => void; openWords: () => void; openPractice: () => void; startWordReview: (id: string) => void; startDueReview: () => void; exam: ExamGoal | null; setExam: (goal: ExamGoal | null) => void; streak: { current: number; best: number; studiedToday: boolean } }) {
   const personal = words.filter((word) => !isPdfVocabulary(word));
   // Chưa có từ cá nhân thì các chỉ số ở đầu trang nói về bộ PDF, thay vì hiển thị toàn số 0.
   const onlyPdf = !personal.length && words.length > 0;
   const scheduledWords = onlyPdf ? words : personal;
   const mastered = scheduledWords.filter((w) => wordState(w).key === "mastered").length;
-  const due = scheduledWords.filter(isDueForReview).length;
+  const todayQueue = onlyPdf ? buildCollectionQueue(words.filter(isPdfVocabulary)).slice(0, PDF_DAILY_PREVIEW_LIMIT) : buildTodayQueue(personal);
+  const todayNew = todayQueue.filter((word) => wordState(word).key === "new").length;
+  const todayReview = todayQueue.length - todayNew;
   const reviewedThisWeek = scheduledWords.reduce((total, word) => total + (word.reviewCount ?? 0), 0);
   const [showTip, setShowTip] = useState(true);
   // Ngày và lời chào chỉ có thể tính trên máy người dùng — cập nhật sau khi hydrate để không lệch với HTML dựng sẵn.
@@ -854,6 +1443,15 @@ function Dashboard({ words, startReview, openWords, startWordReview }: { words: 
     if (greetingRef.current) greetingRef.current.textContent = now.getHours() < 12 ? "Chào buổi sáng" : now.getHours() < 18 ? "Chào buổi chiều" : "Chào buổi tối";
   }, []);
   const activityHeat = heat.map((_, index) => index < heat.length - 7 ? 0 : Math.min(4, Math.ceil(scheduledWords.filter((word) => addedDayIndex(word) === index - (heat.length - 7)).reduce((total, word) => total + (word.reviewCount ?? 0), 0) / 5)));
+  const [editingExam, setEditingExam] = useState(false);
+  const [examDraft, setExamDraft] = useState<ExamGoal>({ date: exam?.date ?? "", label: exam?.label ?? "" });
+  // Số từ chưa thuộc, dùng để gợi ý nhịp học mỗi ngày cho kịp ngày thi.
+  const wordsLeft = words.filter((word) => wordState(word).key !== "mastered").length;
+  // Nhắc ôn: gom tất cả từ đã học nay đến hạn, kể cả bộ PDF, và ghi rõ chúng đến từ nhóm nào.
+  const dueAgain = words.filter(isDueAgain);
+  const today = localDateString();
+  const overdue = dueAgain.filter((word) => word.dueDate && word.dueDate < today).length;
+  const dueGroups = [...dueAgain.reduce((map, word) => map.set(groupLabelOf(word), (map.get(groupLabelOf(word)) ?? 0) + 1), new Map<string, number>())].sort((a, b) => b[1] - a[1]).slice(0, 4);
   return (
     <div className="page dashboard">
       <div className="eyebrow" ref={dateRef}>
@@ -862,25 +1460,119 @@ function Dashboard({ words, startReview, openWords, startWordReview }: { words: 
       <div className="greeting">
         <div>
           <h1>
-            <span ref={greetingRef}>Chào bạn</span>, Ryan <span>✦</span>
+            <span className="greeting-text" ref={greetingRef}>Chào bạn</span>, Ryan <span>✦</span>
           </h1>
           <p>Một phiên ôn ngắn hôm nay sẽ giúp trí nhớ đi xa hơn.</p>
         </div>
       </div>
+      <div className="goal-row">
+        <section className={exam ? "goal-card exam" : "goal-card exam empty"}>
+          {exam ? (
+            <>
+              <span className="goal-icon">◷</span>
+              <div>
+                <b>{daysUntil(exam.date) >= 0 ? `Còn ${daysUntil(exam.date)} ngày` : `Đã qua ${Math.abs(daysUntil(exam.date))} ngày`}</b>
+                <small>
+                  {exam.label || "Ngày thi"} · {exam.date}
+                  {daysUntil(exam.date) > 0 && wordsLeft > 0 ? ` · cần ~${Math.ceil(wordsLeft / daysUntil(exam.date))} từ/ngày` : ""}
+                </small>
+              </div>
+              <button onClick={() => setEditingExam(true)} aria-label="Sửa ngày thi">
+                ✎
+              </button>
+            </>
+          ) : (
+            <button className="goal-set" onClick={() => setEditingExam(true)}>
+              ◷ Đặt ngày thi để đếm ngược →
+            </button>
+          )}
+        </section>
+        <section className={streak.studiedToday ? "goal-card streak active" : "goal-card streak"}>
+          <span className="goal-icon">{streak.current > 0 ? "🔥" : "○"}</span>
+          <div>
+            <b>
+              {streak.current} ngày liên tiếp
+            </b>
+            <small>{streak.studiedToday ? `Hôm nay đã học · kỷ lục ${streak.best} ngày` : streak.current > 0 ? `Học hôm nay để giữ chuỗi · kỷ lục ${streak.best} ngày` : "Ôn một thẻ hôm nay để bắt đầu chuỗi"}</small>
+          </div>
+        </section>
+      </div>
+      {editingExam && (
+        <div className="modal-backdrop" onMouseDown={() => setEditingExam(false)}>
+          <form
+            className="modal exam-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (examDraft.date) setExam({ date: examDraft.date, label: examDraft.label.trim() || "Ngày thi" });
+              setEditingExam(false);
+            }}
+          >
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">MỤC TIÊU</span>
+                <h2>Ngày thi của bạn</h2>
+              </div>
+              <button type="button" onClick={() => setEditingExam(false)}>
+                ×
+              </button>
+            </div>
+            <label>
+              Tên kỳ thi
+              <input value={examDraft.label} onChange={(event) => setExamDraft((draft) => ({ ...draft, label: event.target.value }))} placeholder="IELTS, thi cuối kỳ…" />
+            </label>
+            <label>
+              Ngày thi
+              <input type="date" value={examDraft.date} min={localDateString()} onChange={(event) => setExamDraft((draft) => ({ ...draft, date: event.target.value }))} />
+            </label>
+            <div className="modal-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  setExam(null);
+                  setEditingExam(false);
+                }}
+              >
+                Xoá mục tiêu
+              </button>
+              <button className="primary" type="submit" disabled={!examDraft.date}>
+                Lưu
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {!!dueAgain.length && (
+        <section className="due-reminder">
+          <span className="due-reminder-icon">⏰</span>
+          <div>
+            <b>
+              {dueAgain.length} từ đã học đến hạn ôn lại hôm nay
+            </b>
+            <small>
+              {dueGroups.map(([label, count]) => `${label}: ${count} từ`).join(" · ")}
+              {overdue > 0 && ` · ${overdue} từ đã quá hạn`}
+            </small>
+          </div>
+          <button className="primary" onClick={startDueReview}>
+            Ôn ngay {dueAgain.length} từ →
+          </button>
+        </section>
+      )}
       <section className="hero-card">
         <div className="hero-copy">
           <div className="today-icon">◎</div>
           <div>
             <span>SẴN SÀNG CHO HÔM NAY</span>
             <h2>
-              <strong>{due}</strong> từ đang chờ bạn ôn tập
+              <strong>{todayQueue.length}</strong> thẻ trong phiên hôm nay
             </h2>
             <p>
-              {scheduledWords.filter((w) => { const key = wordState(w).key; return key === "due" || key === "waiting"; }).length} từ đang học · {scheduledWords.filter((w) => wordState(w).key === "new").length} từ mới
+              {todayReview} từ đến hạn · {todayNew} từ mới · khoảng {Math.max(5, Math.ceil(todayQueue.length * 0.45))} phút
             </p>
           </div>
         </div>
-        <button className="primary" onClick={() => startReview(onlyPdf ? "pdf" : undefined)}>
+        <button className="primary" disabled={!todayQueue.length} onClick={() => startReview(onlyPdf ? "pdf" : undefined)}>
           Bắt đầu học <span>→</span>
         </button>
       </section>
@@ -890,7 +1582,8 @@ function Dashboard({ words, startReview, openWords, startWordReview }: { words: 
         <Stat label="Đã thuộc" value={String(mastered)} note={onlyPdf ? "Trong bộ từ vựng PDF" : "Trong lịch học hằng ngày"} icon="✓" tone="green" />
         <Stat label="Lượt đã ôn" value={String(reviewedThisWeek)} note={onlyPdf ? "Trong bộ từ vựng PDF" : "Trong Từ của tôi"} icon="♨" tone="pink" />
       </div>
-      <DailyStudy words={words} startReview={startReview} />
+      <LearningPlan reviewCount={todayReview} newCount={todayNew} startVocabulary={() => startReview(onlyPdf ? "pdf" : undefined)} openPractice={openPractice} />
+      <DailyStudy words={words} startReview={startReview} startTopicReview={startTopicReview} />
       <WeeklyTracker words={words} />
       <div className="dashboard-grid">
         <section className="panel heatmap-panel">
@@ -976,15 +1669,81 @@ function addedDayIndex(word: WordCard) {
   return weekdayIndex(new Date(word.addedDate + "T12:00:00"));
 }
 
-function DailyStudy({ words, startReview }: { words: WordCard[]; startReview: (dayIndex: number | "pdf") => void }) {
+function prioritySort(a: WordCard, b: WordCard) {
+  const dateOrder = (a.dueDate ?? "0000-00-00").localeCompare(b.dueDate ?? "0000-00-00");
+  return dateOrder || b.lapses - a.lapses || a.term.localeCompare(b.term);
+}
+
+// Phiên chính luôn xử lý phần đã học đến hạn trước. Từ mới chỉ lấy ở nhóm của hôm nay
+// và được giới hạn để lượng ôn không tăng nhanh hơn khả năng ghi nhớ.
+function buildTodayQueue(words: WordCard[]) {
+  const today = weekdayIndex();
+  const reviews = words
+    .filter((word) => wordState(word).key === "due")
+    .sort(prioritySort)
+    .slice(0, DAILY_REVIEW_LIMIT);
+  const fresh = words
+    .filter((word) => wordState(word).key === "new" && addedDayIndex(word) === today)
+    .sort(prioritySort)
+    .slice(0, DAILY_NEW_LIMIT);
+  return [...reviews, ...fresh];
+}
+
+// Khi người dùng chủ động chọn một folder, đưa toàn bộ từ trong folder vào phiên.
+// Thẻ đến hạn vẫn đứng trước, nhưng không loại từ đã thuộc và không cắt còn 20 thẻ.
+function buildCollectionQueue(words: WordCard[]) {
+  return words
+    .sort((a, b) => {
+      const rank = (word: WordCard) => wordState(word).key === "due" ? 0 : wordState(word).key === "new" ? 1 : 2;
+      return rank(a) - rank(b) || prioritySort(a, b);
+    });
+}
+
+function LearningPlan({ reviewCount, newCount, startVocabulary, openPractice }: { reviewCount: number; newCount: number; startVocabulary: () => void; openPractice: () => void }) {
+  return (
+    <section className="learning-plan panel">
+      <div className="panel-title">
+        <div>
+          <h3>Học đủ 4 kỹ năng trong 25–35 phút</h3>
+          <p>Ôn đúng hạn trước, tiếp nhận ít nội dung mới, rồi dùng lại ngay trong ngữ cảnh.</p>
+        </div>
+        <span className="plan-rule">5 ngày học · 1 ngày ôn nhẹ · 1 ngày nghỉ</span>
+      </div>
+      <div className="plan-steps">
+        <button onClick={startVocabulary} disabled={!reviewCount && !newCount}>
+          <span>01</span><b>Từ vựng · 10–15 phút</b>
+          <small>{reviewCount} từ đến hạn trước · tối đa {DAILY_NEW_LIMIT} từ mới</small>
+          <i>Bắt đầu phiên →</i>
+        </button>
+        <button onClick={openPractice}>
+          <span>02</span><b>Nghe chép · 8–10 phút</b>
+          <small>3–5 câu đúng trình độ; nghe, gõ, sửa rồi đọc nhại</small>
+          <i>Mở luyện tập →</i>
+        </button>
+        <button onClick={openPractice}>
+          <span>03</span><b>Nói/viết · 5–10 phút</b>
+          <small>Dùng 3 từ vừa học để nói hoặc viết về chính mình</small>
+          <i>Mở luyện tập →</i>
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function DailyStudy({ words, startReview, startTopicReview }: { words: WordCard[]; startReview: (dayIndex: number | "pdf") => void; startTopicReview: (topic: string) => void }) {
   const pdfWords = words.filter(isPdfVocabulary);
   const dailyWords = words.filter((word) => !isPdfVocabulary(word));
+  // Folder chủ đề phải khớp chính xác với 27 thư mục của bộ PDF trong trang Từ vựng.
+  const topicFolders = [...new Set(pdfWords.flatMap((word) => word.topic.split(" · ")))]
+    .map((topic) => ({ topic, count: pdfWords.filter((word) => word.topic.split(" · ").includes(topic)).length }))
+    .filter((folder) => folder.topic && folder.count)
+    .sort((a, b) => a.topic.localeCompare(b.topic, "vi"));
   return (
     <section className="daily-study">
       <div className="panel-title">
         <div>
           <h3>Học theo từng ngày</h3>
-          <p>Giữ nguyên thói quen 7 tab như trong file Excel</p>
+          <p>Các nhóm theo ngày dùng để nhận từ mới; từ đến hạn vẫn được ôn đúng lịch dù nằm ở nhóm nào.</p>
         </div>
       </div>
       <div className="day-cards">
@@ -998,7 +1757,7 @@ function DailyStudy({ words, startReview }: { words: WordCard[]; startReview: (d
               <small>
                 {list.length} từ · {due} cần ôn
               </small>
-              <i>Học →</i>
+              <i>Học folder này →</i>
             </button>
           );
         })}
@@ -1007,9 +1766,21 @@ function DailyStudy({ words, startReview }: { words: WordCard[]; startReview: (d
         <button className="pdf-collection-card" onClick={() => startReview("pdf")}>
           <span>PDF</span>
           <strong>Bộ {pdfWords.length} từ vựng theo chủ đề</strong>
-          <small>{pdfWords.length} mục · học riêng, không tính vào lịch theo ngày</small>
+          <small>{pdfWords.length} mục · học toàn bộ trong một phiên</small>
           <b>Học bộ từ này →</b>
         </button>
+      )}
+      {!!topicFolders.length && (
+        <div className="study-topic-folders">
+          <div className="panel-title"><div><h3>Học theo chủ đề</h3><p>Mỗi chủ đề là một folder học độc lập.</p></div></div>
+          <div className="topic-folder-grid">
+            {topicFolders.map((folder) => (
+              <button key={folder.topic} onClick={() => startTopicReview(folder.topic)}>
+                <span>▰</span><b>{folder.topic}</b><small>{folder.count} từ</small><i>Học folder →</i>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
     </section>
   );
@@ -1028,49 +1799,82 @@ function isDueForReview(word: WordCard) {
   return key === "due" || key === "new";
 }
 
+// Từ ĐÃ học rồi và nay tới hạn ôn lại — khác với từ chưa học lần nào.
+// Đây là nhóm cần nhắc: học hôm thứ Ba, hôm nay thứ Tư đến lịch ôn.
+function isDueAgain(word: WordCard) {
+  return wordState(word).key === "due" && (word.reviewCount ?? 0) > 0;
+}
+// Nhãn nhóm của một từ: thứ trong tuần với từ tự thêm, tên thư mục với bộ PDF.
+function groupLabelOf(word: WordCard) {
+  if (isPdfVocabulary(word)) return word.topic.split(" · ")[0];
+  return dayNames[addedDayIndex(word)];
+}
+
 function WeeklyTracker({ words }: { words: WordCard[] }) {
-  const scheduledWords = words.filter((word) => !isPdfVocabulary(word));
-  const rows = dayNames.map((day, index) => {
-    const list = scheduledWords.filter((w) => addedDayIndex(w) === index);
-    return {
-      day,
-      list,
-      due: list.filter((w) => wordState(w).key === "due").length,
-      waiting: list.filter((w) => wordState(w).key === "waiting").length,
-      fresh: list.filter((w) => wordState(w).key === "new").length,
-      mastered: list.filter((w) => wordState(w).key === "mastered").length,
-    };
+  const countRow = (label: string, list: WordCard[]) => ({
+    label,
+    total: list.length,
+    due: list.filter((w) => wordState(w).key === "due").length,
+    waiting: list.filter((w) => wordState(w).key === "waiting").length,
+    fresh: list.filter((w) => wordState(w).key === "new").length,
+    mastered: list.filter((w) => wordState(w).key === "mastered").length,
   });
+  const personalWords = words.filter((word) => !isPdfVocabulary(word));
+  const pdfWords = words.filter(isPdfVocabulary);
+  const dayRows = dayNames.map((day, index) => countRow(`${String(index + 1).padStart(2, "0")} ${day}`, personalWords.filter((w) => addedDayIndex(w) === index)));
+  // Bộ PDF được chia theo đúng các thư mục chủ đề đang hiện ở tab Từ vựng.
+  const topicRows = [...new Set(pdfWords.flatMap((word) => word.topic.split(" · ")))]
+    .sort((a, b) => a.localeCompare(b, "vi"))
+    .map((topic) => countRow(topic, pdfWords.filter((word) => word.topic.split(" · ").includes(topic))));
+  const tracked = personalWords.length + pdfWords.length;
+  const masteredAll = words.filter((w) => wordState(w).key === "mastered").length;
+  const [showTopics, setShowTopics] = useState(true);
   return (
     <section className="panel weekly">
       <div className="panel-title">
         <div>
           <h3>Bảng theo dõi Leitner</h3>
-          <p>Tự cập nhật theo ngày thêm và trạng thái hiện tại</p>
+          <p>Từ bạn tự thêm xếp theo ngày học, bộ PDF xếp theo thư mục chủ đề</p>
         </div>
-        <span className="mastery-rate">{scheduledWords.length ? Math.round((scheduledWords.filter((w) => wordState(w).key === "mastered").length / scheduledWords.length) * 100) : 0}% đã thuộc</span>
+        <span className="mastery-rate">{tracked ? Math.round((masteredAll / tracked) * 100) : 0}% đã thuộc</span>
       </div>
       <div className="weekly-table">
         <div>
-          <b>Ngày thêm</b>
+          <b>Nhóm</b>
           <b>Tổng</b>
           <b>🔴 Cần ôn</b>
           <b>⏳ Chưa tới hạn</b>
           <b>🆕 Chưa học</b>
           <b>✅ Đã thuộc</b>
         </div>
-        {rows.map((r, i) => (
-          <div key={r.day}>
-            <span>
-              {String(i + 1).padStart(2, "0")} {r.day}
-            </span>
-            <span>{r.list.length}</span>
+        {dayRows.map((r) => (
+          <div key={r.label}>
+            <span>{r.label}</span>
+            <span>{r.total}</span>
             <span>{r.due}</span>
             <span>{r.waiting}</span>
             <span>{r.fresh}</span>
             <span>{r.mastered}</span>
           </div>
         ))}
+        {!!topicRows.length && (
+          <div className="weekly-group">
+            <button onClick={() => setShowTopics((value) => !value)}>
+              {showTopics ? "▾" : "▸"} Thư mục chủ đề · {topicRows.length} folder · {pdfWords.length} từ
+            </button>
+          </div>
+        )}
+        {showTopics &&
+          topicRows.map((r) => (
+            <div key={r.label}>
+              <span>{r.label}</span>
+              <span>{r.total}</span>
+              <span>{r.due}</span>
+              <span>{r.waiting}</span>
+              <span>{r.fresh}</span>
+              <span>{r.mastered}</span>
+            </div>
+          ))}
       </div>
     </section>
   );
@@ -1089,19 +1893,30 @@ function Stat({ label, value, note, icon, tone }: { label: string; value: string
   );
 }
 
-function Words({ words, query, setQuery, toggleStar, add, remove, importWords, startTopicReview, setStudyDay, startDayReview }: { words: WordCard[]; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; startTopicReview: (topic: string) => void; setStudyDay: (id: string, day: number) => void; startDayReview: (day?: number) => void }) {
+function Words({ words, query, setQuery, toggleStar, add, bulkAdd, remove, importWords, startTopicReview, setStudyDay, startDayReview, openWordDetail, fillMissingFields, backfill }: { words: WordCard[]; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; startTopicReview: (topic: string) => void; setStudyDay: (id: string, day: number) => void; startDayReview: (day?: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null }) {
+  const PAGE_SIZE = 25;
   const fileRef = useRef<HTMLInputElement>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [dayFilter, setDayFilter] = useState<number | null>(null);
   const [collectionFilter, setCollectionFilter] = useState<"daily" | "pdf">("daily");
   const [pdfTopic, setPdfTopic] = useState<string | null>(null);
+  const [page, setPage] = useState({ key: "", value: 1 });
+  const [deleteCandidate, setDeleteCandidate] = useState<WordCard | null>(null);
   const isPdfWord = isPdfVocabulary;
   const personalWords = words.filter((word) => !isPdfWord(word));
   const pdfWords = words.filter(isPdfWord);
   const pdfTopics = [...new Set(pdfWords.flatMap((word) => word.topic.split(" · ")))].sort((a, b) => a.localeCompare(b, "vi"));
   const activeCollection = collectionFilter === "pdf" ? (pdfTopic ? pdfWords.filter((word) => word.topic.split(" · ").includes(pdfTopic)) : pdfWords) : personalWords;
   const visible = activeCollection.filter((w) => (statusFilter === "all" || wordState(w).key === statusFilter) && (dayFilter === null || addedDayIndex(w) === dayFilter));
+  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  // Đổi bộ lọc thì về trang 1, và trang không bao giờ vượt quá số trang hiện có.
+  // Suy ra ngay lúc render thay vì dùng effect, tránh một lượt render thừa hiển thị trang rỗng.
+  const filterKey = `${query}|${statusFilter}|${dayFilter}|${collectionFilter}|${pdfTopic}`;
+  const currentPage = page.key === filterKey ? Math.min(page.value, pageCount) : 1;
+  const pagedVisible = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const goToPage = (value: number) => setPage({ key: filterKey, value: Math.min(Math.max(1, value), pageCount) });
   const dayWords = dayFilter === null ? [] : personalWords.filter((word) => addedDayIndex(word) === dayFilter);
+  const incomplete = personalWords.filter(needsEnrichment);
   function exportCsv() {
     const rows = [["term", "meaning_vi", "ipa", "example", "example_vi", "topic"], ...activeCollection.map((w) => [w.term, w.meaning, w.ipa, w.example, w.exampleVi ?? "", w.topic])];
     const csv = rows.map((r) => r.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(",")).join("\n");
@@ -1125,10 +1940,33 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
         type: "array",
         cellDates: true,
       });
-      const daySheets = workbook.SheetNames.filter((n) => /^0[1-7] /.test(n));
+      // Sheet đặt tên "01 …" là định dạng cũ; file chỉ có một sheet thường thì đọc hết.
+      const named = workbook.SheetNames.filter((n) => /^0[1-7] /.test(n));
+      const daySheets = named.length ? named : workbook.SheetNames;
+      // Thứ lấy từ tên sheet, không có thì lấy từ tên file ("01 Monday.xlsx" → Thứ Hai).
+      const dayFromName = (name: string) => {
+        const numbered = name.match(/^0?([1-7])\b/);
+        if (numbered) return Number(numbered[1]) - 1;
+        const english = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].findIndex((d) => name.toLowerCase().includes(d));
+        return english >= 0 ? english : undefined;
+      };
       const imported: Omit<WordCard, "id" | "lapses">[] = [];
       for (const name of daySheets) {
+        const sheetDay = dayFromName(name) ?? dayFromName(file.name);
         const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[name], { defval: "" });
+        const headers = Object.keys(rows[0] ?? {});
+        // File chỉ là một cột "từ: nghĩa" thì không có dòng tiêu đề — ô đầu tiên cũng là dữ liệu.
+        if (!headers.includes("Từ / Cụm từ")) {
+          const lines = XLSX.utils
+            .sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, defval: "" })
+            .map((row) => String(row[0] ?? "").trim())
+            .filter(Boolean);
+          for (const line of lines) {
+            const parsed = parseTermLine(line);
+            if (parsed) imported.push({ ...parsed, studyDay: sheetDay });
+          }
+          continue;
+        }
         for (const row of rows) {
           const term = String(row["Từ / Cụm từ"] || "").trim();
           if (!term) continue;
@@ -1154,36 +1992,33 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
             box,
             dueDate: excelDate(row["Ngày ôn tiếp"]),
             status: box >= 6 ? "mastered" : reviewed === 0 ? "new" : "review",
+            studyDay: sheetDay,
           });
         }
       }
       importWords(imported);
-      alert(`Đã nhập ${imported.length} từ từ ${daySheets.length} sheet.`);
+      const days = [...new Set(imported.map((item) => item.studyDay).filter((day) => typeof day === "number"))].map((day) => dayNames[day as number]);
+      alert(imported.length ? `Đã nhập ${imported.length} từ${days.length ? ` vào ${days.join(", ")}` : ""}.` : "Không đọc được từ nào trong file. Mỗi dòng nên có dạng: từ (loại từ): nghĩa");
       return;
     }
     const text = await file.text();
+    // File văn bản cũng lấy thứ từ tên file, ví dụ "01 Monday.txt".
+    const fileDay = (() => {
+      const numbered = file.name.match(/^0?([1-7])\b/);
+      if (numbered) return Number(numbered[1]) - 1;
+      const english = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].findIndex((day) => file.name.toLowerCase().includes(day));
+      return english >= 0 ? english : undefined;
+    })();
     const items = text
       .split(/\r?\n/)
+      .map((line) => line.replace(/^"|"$/g, "").trim())
       .filter(Boolean)
       .slice(0, 1000)
-      .map((line) => {
-        const parts = line.includes("\t") ? line.split("\t") : line.split(/[:,]/);
-        const term = (parts.shift() ?? "").replace(/^"|"$/g, "").trim();
-        const meaning = parts.join(":").replace(/^"|"$/g, "").trim();
-        return {
-          term,
-          meaning: meaning || "Chưa có nghĩa",
-          ipa: "/…/",
-          example: naturalExample(term),
-          exampleVi: naturalExampleVi(term),
-          cloze: `I am learning how to use _____ naturally.`,
-          definition: "",
-          topic: "Nhập khẩu",
-          box: 1,
-        };
-      })
-      .filter((x) => x.term.toLowerCase() !== "term" && x.term);
+      .map((line) => parseTermLine(line.includes("\t") ? line.replace("\t", ": ") : line))
+      .filter((item): item is Omit<WordCard, "id" | "lapses"> => !!item && item.term.toLowerCase() !== "term")
+      .map((item) => ({ ...item, studyDay: fileDay }));
     importWords(items);
+    alert(items.length ? `Đã nhập ${items.length} từ${typeof fileDay === "number" ? ` vào ${dayNames[fileDay]}` : ""}.` : "Không đọc được từ nào. Mỗi dòng nên có dạng: từ (loại từ): nghĩa");
   }
   return (
     <div className="page words-page">
@@ -1193,7 +2028,7 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
           <h1>Từ vựng</h1>
           <p>{collectionFilter === "pdf" ? (pdfTopic ? `${activeCollection.length} từ trong chủ đề ${pdfTopic}.` : `${pdfWords.length} từ trong ${pdfTopics.length} thư mục chủ đề.`) : `${personalWords.length} từ cá nhân · quản lý theo Leitner Box.`}</p>
         </div>
-        {collectionFilter === "daily" && <button className="primary" onClick={add}>＋ Thêm từ mới</button>}
+        {collectionFilter === "daily" && <div className="section-actions"><button onClick={bulkAdd}>☷ Dán danh sách</button><button className="primary" onClick={add}>＋ Thêm từ mới</button></div>}
       </div>
       <div className="day-tabs">
         <button className={dayFilter === null && collectionFilter === "daily" ? "active" : ""} onClick={() => { setDayFilter(null); setCollectionFilter("daily"); setPdfTopic(null); setQuery(""); }}>
@@ -1214,7 +2049,7 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
       {collectionFilter === "pdf" && !pdfTopic && (
         <section className="topic-folders">
           <div className="topic-folders-head">
-            <div><h3>Thư mục chủ đề</h3><p>Chọn một thư mục để xem và ôn riêng nhóm từ đó.</p></div>
+            <div><h3>Thư mục học</h3><p>Chọn một folder để học riêng như một bộ thẻ Quizlet.</p></div>
           </div>
           <div className="topic-folder-grid">
             {pdfTopics.map((topic) => {
@@ -1228,7 +2063,7 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
         <div className="selected-topic-bar">
           <button onClick={() => setPdfTopic(null)}>← Tất cả chủ đề</button>
           <div><b>{pdfTopic}</b><small>{activeCollection.length} từ</small></div>
-          <button className="primary" onClick={() => startTopicReview(pdfTopic)}>Ôn chủ đề này →</button>
+          <button className="primary" onClick={() => startTopicReview(pdfTopic)}>Học folder này →</button>
         </div>
       )}
       {collectionFilter === "daily" && (
@@ -1243,7 +2078,7 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
                 </small>
               </div>
               <button className="primary" disabled={!personalWords.length} onClick={() => startDayReview()}>
-                Ôn tất cả →
+                Học tất cả →
               </button>
             </>
           ) : (
@@ -1256,7 +2091,7 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
                 </small>
               </div>
               <button className="primary" disabled={!dayWords.length} onClick={() => startDayReview(dayFilter)}>
-                Ôn ngày này →
+                Học folder này →
               </button>
             </>
           )}
@@ -1276,10 +2111,28 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
           <option value="mastered">✅ Đã thuộc</option>
         </select>
         {collectionFilter === "daily" && <button onClick={() => fileRef.current?.click()}>Nhập Excel</button>}
+        {collectionFilter === "daily" && !!incomplete.length && (
+          <button className="backfill-button" disabled={!!backfill} onClick={fillMissingFields} title={`Thiếu dữ liệu: ${incomplete.map((word) => word.term).slice(0, 8).join(", ")}${incomplete.length > 8 ? "…" : ""}`}>
+            {backfill ? `◌ Đang bổ sung ${backfill.done}/${backfill.total}…` : `✦ Bổ sung ${incomplete.length} từ thiếu`}
+          </button>
+        )}
         <button onClick={exportCsv}>Xuất CSV</button>
         <button onClick={exportQuizlet}>Quizlet</button>
         <input ref={fileRef} type="file" accept=".xlsx,.csv,.txt" hidden onChange={(e) => void readFile(e.target.files?.[0])} />
       </div>
+      {backfill && (
+        <div className={backfill.done < backfill.total ? "backfill-status" : "backfill-status done"}>
+          {backfill.done < backfill.total ? (
+            <>
+              Đang tra và bổ sung <b>{backfill.done}</b>/{backfill.total} từ… chỉ điền vào ô đang trống, không đè lên nội dung bạn đã sửa.
+            </>
+          ) : (
+            <>
+              Xong: đã bổ sung <b>{backfill.total - backfill.failed}</b>/{backfill.total} từ{backfill.failed ? ` · ${backfill.failed} từ không tra được` : ""}.
+            </>
+          )}
+        </div>
+      )}
       <div className="word-table">
         <div className="word-tr word-th">
           <span>TỪ / LOẠI TỪ / NGHĨA</span>
@@ -1288,10 +2141,10 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
           <span>TRẠNG THÁI</span>
           <span />
         </div>
-        {visible.map((w) => (
-          <div className={`word-tr state-${wordState(w).key}`} key={w.id}>
+        {pagedVisible.map((w) => (
+          <div className={`word-tr word-clickable state-${wordState(w).key}`} key={w.id} role="button" tabIndex={0} aria-label={`Xem đầy đủ thông tin của ${w.term}`} onClick={() => openWordDetail(w.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openWordDetail(w.id); } }}>
             <span className="word-main">
-              <button onClick={() => toggleStar(w.id)} aria-label="Gắn sao">
+              <button onClick={(event) => { event.stopPropagation(); toggleStar(w.id); }} aria-label="Gắn sao">
                 {w.starred ? "★" : "☆"}
               </button>
               <span>
@@ -1308,7 +2161,7 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
             <span className="topic-cell">
               <em>{w.topic}</em>
               {!isPdfWord(w) && (
-                <select className="day-select" aria-label={`Ngày học của ${w.term}`} value={addedDayIndex(w)} onChange={(e) => setStudyDay(w.id, Number(e.target.value))}>
+                <select className="day-select" aria-label={`Ngày học của ${w.term}`} value={addedDayIndex(w)} onClick={(event) => event.stopPropagation()} onChange={(e) => setStudyDay(w.id, Number(e.target.value))}>
                   {dayNames.map((name, index) => (
                     <option value={index} key={name}>
                       {name}
@@ -1328,8 +2181,9 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
             <span className="state-label">{wordState(w).label}</span>
             {!isPdfWord(w) && <button
               aria-label={`Xóa ${w.term}`}
-              onClick={() => {
-                if (confirm(`Chuyển “${w.term}” vào thùng rác?`)) remove(w.id);
+              onClick={(event) => {
+                event.stopPropagation();
+                setDeleteCandidate(w);
               }}
             >
               ×
@@ -1337,7 +2191,35 @@ function Words({ words, query, setQuery, toggleStar, add, remove, importWords, s
           </div>
         ))}
       </div>
+      {visible.length > PAGE_SIZE && (
+        <nav className="pagination" aria-label="Phân trang từ vựng">
+          <span>Hiển thị {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, visible.length)} trong {visible.length} từ</span>
+          <div>
+            <button disabled={currentPage === 1} onClick={() => goToPage(currentPage - 1)}>← Trước</button>
+            {Array.from({ length: pageCount }, (_, index) => index + 1)
+              .filter((number) => number === 1 || number === pageCount || Math.abs(number - currentPage) <= 1)
+              .map((number, index, pages) => <span key={number}>{index > 0 && number - pages[index - 1] > 1 && <i>…</i>}<button className={number === currentPage ? "active" : ""} aria-current={number === currentPage ? "page" : undefined} onClick={() => goToPage(number)}>{number}</button></span>)}
+            <button disabled={currentPage === pageCount} onClick={() => goToPage(currentPage + 1)}>Sau →</button>
+          </div>
+        </nav>
+      )}
       </>}
+      {deleteCandidate && (
+        <div className="modal-backdrop" onMouseDown={() => setDeleteCandidate(null)}>
+          <section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" onMouseDown={(event) => event.stopPropagation()}>
+            <span className="confirm-icon">♲</span>
+            <div>
+              <span className="eyebrow">XÁC NHẬN XÓA TỪ</span>
+              <h2 id="delete-title">Chuyển “{deleteCandidate.term}” vào thùng rác?</h2>
+              <p>Từ này sẽ biến mất khỏi thư viện và các folder học. Nếu bạn đã đăng nhập, thay đổi cũng được đồng bộ với tài khoản của bạn.</p>
+            </div>
+            <div className="confirm-actions">
+              <button onClick={() => setDeleteCandidate(null)}>Giữ lại</button>
+              <button className="danger-button" onClick={() => { remove(deleteCandidate.id); setDeleteCandidate(null); }}>Chuyển vào thùng rác</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -1456,6 +2338,16 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, r
             <div className="ipa">{card.ipa}</div>
             {graded !== null && <p className={graded ? "review-verdict good" : "review-verdict"}>{graded ? "✓ Bạn trả lời đúng" : shownMode === "quiz" ? `✗ Bạn chọn: ${choices.find((item) => item.id === choice)?.meaning}` : `✗ Bạn viết: ${answer}`}</p>}
             <p className="review-meaning">{card.meaning}</p>
+            {card.collocation && <p className="review-collocation"><b>{card.collocation}</b>{card.collocationVi && <span>{card.collocationVi}</span>}</p>}
+            {(card.synonyms?.length || card.antonyms?.length || card.related?.length || card.paraphrases?.length || card.ieltsTopics?.length) && (
+              <div className="review-ielts">
+                {!!card.synonyms?.length && <p><b>Đồng nghĩa</b><span>{withMeanings(card.synonyms, card.synonymDetails)}</span></p>}
+                {!!card.antonyms?.length && <p><b>Trái nghĩa</b><span>{withMeanings(card.antonyms, card.antonymDetails)}</span></p>}
+                {!!card.related?.length && <p><b>Từ cùng chủ đề</b><span>{withMeanings(card.related, card.relatedDetails)}</span></p>}
+                {!!card.paraphrases?.length && <p><b>Paraphrase</b><span>{card.paraphrases.join(" · ")}</span></p>}
+                {!!card.ieltsTopics?.length && <p><b>IELTS topics</b><span>{card.ieltsTopics.join(" · ")}</span></p>}
+              </div>
+            )}
             <p className="example">
               {card.example}
               {card.exampleVi && <em>{card.exampleVi}</em>}
@@ -1491,14 +2383,123 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, r
   );
 }
 
-function SessionSummary({ total, close, restart }: { total: number; close: () => void; restart: () => void }) {
+function WordDetail({ word, close, study, speak }: { word: WordCard; close: () => void; study: () => void; speak: (text: string) => void }) {
+  const usageFields = [
+    ["Đồng nghĩa", word.synonyms, word.synonymDetails],
+    ["Trái nghĩa", word.antonyms, word.antonymDetails],
+    ["Từ hay đi cùng chủ đề", word.related, word.relatedDetails],
+  ] as const;
+  const simpleFields = [["Paraphrase IELTS", word.paraphrases], ["Chủ đề IELTS", word.ieltsTopics]] as const;
+  return (
+    <div className="modal-backdrop word-detail-backdrop" onMouseDown={close}>
+      <article className="word-detail" onMouseDown={(event) => event.stopPropagation()}>
+        <header>
+          <div><span className="eyebrow">THẺ TỪ VỰNG ĐẦY ĐỦ</span><h2>{word.term}</h2><p>{word.ipa} · {word.partOfSpeech || "chưa xác định loại từ"}</p></div>
+          <button onClick={close} aria-label="Đóng">×</button>
+        </header>
+        <button className="detail-speak" onClick={() => speak(word.term)}>◖)) Nghe phát âm</button>
+        <section className="detail-meaning"><b>Nghĩa tiếng Việt</b><p>{word.meaning}</p><small>{word.definition || "Chưa có định nghĩa Anh–Anh."}</small></section>
+        {word.collocation && <section className="detail-collocation"><span>CỤM NÊN HỌC</span><h3>{word.collocation}</h3><p>{word.collocationVi}</p></section>}
+        <section className="detail-example"><b>Ví dụ thực tế</b><p>{word.example}</p>{word.exampleVi && <small>{word.exampleVi}</small>}</section>
+        <div className="usage-detail-grid">
+          {usageFields.map(([label, values, details]) => <section key={label}><b>{label}</b>{details?.length ? (
+                <div>
+                  {details.map((item) => (
+                    <article key={item.term}>
+                      <h4>{item.term}</h4>
+                      <strong>{item.meaningVi}</strong>
+                      <p>{item.example}</p>
+                      <small>{item.exampleVi}</small>
+                    </article>
+                  ))}
+                </div>
+              ) : values?.length ? (
+                <div className="legacy-related">
+                  {values.map((value) => (
+                    <span key={value}>{value}</span>
+                  ))}
+                  {/* Nút bổ sung chỉ áp dụng cho từ tự thêm; bộ PDF lấy dữ liệu từ file dựng sẵn. */}
+                  {!isPdfVocabulary(word) && <small>Bấm “Bổ sung từ thiếu” để thêm nghĩa và câu ngữ cảnh.</small>}
+                </div>
+              ) : (
+                <small>{label === "Trái nghĩa" ? "Từ này không có từ trái nghĩa thông dụng." : "Chưa có gợi ý."}</small>
+              )}</section>)}
+        </div>
+        <div className="detail-field-grid">
+          {simpleFields.map(([label, values]) => (
+            <section key={label}>
+              <b>{label}</b>
+              {values?.length ? <div>{values.map((value) => <span key={value}>{value}</span>)}</div> : <small>Chưa có gợi ý.</small>}
+            </section>
+          ))}
+        </div>
+        <footer><button onClick={close}>Đóng</button><button className="primary" onClick={study}>Học từ này →</button></footer>
+      </article>
+    </div>
+  );
+}
+
+// Pháo giấy dựng bằng DOM thuần, không thêm thư viện. Vị trí và màu cố định theo chỉ số
+// nên không đổi giữa các lần render, và tự dừng sau khi animation chạy xong.
+function Celebration({ pieces = 70 }: { pieces?: number }) {
+  const confetti = useMemo(
+    () =>
+      Array.from({ length: pieces }, (_, index) => ({
+        left: (index * 37) % 100,
+        delay: ((index * 13) % 100) / 100,
+        duration: 2.4 + ((index * 7) % 12) / 10,
+        tilt: ((index * 29) % 90) - 45,
+        tone: index % 5,
+      })),
+    [pieces],
+  );
+  return (
+    <div className="confetti" aria-hidden="true">
+      {confetti.map((piece, index) => (
+        <i key={index} className={`confetti-piece tone-${piece.tone}`} style={{ left: `${piece.left}%`, animationDelay: `${piece.delay}s`, animationDuration: `${piece.duration}s`, transform: `rotate(${piece.tilt}deg)` }} />
+      ))}
+    </div>
+  );
+}
+
+function SessionSummary({ total, ratings, streak, close, restart }: { total: number; ratings: Rating[]; streak: { current: number; best: number }; close: () => void; restart: () => void }) {
+  const graded = ratings.length;
+  const solid = ratings.filter((rating) => rating === "good" || rating === "easy").length;
+  const accuracy = graded ? Math.round((solid / graded) * 100) : 0;
+  // "Hoàn thành tốt" = ôn hết phiên và từ 80% số thẻ trở lên ở mức Được/Dễ.
+  const excellent = graded > 0 && accuracy >= 80;
   return (
     <main className="review summary">
+      {excellent && <Celebration />}
       <section className="flashcard">
-        <span className="summary-mark">✓</span>
-        <span className="card-label">HOÀN THÀNH PHIÊN HỌC</span>
+        <span className={excellent ? "summary-mark cheer" : "summary-mark"}>{excellent ? "🎉" : "✓"}</span>
+        <span className="card-label">{excellent ? "XUẤT SẮC!" : "HOÀN THÀNH PHIÊN HỌC"}</span>
         <h1>{total} thẻ đã ôn</h1>
-        <p className="definition">Kết quả đã được đồng bộ vào lịch ôn tiếp theo của bạn.</p>
+        {!!graded && (
+          <div className="summary-stats">
+            <div>
+              <strong>{accuracy}%</strong>
+              <span>nhớ tốt</span>
+            </div>
+            <div>
+              <strong>
+                {solid}/{graded}
+              </strong>
+              <span>thẻ Được · Dễ</span>
+            </div>
+            <div>
+              <strong>🔥 {streak.current}</strong>
+              <span>ngày liên tiếp</span>
+            </div>
+          </div>
+        )}
+        <p className="definition">
+          {excellent
+            ? streak.current > 1
+              ? `Giữ chuỗi ${streak.current} ngày rồi — kỷ lục của bạn là ${streak.best} ngày.`
+              : "Kết quả đã được đồng bộ vào lịch ôn tiếp theo của bạn."
+            : "Những thẻ bạn còn quên sẽ quay lại sớm hơn trong lịch ôn."}
+        </p>
         <div className="summary-actions">
           <button onClick={close}>Về trang chủ</button>
           <button className="primary" onClick={restart}>
@@ -1522,6 +2523,8 @@ function Practice({ words, toggleStar }: { words: WordCard[]; toggleStar?: (id: 
     { label: "Google Dịch", short: "G", url: "https://translate.google.com/?sl=en&tl=vi", tone: "sky" },
   ];
   const [mode, setMode] = useState<"menu" | "flash" | "learn" | "test" | "listen" | "match" | "dictation">("menu");
+  const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(null);
+  const [practiceWords, setPracticeWords] = useState<WordCard[]>([]);
   const [index, setIndex] = useState(0);
   const [result, setResult] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
@@ -1532,12 +2535,44 @@ function Practice({ words, toggleStar }: { words: WordCard[]; toggleStar?: (id: 
         <p>Hãy thêm từ vựng trước khi bắt đầu.</p>
       </div>
     );
-  const word = words[index % words.length];
+  const activeWords = practiceWords.length ? practiceWords : words;
+  const word = activeWords[index % activeWords.length];
+  const personalWords = words.filter((item) => !isPdfVocabulary(item));
+  const pdfWords = words.filter(isPdfVocabulary);
+  const pdfTopics = [...new Set(pdfWords.flatMap((item) => item.topic.split(" · ")))];
+  function chooseMode(nextMode: Exclude<PracticeMode, "menu">) {
+    setPendingMode(nextMode);
+  }
+  function chooseFolder(folderWords: WordCard[]) {
+    if (!pendingMode || !folderWords.length) return;
+    setPracticeWords(folderWords);
+    setIndex(0);
+    setResult(null);
+    setTyped("");
+    setMode(pendingMode);
+    setPendingMode(null);
+  }
+  function returnToModes() {
+    setMode("menu");
+    setPendingMode(null);
+    setPracticeWords([]);
+  }
   function next() {
     setIndex((i) => i + 1);
     setResult(null);
     setTyped("");
   }
+  if (mode === "menu" && pendingMode)
+    return (
+      <FolderPicker
+        mode={pendingMode}
+        personalWords={personalWords}
+        pdfWords={pdfWords}
+        topics={pdfTopics}
+        choose={chooseFolder}
+        close={() => setPendingMode(null)}
+      />
+    );
   if (mode === "menu")
     return (
       <div className="page">
@@ -1553,32 +2588,32 @@ function Practice({ words, toggleStar }: { words: WordCard[]; toggleStar?: (id: 
         <h1>Luyện tập kiểu Quizlet</h1>
         <p className="page-sub">Chọn một chế độ để củng cố trí nhớ. Kết quả luyện tập không làm giảm hộp Leitner.</p>
         <div className="practice-grid quizlet-modes">
-          <button onClick={() => setMode("flash")}>
+          <button onClick={() => chooseMode("flash")}>
             <span>▱</span>
             <b>Flashcards</b>
             <small>Lật thẻ, nghe phát âm và tự kiểm tra</small>
           </button>
-          <button onClick={() => setMode("learn")}>
+          <button onClick={() => chooseMode("learn")}>
             <span>✎</span>
             <b>Học</b>
             <small>Từ trắc nghiệm lên tự gõ, lặp lại tới khi thuộc hết</small>
           </button>
-          <button onClick={() => setMode("test")}>
+          <button onClick={() => chooseMode("test")}>
             <span>◉</span>
             <b>Kiểm tra</b>
             <small>Bài kiểm tra trộn nhiều dạng câu, chấm điểm cuối bài</small>
           </button>
-          <button onClick={() => setMode("listen")}>
+          <button onClick={() => chooseMode("listen")}>
             <span>◖))</span>
             <b>Nghe và viết</b>
             <small>Nghe phát âm rồi nhập lại từ</small>
           </button>
-          <button onClick={() => setMode("dictation")}>
+          <button onClick={() => chooseMode("dictation")}>
             <span>≋</span>
             <b>Chép chính tả</b>
             <small>Nghe câu và gõ lại theo chủ đề, trình độ</small>
           </button>
-          <button onClick={() => setMode("match")}>
+          <button onClick={() => chooseMode("match")}>
             <span>⌘</span>
             <b>Nối cặp</b>
             <small>Ghép từ với nghĩa nhanh nhất</small>
@@ -1586,14 +2621,14 @@ function Practice({ words, toggleStar }: { words: WordCard[]; toggleStar?: (id: 
         </div>
       </div>
     );
-  if (mode === "match") return <MatchGame words={words} close={() => setMode("menu")} />;
-  if (mode === "dictation") return <DictationPractice words={words} close={() => setMode("menu")} />;
-  if (mode === "learn") return <LearnMode words={words} setMode={setMode} />;
-  if (mode === "test") return <TestMode words={words} setMode={setMode} />;
-  if (mode === "flash") return <FlashcardsMode words={words} setMode={setMode} toggleStar={toggleStar} />;
+  if (mode === "match") return <MatchGame words={activeWords} close={returnToModes} />;
+  if (mode === "dictation") return <DictationPractice words={activeWords} close={returnToModes} />;
+  if (mode === "learn") return <LearnMode words={activeWords} setMode={setMode} />;
+  if (mode === "test") return <TestMode words={activeWords} setMode={setMode} />;
+  if (mode === "flash") return <FlashcardsMode words={activeWords} setMode={setMode} toggleStar={toggleStar} />;
   return (
     <div className="page practice-session">
-      <button className="back" onClick={() => setMode("menu")}>
+      <button className="back" onClick={returnToModes}>
         ← Chọn chế độ khác
       </button>
       <div className="panel practice-card">
@@ -1621,6 +2656,50 @@ function Practice({ words, toggleStar }: { words: WordCard[]; toggleStar?: (id: 
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
+  flash: "Flashcards",
+  learn: "Học",
+  test: "Kiểm tra",
+  listen: "Nghe và viết",
+  dictation: "Chép chính tả",
+  match: "Nối cặp",
+};
+
+function FolderPicker({ mode, personalWords, pdfWords, topics, choose, close }: { mode: Exclude<PracticeMode, "menu">; personalWords: WordCard[]; pdfWords: WordCard[]; topics: string[]; choose: (words: WordCard[]) => void; close: () => void }) {
+  const dailyFolders = dayNames
+    .map((name, index) => ({ name, words: personalWords.filter((word) => addedDayIndex(word) === index) }))
+    .filter((folder) => folder.words.length);
+  const topicFolders = topics
+    .map((name) => ({ name, words: pdfWords.filter((word) => word.topic.split(" · ").includes(name)) }))
+    .filter((folder) => folder.words.length);
+  return (
+    <div className="page folder-picker-page">
+      <button className="back" onClick={close}>← Chọn chức năng khác</button>
+      <div className="eyebrow">BƯỚC 2 / 2</div>
+      <h1>Chọn folder cho {practiceModeNames[mode]}</h1>
+      <p className="page-sub">Chức năng chỉ sử dụng các từ trong folder bạn chọn.</p>
+      {!!personalWords.length && (
+        <section className="folder-section">
+          <h3>Folder của tôi</h3>
+          <div className="practice-folder-grid">
+            <button onClick={() => choose(personalWords)}><span>★</span><b>Tất cả từ của tôi</b><small>{personalWords.length} từ</small><i>Chọn folder →</i></button>
+            {dailyFolders.map((folder) => <button key={folder.name} onClick={() => choose(folder.words)}><span>▰</span><b>{folder.name}</b><small>{folder.words.length} từ</small><i>Chọn folder →</i></button>)}
+          </div>
+        </section>
+      )}
+      {(!!pdfWords.length || !!topicFolders.length) && (
+        <section className="folder-section">
+          <h3>Folder theo chủ đề</h3>
+          <div className="practice-folder-grid">
+            {!!pdfWords.length && <button onClick={() => choose(pdfWords)}><span>PDF</span><b>Toàn bộ từ PDF</b><small>{pdfWords.length} từ</small><i>Chọn folder →</i></button>}
+            {topicFolders.map((folder) => <button key={folder.name} onClick={() => choose(folder.words)}><span>▰</span><b>{folder.name}</b><small>{folder.words.length} từ</small><i>Chọn folder →</i></button>)}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -2888,7 +3967,65 @@ function Stats({ words, scopeLabel }: { words: WordCard[]; scopeLabel: string })
   );
 }
 
-function AddWord({ close, save }: { close: () => void; save: (w: Omit<WordCard, "id" | "box" | "lapses">) => void }) {
+function BulkAddWords({ close, save, existingWords }: { close: () => void; save: (items: Omit<WordCard, "id" | "box" | "lapses">[]) => void; existingWords: WordCard[] }) {
+  const [text, setText] = useState("");
+  const [studyDay, setStudyDay] = useState(() => weekdayIndex());
+  const normalizedExisting = useMemo(() => new Set(existingWords.map((word) => word.term.trim().toLowerCase().replace(/\s+/g, " "))), [existingWords]);
+  const preview = useMemo(() => {
+    const seen = new Set<string>();
+    return text.split(/\r?\n/).map((line) => line.replace(/^[-•*\d.)\s]+/, "").trim()).filter(Boolean).slice(0, 200).map((term) => {
+      const normalized = term.toLowerCase().replace(/\s+/g, " ");
+      const duplicate = normalizedExisting.has(normalized) || seen.has(normalized);
+      seen.add(normalized);
+      return { term: term.replace(/\s+/g, " "), duplicate };
+    });
+  }, [text, normalizedExisting]);
+  const valid = preview.filter((item) => !item.duplicate);
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!valid.length) return;
+    save(valid.map(({ term }) => {
+      const example = naturalExample(term);
+      return {
+        term,
+        meaning: "Chưa bổ sung nghĩa",
+        ipa: "/…/",
+        partOfSpeech: "",
+        definition: "",
+        example,
+        exampleVi: naturalExampleVi(term),
+        cloze: clozeFor(term, example),
+        collocation: "",
+        collocationVi: "",
+        synonyms: [],
+        antonyms: [],
+        related: [],
+        paraphrases: [],
+        ieltsTopics: [],
+        topic: "Từ vựng chung",
+        status: "new",
+        reviewCount: 0,
+        addedDate: localDateString(),
+        studyDay,
+      };
+    }));
+  }
+  return (
+    <div className="modal-backdrop" onMouseDown={close}>
+      <form className="modal bulk-add-modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
+        <div className="modal-head"><div><span className="eyebrow">THÊM NHANH</span><h2>Dán danh sách từ</h2></div><button type="button" onClick={close}>×</button></div>
+        <p className="bulk-help">Mỗi dòng là một từ hoặc cụm từ. Có thể giữ nguyên dấu “/”, ví dụ: <b>shopping cart / trolley</b>.</p>
+        <label>Danh sách của bạn<textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} placeholder={"grocery shopping\nshopping cart / trolley\nbuggy\ndepartment/section\naisle"} /></label>
+        <label>Folder ngày học<select value={studyDay} onChange={(event) => setStudyDay(Number(event.target.value))}>{dayNames.map((name, index) => <option value={index} key={name}>{name}</option>)}</select></label>
+        {!!preview.length && <section className="bulk-preview"><div className="bulk-summary"><b>{valid.length} mục sẽ được thêm</b><span>{preview.length - valid.length} mục trùng sẽ bỏ qua</span></div><div className="bulk-preview-list">{preview.map((item, index) => <span className={item.duplicate ? "duplicate" : ""} key={`${item.term}-${index}`}>{item.duplicate ? "⊘" : "✓"} {item.term}</span>)}</div></section>}
+        <p className="bulk-note">Sau khi lưu, dùng nút “Bổ sung từ thiếu” để tự điền nghĩa, IPA, ví dụ, cụm từ và nội dung IELTS.</p>
+        <div className="modal-actions"><button type="button" onClick={close}>Hủy</button><button className="primary" type="submit" disabled={!valid.length}>Thêm {valid.length || ""} từ vào {dayNames[studyDay]}</button></div>
+      </form>
+    </div>
+  );
+}
+
+function AddWord({ close, save, existingWords }: { close: () => void; save: (w: Omit<WordCard, "id" | "box" | "lapses">) => void; existingWords: WordCard[] }) {
   const [term, setTerm] = useState("");
   const [meaning, setMeaning] = useState("");
   const [example, setExample] = useState("");
@@ -2897,10 +4034,68 @@ function AddWord({ close, save }: { close: () => void; save: (w: Omit<WordCard, 
   const [ipa, setIpa] = useState("");
   const [partOfSpeech, setPartOfSpeech] = useState("");
   const [definition, setDefinition] = useState("");
+  const [collocation, setCollocation] = useState("");
+  const [collocationVi, setCollocationVi] = useState("");
+  const [synonyms, setSynonyms] = useState("");
+  const [antonyms, setAntonyms] = useState("");
+  const [related, setRelated] = useState("");
+  const [synonymDetails, setSynonymDetails] = useState<UsageDetail[]>([]);
+  const [antonymDetails, setAntonymDetails] = useState<UsageDetail[]>([]);
+  const [relatedDetails, setRelatedDetails] = useState<UsageDetail[]>([]);
+  const [paraphrases, setParaphrases] = useState("");
+  const [ieltsTopics, setIeltsTopics] = useState("");
   const [studyDay, setStudyDay] = useState(() => weekdayIndex());
   const [loading, setLoading] = useState(false);
   const [lookupMessage, setLookupMessage] = useState("");
   const lookupRequest = useRef(0);
+  const normalizedTerm = term.trim().toLowerCase().replace(/\s+/g, " ");
+  const duplicate = existingWords.find((word) => word.term.trim().toLowerCase().replace(/\s+/g, " ") === normalizedTerm);
+  // setDetails là setter của useState nên phải nhận được cả hàm cập nhật, không chỉ mảng.
+  function updateUsageList(value: string, setValue: (value: string) => void, setDetails: Dispatch<SetStateAction<UsageDetail[]>>) {
+    setValue(value);
+    const retained = new Set(value.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean));
+    setDetails((current) => current.filter((item) => retained.has(item.term.trim().toLowerCase())));
+  }
+  function usagePreview(title: string, details: UsageDetail[]) {
+    if (!details.length) return null;
+    return (
+      <section className="add-usage-preview">
+        <b>{title}</b>
+        <div>
+          {details.map((item) => (
+            <article key={`${title}-${item.term}`}>
+              <h4>{item.term}</h4>
+              <strong>{item.meaningVi || "Chưa có nghĩa tiếng Việt"}</strong>
+              <p>{item.example || "Chưa có ngữ cảnh sử dụng."}</p>
+              <small>{item.exampleVi || "Chưa có bản dịch ngữ cảnh."}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
+  }
+  async function requestEnrichment(word: string) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 12000);
+        try {
+          return await fetch("/api/ai/enrich", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ term: word, part_of_speech: partOfSpeech }),
+            signal: controller.signal,
+          });
+        } finally {
+          window.clearTimeout(timeout);
+        }
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
   async function enrich(value = term) {
     const word = value.trim().replace(/\s+/g, " ");
     const requestId = ++lookupRequest.current;
@@ -2909,34 +4104,53 @@ function AddWord({ close, save }: { close: () => void; save: (w: Omit<WordCard, 
       setLookupMessage(word ? "Chỉ tra được nội dung gồm chữ cái, dấu nháy và gạch nối." : "");
       return;
     }
+    const existing = existingWords.find((item) => item.term.trim().toLowerCase().replace(/\s+/g, " ") === word.toLowerCase());
+    if (existing) {
+      // Không đặt lookupMessage ở đây: đó là văn bản tĩnh, xoá từ xong nó vẫn nằm lại.
+      // Cảnh báo trùng đã có sẵn ngay dưới ô nhập và tự biến mất khi từ không còn.
+      setLoading(false);
+      setLookupMessage("");
+      return;
+    }
     setLoading(true);
     setLookupMessage("Đang tra từ điển và chọn chủ đề…");
     try {
-      const response = await fetch("/api/ai/enrich", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ term: word }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
+      const response = await requestEnrichment(word);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Không thể tra từ (mã ${response.status}).`);
       if (requestId !== lookupRequest.current || data.term?.toLowerCase() !== word.toLowerCase()) return;
       setIpa(data.ipa || "");
       setPartOfSpeech(data.part_of_speech || "");
       setMeaning(data.meaning_vi || "");
       setDefinition(data.definition_en || "");
+      setCollocation(data.collocation || "");
+      setCollocationVi(data.collocation_vi || "");
+      setSynonyms((data.synonyms || []).join(", "));
+      setAntonyms((data.antonyms || []).join(", "));
+      setRelated((data.related || []).join(", "));
+      setSynonymDetails(data.synonym_details || []);
+      setAntonymDetails(data.antonym_details || []);
+      setRelatedDetails(data.related_details || []);
+      setParaphrases((data.paraphrases || []).join("; "));
+      setIeltsTopics((data.ielts_topics || []).join(", "));
       setExample(data.example || "");
       setExampleVi(data.example_vi || "");
       setTopic(data.topic || "Từ vựng chung");
       setLookupMessage(
         data.partial
           ? "✓ Đã điền từ dữ liệu của từng từ. Cụm từ không có mục từ riêng nên phần định nghĩa là nghĩa từng từ — hãy sửa lại cho đúng ngữ cảnh."
+          : data.example_source === "practical"
+            ? `✓ Đã chọn cụm “${data.collocation}” và đặt trong câu đời thường dễ dùng.`
+          : data.example_source === "generated_phrase"
+            ? `✓ Đã tự tạo cụm “${data.collocation}” và câu ngắn chứa cụm này. Hãy kiểm tra trước khi lưu.`
           : data.example_source === "template"
             ? "✓ Đã tự động điền. Từ điển không có câu ví dụ cho từ này — hãy thay câu ví dụ bằng ngữ cảnh của riêng bạn."
             : "✓ Đã tự động điền kèm câu ví dụ thật từ từ điển — hãy kiểm tra trước khi lưu.",
       );
     } catch (error) {
       if (requestId !== lookupRequest.current) return;
-      setLookupMessage(error instanceof Error ? error.message : "Không thể tra từ.");
+      const networkError = error instanceof TypeError || (error instanceof DOMException && error.name === "AbortError");
+      setLookupMessage(networkError ? "Không kết nối được dịch vụ tra từ. Bạn vẫn có thể nhập nghĩa thủ công và lưu từ." : error instanceof Error ? error.message : "Không thể tra từ.");
     } finally {
       if (requestId === lookupRequest.current) setLoading(false);
     }
@@ -2948,16 +4162,36 @@ function AddWord({ close, save }: { close: () => void; save: (w: Omit<WordCard, 
   }, [term]);
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!term || !meaning) return;
+    if (!term.trim()) return;
+    if (duplicate) {
+      setLookupMessage(`⚠ Từ “${duplicate.term}” đã được thêm trước đó. Không thể lưu thêm bản trùng.`);
+      return;
+    }
+    if (!collocation.trim() || !collocationVi.trim()) {
+      setLookupMessage("Mỗi từ cần có cụm đi cùng và nghĩa của cụm. Hãy bấm “Tra và tự động điền” trước khi lưu.");
+      return;
+    }
+    const safeTerm = term.trim().replace(/\s+/g, " ");
+    const escapedTerm = safeTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     save({
-      term,
-      meaning,
-      example: example || naturalExample(term),
-      exampleVi: exampleVi || (example ? "" : naturalExampleVi(term)),
-      cloze: (example || naturalExample(term)).replace(new RegExp(term, "i"), "_____"),
+      term: safeTerm,
+      meaning: meaning.trim() || "Chưa bổ sung nghĩa",
+      example: example || naturalExample(safeTerm),
+      exampleVi: exampleVi || (example ? "" : naturalExampleVi(safeTerm)),
+      cloze: (example || naturalExample(safeTerm)).replace(new RegExp(escapedTerm, "i"), "_____"),
       ipa: ipa || "/…/",
       partOfSpeech,
       definition: definition || "Bổ sung định nghĩa Anh–Anh sau.",
+      collocation,
+      collocationVi,
+      synonyms: synonyms.split(",").map((item) => item.trim()).filter(Boolean),
+      antonyms: antonyms.split(",").map((item) => item.trim()).filter(Boolean),
+      related: related.split(",").map((item) => item.trim()).filter(Boolean),
+      synonymDetails,
+      antonymDetails,
+      relatedDetails,
+      paraphrases: paraphrases.split(";").map((item) => item.trim()).filter(Boolean),
+      ieltsTopics: ieltsTopics.split(",").map((item) => item.trim()).filter(Boolean),
       topic,
       addedDate: localDateString(),
       studyDay,
@@ -2991,6 +4225,7 @@ function AddWord({ close, save }: { close: () => void; save: (w: Omit<WordCard, 
             placeholder="Ví dụ: meaningful hoặc take for granted"
           />
         </label>
+        {duplicate && <p className="duplicate-warning">⚠ Từ “{duplicate.term}” đã được thêm trước đó{duplicate.addedDate ? ` vào ngày ${duplicate.addedDate}` : ""}{duplicate.topic ? ` · Chủ đề: ${duplicate.topic}` : ""}.</p>}
         <button className="ai-fill" type="button" disabled={loading || !term} onClick={() => void enrich()}>
           {loading ? "◌ Đang tự động điền…" : "✦ Tra và tự động điền"}
         </button>
@@ -3037,6 +4272,34 @@ function AddWord({ close, save }: { close: () => void; save: (w: Omit<WordCard, 
           Định nghĩa Anh–Anh
           <textarea value={definition} onChange={(e) => setDefinition(e.target.value)} placeholder="English definition" />
         </label>
+        <div className="form-grid collocation-fields">
+          <label>
+            Cụm nên học
+            <input value={collocation} onChange={(e) => setCollocation(e.target.value)} placeholder="Ví dụ: pull out weeds" />
+          </label>
+          <label>
+            Nghĩa của cụm
+            <input value={collocationVi} onChange={(e) => setCollocationVi(e.target.value)} placeholder="Ví dụ: nhổ cỏ dại" />
+          </label>
+        </div>
+        <section className="ielts-word-family">
+          <b>Mở rộng từ vựng IELTS</b>
+          <div className="form-grid">
+            <label>Từ đồng nghĩa<input value={synonyms} onChange={(e) => updateUsageList(e.target.value, setSynonyms, setSynonymDetails)} placeholder="Các từ cách nhau bằng dấu phẩy" /></label>
+            <label>Từ trái nghĩa<input value={antonyms} onChange={(e) => updateUsageList(e.target.value, setAntonyms, setAntonymDetails)} placeholder="Các từ cách nhau bằng dấu phẩy" /></label>
+          </div>
+          <label>Từ hay đi cùng chủ đề<input value={related} onChange={(e) => updateUsageList(e.target.value, setRelated, setRelatedDetails)} placeholder="Các từ liên quan cách nhau bằng dấu phẩy" /></label>
+          {(synonymDetails.length > 0 || antonymDetails.length > 0 || relatedDetails.length > 0) && (
+            <div className="add-usage-details">
+              <p>Gợi ý sử dụng — các nội dung dưới đây sẽ được lưu cùng thẻ từ.</p>
+              {usagePreview("Ngữ cảnh từ đồng nghĩa", synonymDetails)}
+              {usagePreview("Ngữ cảnh từ trái nghĩa", antonymDetails)}
+              {usagePreview("Ngữ cảnh từ cùng chủ đề", relatedDetails)}
+            </div>
+          )}
+          <label>Cách paraphrase<textarea value={paraphrases} onChange={(e) => setParaphrases(e.target.value)} placeholder="Các cách diễn đạt cách nhau bằng dấu chấm phẩy" /></label>
+          <label>Chủ đề IELTS có thể áp dụng<input value={ieltsTopics} onChange={(e) => setIeltsTopics(e.target.value)} placeholder="Environment, Education, Technology…" /></label>
+        </section>
         <label>
           Câu ví dụ
           <textarea value={example} onChange={(e) => setExample(e.target.value)} placeholder="Một câu trong ngữ cảnh tự nhiên" />
@@ -3049,7 +4312,7 @@ function AddWord({ close, save }: { close: () => void; save: (w: Omit<WordCard, 
           <button type="button" onClick={close}>
             Hủy
           </button>
-          <button className="primary" type="submit" disabled={loading}>
+          <button className="primary" type="submit" disabled={loading || !!duplicate || !collocation.trim() || !collocationVi.trim()} title={duplicate ? "Từ này đã tồn tại trong kho của bạn" : !collocation.trim() ? "Hãy tra từ để tự động tạo cụm trước khi lưu" : undefined}>
             Lưu từ mới
           </button>
         </div>
@@ -3058,19 +4321,23 @@ function AddWord({ close, save }: { close: () => void; save: (w: Omit<WordCard, 
   );
 }
 
-function AuthModal({ close }: { close: () => void }) {
+function AuthModal({ close, signedInEmail }: { close: () => void; signedInEmail: string | null }) {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   async function login(e: FormEvent) {
     e.preventDefault();
-    if (!supabase || !email) return;
+    if (!supabase) {
+      setMessage("Chưa cấu hình kết nối Supabase cho ứng dụng.");
+      return;
+    }
+    if (!email) return;
     setBusy(true);
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: { emailRedirectTo: window.location.origin },
     });
-    setMessage(error ? error.message : "Đã gửi liên kết đăng nhập. Hãy kiểm tra email của bạn.");
+    setMessage(error ? error.message : "✓ Đã gửi liên kết đăng nhập. Hãy mở email trên thiết bị này và bấm vào liên kết để hoàn tất.");
     setBusy(false);
   }
   async function logout() {
@@ -3082,26 +4349,26 @@ function AuthModal({ close }: { close: () => void }) {
       <form className="modal auth-modal" onMouseDown={(e) => e.stopPropagation()} onSubmit={login}>
         <div className="modal-head">
           <div>
-            <span className="eyebrow">TÀI KHOẢN</span>
-            <h2>Đăng nhập Lexilo</h2>
+            <span className="eyebrow">TÀI KHOẢN CỦA BẠN</span>
+            <h2>{signedInEmail ? "Đã đăng nhập" : "Đăng nhập bằng email"}</h2>
           </div>
           <button type="button" onClick={close}>
             ×
           </button>
         </div>
-        <p className="auth-copy">Nhận liên kết đăng nhập qua email để dùng cùng một kho từ vựng trên mọi thiết bị.</p>
-        <label>
-          Email
-          <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ban@example.com" />
-        </label>
+        <p className="auth-copy">{signedInEmail ? `Dữ liệu đang được lưu riêng cho ${signedInEmail}.` : "Không cần mật khẩu. Chúng tôi sẽ gửi một liên kết đăng nhập vào email; dữ liệu sau đó được lưu riêng cho tài khoản này."}</p>
+        {!signedInEmail && <label>
+          Địa chỉ email
+          <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ban@example.com" />
+        </label>}
         {message && <p className="auth-message">{message}</p>}
         <div className="modal-actions">
-          <button type="button" onClick={() => void logout()}>
-            Đăng xuất phiên hiện tại
-          </button>
-          <button className="primary" disabled={busy}>
-            {busy ? "Đang gửi…" : "Gửi liên kết đăng nhập"}
-          </button>
+          {signedInEmail ? <button className="primary" type="button" onClick={() => void logout()}>Đăng xuất</button> : <>
+            <button type="button" onClick={close}>Để sau</button>
+            <button className="primary" disabled={busy || !email}>
+              {busy ? "Đang gửi…" : "Gửi liên kết đăng nhập"}
+            </button>
+          </>}
         </div>
       </form>
     </div>

@@ -47,3 +47,7 @@ tsconfig.tsbuildinfo
 # scratch dirs
 /tmp/
 /.tmp_xlsx/
+
+# thư mục tạm & phụ thuộc của script
+/.tmp/
+scripts/node_modules/
