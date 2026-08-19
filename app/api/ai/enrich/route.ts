@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import ieltsAreaData from "../../../../lib/ielts-areas.json";
+import { topicalWords } from "../../../../lib/topical-words.mjs";
 
 type DictionaryEntry = { word?:string; phonetic?:string; phonetics?:{text?:string}[]; meanings?:{partOfSpeech?:string;synonyms?:string[];antonyms?:string[];definitions?:{definition?:string;example?:string;synonyms?:string[];antonyms?:string[]}[]}[] };
 type DatamuseEntry = {word?:string;tags?:string[];defs?:string[]};
@@ -70,12 +71,22 @@ async function antonymsFor(word:string) {
   return [];
 }
 
-async function relatedWords(word:string,relation:"rel_syn"|"rel_ant"|"rel_trg") {
+async function relatedWords(word:string,relation:"rel_syn"|"rel_ant"|"rel_trg"|"ml") {
   try{
     const response=await fetch(`https://api.datamuse.com/words?${relation}=${encodeURIComponent(word)}&max=8`);
     if(!response.ok) return [];
     const data=await response.json() as {word?:string}[];
     return data.map(item=>item.word?.trim()??"").filter(Boolean);
+  }catch{return [];}
+}
+
+// Từ cùng chủ đề phải xin kèm thẻ md=fp để còn lọc theo tần suất, và lấy dư ứng
+// viên vì qua bộ lọc sẽ rụng quá nửa. Xem lib/topical-words.mjs.
+async function triggerCandidates(word:string) {
+  try{
+    const response=await fetch(`https://api.datamuse.com/words?rel_trg=${encodeURIComponent(word)}&md=fp&max=20`);
+    if(!response.ok) return [];
+    return await response.json() as DatamuseEntry[];
   }catch{return [];}
 }
 
@@ -169,21 +180,25 @@ async function lookupEntry(word:string):Promise<DictionaryEntry|undefined> {
 }
 
 // Bản dịch bị coi là hỏng khi rỗng hoặc trả về nguyên văn tiếng Anh.
+// Chuẩn hoá NFC ngay tại cửa ra của mọi bản dịch: Google Dịch có lúc trả về dạng
+// tổ hợp (o + dấu mũ + dấu huyền rời), trình duyệt dựng thành "sô ̀i" với dấu trôi
+// ra ngoài chữ. Đây là điểm chung của cả Google lẫn MyMemory nên chỉ cần sửa ở đây.
 function usableTranslation(text:string, source:string) {
-  const value=text.trim();
+  const value=text.normalize("NFC").trim();
   return value&&value.toLowerCase()!==source.trim().toLowerCase()?value:"";
 }
 
 // Nguồn dịch chính: chất lượng tốt hơn hẳn với từ đơn (MyMemory khớp nhầm "blink" thành "block").
 // Đây là endpoint không chính thức, không cần khoá, nên luôn có nguồn dự phòng phía dưới.
-async function translateViaGoogle(text:string) {
+async function translateViaGoogle(text:string,from="en",to="vi") {
   try{
-    const response=await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&q=${encodeURIComponent(text)}`);
+    const response=await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${from}&tl=${to}&dt=t&q=${encodeURIComponent(text)}`);
     if(!response.ok) return "";
     const data=await response.json() as unknown;
     if(!Array.isArray(data)||!Array.isArray(data[0])) return "";
     const joined=(data[0] as unknown[]).map(part=>(Array.isArray(part)?String(part[0]??""):"")).join("");
-    return usableTranslation(joined,text);
+    // Kiểm tra "dịch có ra gì không" chỉ áp dụng cho chiều Anh→Việt.
+    return from==="en"?usableTranslation(joined,text):joined.normalize("NFC").trim();
   }catch{ return ""; }
 }
 
@@ -198,6 +213,120 @@ async function translateViaMyMemory(text:string) {
 // Bỏ phần ghi nguồn ở cuối câu trích dẫn, ví dụ "… ― Gary Cook".
 function cleanExample(raw:string) {
   return raw.replace(/\s*[―—–]{1,2}\s*[^.!?]*$/,"").replace(/\s+/g," ").trim();
+}
+
+type CorpusSentence={text:string;vi?:string};
+type Sense={index:number;part:string;definition:string;example?:string;synonyms:string[];antonyms:string[];definitionVi?:string};
+
+// Một từ có thể mang nhiều nghĩa rất xa nhau: "fixed" vừa là "đã sửa", vừa là
+// "cố định", vừa là "đã triệt sản". Người học biết mình cần nghĩa nào, nên ta liệt
+// kê các nghĩa của từ điển để họ chọn, thay vì đoán rồi áp đặt.
+function listSenses(entries:DictionaryEntry[]):Sense[] {
+  const senses:Sense[]=[];
+  for(const entry of entries)
+    for(const meaning of entry.meanings??[])
+      for(const definition of meaning.definitions??[]){
+        const text=(definition.definition??"").replace(/\s+/g," ").trim();
+        if(!text) continue;
+        senses.push({
+          index:senses.length,
+          part:meaning.partOfSpeech??"",
+          definition:text,
+          example:definition.example?cleanExample(definition.example):undefined,
+          synonyms:[...(meaning.synonyms??[]),...(definition.synonyms??[])],
+          antonyms:[...(meaning.antonyms??[]),...(definition.antonyms??[])],
+        });
+        if(senses.length>=12) return senses;
+      }
+  return senses;
+}
+
+// Dịch cả chùm định nghĩa trong MỘT lần gọi bằng cách nối chúng bằng xuống dòng.
+// Nếu số dòng trả về không khớp thì bỏ qua, thà không có bản dịch còn hơn ghép lệch.
+async function translateEach(lines:string[]) {
+  if(!lines.length) return [];
+  const joined=lines.map(line=>line.replace(/\n/g," ")).join("\n");
+  const translated=await translateViaGoogle(joined);
+  if(!translated) return [];
+  const parts=translated.split("\n").map(part=>part.trim());
+  return parts.length===lines.length?parts:[];
+}
+
+// Chỉ chấm điểm theo chiều ngược: dịch từng định nghĩa sang tiếng Việt rồi so với
+// nghĩa người dùng nhập. Có thử thêm chiều xuôi (dịch nghĩa người dùng sang tiếng
+// Anh rồi mở rộng bằng Datamuse) nhưng đo thực tế thì nó đẩy sai thêm ca "spring"
+// mà không cứu được ca nào, nên bỏ. Máy đoán chỉ để xếp thứ tự — quyền chốt nghĩa
+// là của người dùng qua bộ chọn bên dưới ô nghĩa.
+
+const vietnameseStopWords=new Set(["một","các","những","của","và","là","có","được","cho","trong","với","hoặc","người","vật","làm","gì","đó","đặc","biệt","khi","để"]);
+function normaliseVi(text:string) {
+  return text.toLowerCase().normalize("NFC").replace(/[^\p{L}\s]/gu," ").replace(/\s+/g," ").trim();
+}
+// Chấm điểm bằng cách so bản dịch tiếng Việt của từng nghĩa với nghĩa người dùng nhập.
+// Trùng nguyên cụm ("bờ sông" nằm trong "ven sông, hồ") ăn điểm cao hơn trùng lẻ từng chữ.
+function scoreSenseAgainstMeaning(definitionVi:string|undefined,meaningVi:string) {
+  if(!definitionVi) return 0;
+  const target=normaliseVi(meaningVi);
+  if(!target) return 0;
+  const haystack=normaliseVi(definitionVi);
+  const whole=haystack.includes(target)?3:0;
+  const words=new Set(haystack.split(" "));
+  const overlap=target.split(" ").filter(item=>item.length>1&&!vietnameseStopWords.has(item)&&words.has(item)).length;
+  return whole+overlap;
+}
+
+// Từ điển chỉ kèm câu ví dụ cho một phần nhỏ mục từ: "drafted" có câu thật, còn
+// "hockey", "maple" thì không và rơi vào khung câu "We talked about the importance
+// of X in daily life" — từ nào cũng giống nhau. Tatoeba là kho câu do người học và
+// người bản ngữ đóng góp, nhiều câu đã có sẵn bản dịch tiếng Việt do người dịch.
+async function tatoebaSentence(word:string,meaningVi?:string):Promise<CorpusSentence|undefined> {
+  // Vòng 1 xin luôn câu đã có bản dịch tiếng Việt (khỏi phải dịch máy, và không sai
+  // nghĩa như khi máy dịch "drafted" thành "soạn thảo"); vòng 2 nới ra lấy câu tiếng Anh.
+  for(const withVietnamese of [true,false]){
+    try{
+      const url=`https://tatoeba.org/en/api_v0/search?query=${encodeURIComponent(word)}&from=eng${withVietnamese?"&to=vie":""}&sort=relevance&limit=12`;
+      const response=await fetch(url,{headers:{"User-Agent":"Lexilo/1.0"}});
+      if(!response.ok) continue;
+      const data=await response.json() as {results?:{text?:string;translations?:{lang?:string;text?:string}[][]}[]};
+      const picked=(data.results??[])
+        .map(item=>{
+          const text=cleanExample(item.text??"");
+          const vi=(item.translations??[]).flat().find(entry=>entry.lang==="vie")?.text?.normalize("NFC").trim();
+          return {text,vi:vi||undefined};
+        })
+        .filter(item=>isUsableSentence(item.text,word)&&(!withVietnamese||item.vi))
+        // Câu 8–14 chữ vừa đủ ngữ cảnh mà không quá dài; "That's a maple." thì học được ít.
+        // Có nghĩa người dùng thì ưu tiên câu mà bản dịch tiếng Việt nhắc đúng nghĩa đó:
+        // "fixed = đã sửa" sẽ chuộng câu dịch ra có chữ "sửa" hơn câu nói về bữa tối.
+        .sort((a,b)=>{
+          const byMeaning=meaningVi?scoreSenseAgainstMeaning(b.vi,meaningVi)-scoreSenseAgainstMeaning(a.vi,meaningVi):0;
+          return byMeaning||sentenceScore(b.text)-sentenceScore(a.text);
+        });
+      if(picked[0]) return picked[0];
+    }catch{ /* hết cách thì để tầng dưới lo */ }
+  }
+  return undefined;
+}
+// Đúng một câu trọn vẹn, đủ dài để có ngữ cảnh mà không thành cả đoạn.
+function isSentenceShape(text:string) {
+  if(!text) return false;
+  const count=text.split(/\s+/).length;
+  if(count<4||count>24) return false;
+  if(!/^["'“]?[A-Z]/.test(text)||!/[.!?]["'”]?$/.test(text)) return false;
+  return !/[.!?]["'”]?\s+["'“]?[A-Z]/.test(text);
+}
+// Câu lấy từ kho ngữ liệu còn phải chứa chính từ đang học, vì không có gì bảo đảm
+// nó nói về từ đó. Câu đi kèm một nghĩa trong từ điển thì không cần kiểm tra này:
+// nó vốn thuộc về nghĩa đó, và thường dùng dạng gốc ("fixed" → "…had the vet fix him").
+function isUsableSentence(text:string,word:string) {
+  if(!isSentenceShape(text)) return false;
+  const stem=word.replace(/(ies|es|s)$/,"");
+  const pattern=new RegExp(`\\b${(stem.length>=3?stem:word).replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}`,"i");
+  return pattern.test(text);
+}
+function sentenceScore(text:string) {
+  const count=text.split(/\s+/).length;
+  return count>=8&&count<=14?3:count>=6&&count<=18?2:1;
 }
 
 // Từ điển hay giấu câu ví dụ ở các nghĩa phía sau, không phải nghĩa đầu tiên.
@@ -215,6 +344,9 @@ function pickDictionaryExample(entries:DictionaryEntry[], word:string, chosenMea
       const count=item.text.split(/\s+/).length;
       const wholeSentence=/^["'“]?[A-Z]/.test(item.text)&&/[.!?]["'”]?$/.test(item.text);
       if(!wholeSentence) return null;
+      // Một số mục từ điển nhét cả đoạn hai ba câu ("The ambassador has been closeted…
+      // We're all worried…"). Người học chỉ cần đúng một câu chứa từ.
+      if(/[.!?]["'”]?\s+["'“]?[A-Z]/.test(item.text)) return null;
       if(!exact&&!(viaStem&&count>=6)) return null;
       if(count<5||count>28) return null;
       // Cùng nghĩa với định nghĩa đang hiển thị được ưu tiên cao nhất, để định nghĩa và ví dụ không lệch nghĩa nhau.
@@ -277,7 +409,9 @@ function phoneticOf(entry?:DictionaryEntry) {
 const functionWords=new Set(["a","an","the","of","to","in","on","at","for","and","or","but","is","are","am","be","been","with","as","that","this","it","its","by","from","not","no","so","up","out","off","over","into","than","then","there","here","he","she","they","we","you","i","my","your","his","her"]);
 
 export async function POST(request:Request) {
-  const { term, part_of_speech:partHint }=await request.json() as {term?:string;part_of_speech?:string};
+  // meaning_vi: nghĩa người dùng tự nhập, dùng để xếp hạng các nghĩa của từ điển.
+  // sense: người dùng đã chọn hẳn một nghĩa trong danh sách trả về lần trước.
+  const { term, part_of_speech:partHint, meaning_vi:meaningHint, sense:senseHint }=await request.json() as {term?:string;part_of_speech?:string;meaning_vi?:string;sense?:number};
   const word=term?.trim().toLowerCase().replace(/\s+/g," ");
   if(!word||!/^[a-z][a-z'\- /]{0,79}$/i.test(word)) return NextResponse.json({error:"Chỉ hỗ trợ chữ cái, dấu nháy, gạch nối và dấu /."},{status:400});
   // Dấu / trong ghi chú thường chỉ hai cách nói tương đương. Dùng cụm đầu tiên để tra
@@ -298,8 +432,28 @@ export async function POST(request:Request) {
     // nên phải tìm trên tất cả các mục chứ không chỉ mục đầu.
     const allMeanings=entries.flatMap(item=>item.meanings??[]);
     const meaning=(preferredPart&&allMeanings.find(item=>item.partOfSpeech===preferredPart))||entry?.meanings?.[0]||allMeanings[0];
-    const definition=meaning?.definitions?.[0];
-    const meaningVi=verifiedVietnamese[word]||await translate(word);
+    // Người dùng đã nhập nghĩa thì giữ nguyên nghĩa của họ, đừng đè bằng bản dịch máy.
+    const meaningVi=meaningHint?.trim()||verifiedVietnamese[word]||await translate(word);
+
+    // Liệt kê và xếp hạng các nghĩa. Chỉ dịch định nghĩa khi có nghĩa người dùng để
+    // so, tránh thêm một lượt mạng cho luồng tra bình thường.
+    const senses=listSenses(entries);
+    if(meaningHint?.trim()&&senses.length>1){
+      const translations=await translateEach(senses.map(item=>item.definition));
+      senses.forEach((item,position)=>{ item.definitionVi=translations[position]; });
+      const total=(item:Sense)=>scoreSenseAgainstMeaning(item.definitionVi,meaningHint);
+      senses.sort((a,b)=>{
+        const gap=total(b)-total(a);
+        if(gap) return gap;
+        // Điểm bằng nhau thì ưu tiên nghĩa đúng loại từ, rồi giữ thứ tự của từ điển.
+        const partGap=Number(b.part===preferredPart)-Number(a.part===preferredPart);
+        return partGap||a.index-b.index;
+      });
+    }
+    // senseHint là chỉ số gốc trong từ điển, không phải vị trí sau khi sắp xếp.
+    const chosen=senseHint===undefined?undefined:senses.find(item=>item.index===senseHint);
+    const ranked=chosen??(meaningHint?.trim()?senses[0]:undefined);
+    const definition=ranked?{definition:ranked.definition,example:ranked.example,synonyms:ranked.synonyms,antonyms:ranked.antonyms}:meaning?.definitions?.[0];
     if(!entry){
       // Cụm từ không có mục từ riêng: dựng IPA và phần giải nghĩa từ dữ liệu thật của từng từ thành phần.
       const parts=word.split(" ");
@@ -314,34 +468,51 @@ export async function POST(request:Request) {
         })
         .filter(Boolean)
         .join("\n");
-      // Dịch máy sẽ dịch luôn cụm từ trong ngoặc kép, làm mất chính thứ cần học — nên dựng sẵn cả câu tiếng Việt.
-      const {example,exampleVi}=studyFrameFor(word);
+      // Cụm từ cũng ưu tiên câu thật; hết cách mới dùng khung câu dựng sẵn.
+      // Dịch máy sẽ dịch luôn cụm từ trong ngoặc kép, làm mất chính thứ cần học — nên khung câu có sẵn bản tiếng Việt.
+      const corpus=await tatoebaSentence(word);
+      const frame=studyFrameFor(word);
+      const example=corpus?.text??frame.example;
+      const exampleVi=corpus?(corpus.vi??await translate(corpus.text)):frame.exampleVi;
       if(!meaningVi&&!glossary) return NextResponse.json({error:"Không tra được cụm từ này. Vui lòng nhập nội dung thủ công."},{status:404});
-      return NextResponse.json({term:word,ipa,part_of_speech:"phrase",meaning_vi:meaningVi,definition_en:glossary,example,example_vi:exampleVi,collocation:word,collocation_vi:meaningVi,topic:topicFor(word,glossary,meaningVi),partial:true,example_source:"template"});
+      return NextResponse.json({term:word,ipa,part_of_speech:"phrase",meaning_vi:meaningVi,definition_en:glossary,example,example_vi:exampleVi,collocation:word,collocation_vi:meaningVi,topic:topicFor(word,glossary,meaningVi),partial:true,example_source:corpus?"corpus":"template"});
     }
     const definitionEn=definition?.definition||`The meaning of ${word}.`;
-    const [datamuseSynonyms,datamuseAntonyms,triggers]=await Promise.all([relatedWords(word,"rel_syn"),antonymsFor(word),relatedWords(word,"rel_trg")]);
+    const [datamuseSynonyms,datamuseAntonyms,triggerRaw]=await Promise.all([relatedWords(word,"rel_syn"),antonymsFor(word),triggerCandidates(word)]);
+    const triggers=triggerRaw.map(item=>item.word?.trim()??"").filter(Boolean);
     const blockedSuggestions:Record<string,string[]>={closet:["armchair"],closets:["armchair"]};
     const blocked=new Set(blockedSuggestions[word]??[]);
     const synonyms=uniqueWords([...(meaning?.synonyms??[]),...(definition?.synonyms??[]),...datamuseSynonyms],word).filter(item=>!blocked.has(item));
     const antonyms=uniqueWords([...(meaning?.antonyms??[]),...(definition?.antonyms??[]),...datamuseAntonyms],word);
     // Từ hay đi cùng chủ đề — lấp chỗ trống cho những từ vốn không có trái nghĩa như "rescue".
-    const related=uniqueWords(triggers,word).filter((item)=>!synonyms.includes(item)&&!antonyms.includes(item)).slice(0,6);
+    // Lấy dư 12 rồi mới trừ đồng/trái nghĩa để không bị hụt sau khi lọc.
+    const related=topicalWords(triggerRaw,word,12).filter((item:string)=>!synonyms.includes(item)&&!antonyms.includes(item)).slice(0,6);
     const [synonymDetails,antonymDetails,relatedDetails]=await Promise.all([
       usageDetails(synonyms,translate),usageDetails(antonyms,translate),usageDetails(related,translate),
     ]);
     // Ưu tiên câu ví dụ thật trong từ điển; hết cách mới dùng khung câu ghi chú.
     const practical=practicalPhrases[word];
     const generated=generatedPhraseFor(word,meaning?.partOfSpeech||"");
-    const realExample=pickDictionaryExample(entries,word,meaning,preferredPart??meaning?.partOfSpeech);
+    const senseExample=ranked?.example&&isSentenceShape(ranked.example)?ranked.example:undefined;
+    // Đã chốt một nghĩa thì tuyệt đối không mượn ví dụ của nghĩa khác: chọn "to mend,
+    // to repair" mà đưa câu "She fixed dinner for the kids." là sai hẳn ngữ cảnh.
+    // Không có câu của chính nghĩa đó thì để Tatoeba lo, và Tatoeba cũng được chấm
+    // điểm theo nghĩa người dùng nhập.
+    const realExample=ranked?senseExample:senseExample??pickDictionaryExample(entries,word,meaning,preferredPart??meaning?.partOfSpeech);
     const phrase=practical?.phrase??generated.phrase;
     const phraseVi=practical?.meaning??await translate(phrase);
-    // Thứ tự ưu tiên: câu viết tay > câu thật trong từ điển > khung câu tự dựng.
-    // Trước đây câu từ điển bị bỏ qua hoàn toàn nên mọi từ đều ra cùng một khuôn.
-    const example=practical?.example??realExample??generated.example;
-    const exampleVi=practical?.exampleVi??await translate(example);
+    // Thứ tự ưu tiên: câu viết tay > câu thật trong từ điển > câu thật của Tatoeba >
+    // khung câu tự dựng. Chỉ gọi Tatoeba khi hai nguồn trên đều không có, để khỏi
+    // thêm một lượt mạng cho những từ vốn đã có câu tốt.
+    const corpus=practical?.example||realExample?undefined:await tatoebaSentence(word,meaningHint?.trim());
+    const example=practical?.example??realExample??corpus?.text??generated.example;
+    // Bản dịch của người viết trên Tatoeba đúng nghĩa hơn dịch máy: máy dịch câu
+    // "He was drafted during the Vietnam War." thành "được soạn thảo".
+    const exampleVi=practical?.exampleVi??(corpus&&example===corpus.text&&corpus.vi?corpus.vi:await translate(example));
     const topic=topicFor(word,definitionEn,meaningVi);
     const paraphrases=uniqueWords([phrase,...synonyms.map(item=>`${item} (${meaningVi||definitionEn})`)],word).slice(0,5);
-    return NextResponse.json({term:word,ipa:entry.phonetic||entry.phonetics?.find(p=>p.text)?.text||"/…/",part_of_speech:meaning?.partOfSpeech||"",meaning_vi:meaningVi||definitionEn,definition_en:definitionEn,example,example_vi:exampleVi,collocation:phrase,collocation_vi:phraseVi||meaningVi,synonyms,antonyms,related,synonym_details:synonymDetails,antonym_details:antonymDetails,related_details:relatedDetails,paraphrases,ielts_topics:ieltsApplications(word,definitionEn,meaningVi,triggers),topic,partial:false,example_source:practical?"practical":realExample?"dictionary":"generated_phrase"});
+    return NextResponse.json({term:word,ipa:entry.phonetic||entry.phonetics?.find(p=>p.text)?.text||"/…/",part_of_speech:ranked?.part||meaning?.partOfSpeech||"",meaning_vi:meaningVi||definitionEn,definition_en:definitionEn,example,example_vi:exampleVi,collocation:phrase,collocation_vi:phraseVi||meaningVi,synonyms,antonyms,related,synonym_details:synonymDetails,antonym_details:antonymDetails,related_details:relatedDetails,paraphrases,ielts_topics:ieltsApplications(word,definitionEn,meaningVi,triggers),topic,partial:false,example_source:practical?"practical":senseExample?"sense":realExample?"dictionary":corpus?"corpus":"generated_phrase",
+      sense:ranked?.index,
+      senses:senses.map(item=>({index:item.index,part_of_speech:item.part,definition_en:item.definition,definition_vi:item.definitionVi,example:item.example}))});
   }catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Không thể tự động điền từ."},{status:404});}
 }
