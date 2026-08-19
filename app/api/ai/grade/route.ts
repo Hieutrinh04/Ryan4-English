@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { LlmError, generateJson, hasLlm } from "../../../../lib/llm";
+import { normaliseErrorType, taxonomyPrompt } from "../../../../lib/error-taxonomy.mjs";
 
 // Chấm bài dịch Việt → Anh bằng Gemini. Khác hẳn cách so câu mẫu ở
 // lib/translation-check.mjs: ở đây một cách dịch đúng nhưng khác câu mẫu vẫn được
 // công nhận là đúng. Không có khoá thì trả 503 và client lùi về cách so câu mẫu.
 
-type Issue = { wrong?: string; right?: string; why?: string };
+type Issue = { wrong?: string; right?: string; why?: string; type?: string };
 type Grade = { correct?: boolean; score?: number; suggestion?: string; issues?: Issue[]; comment?: string };
 
 export async function POST(request: Request) {
@@ -28,9 +29,11 @@ Nguyên tắc chấm:
 - Giải thích ngắn gọn bằng tiếng Việt, đúng trọng tâm, để người học sửa được lần sau.
 - score: 0–100, mức độ vừa đúng ngữ pháp vừa sát nghĩa.
 - Toàn bộ phần tiếng Việt phải viết bằng tiếng Việt có dấu, không lẫn ký tự tiếng nước khác.
+- Mỗi lỗi phải gắn một nhãn "type" lấy ĐÚNG từ danh sách sau, không tự đặt tên khác:
+  ${taxonomyPrompt()}
 
 Trả về JSON thuần theo đúng dạng:
-{"correct":true,"score":95,"suggestion":"bản dịch chuẩn của câu trên","issues":[{"wrong":"phần sai trong câu người học","right":"phần đúng","why":"giải thích ngắn bằng tiếng Việt"}],"comment":"nhận xét chung bằng tiếng Việt"}`;
+{"correct":true,"score":95,"suggestion":"bản dịch chuẩn của câu trên","issues":[{"type":"article","wrong":"phần sai trong câu người học","right":"phần đúng","why":"giải thích ngắn bằng tiếng Việt"}],"comment":"nhận xét chung bằng tiếng Việt"}`;
 
   try {
     const data = await generateJson<Grade>(prompt, { temperature: 0.2, thinking: "low", timeoutMs: 45000 });
@@ -40,7 +43,11 @@ Trả về JSON thuần theo đúng dạng:
       score: Math.max(0, Math.min(100, Math.round(Number(data.score) || 0))),
       suggestion: clean(data.suggestion),
       comment: clean(data.comment),
-      issues: (data.issues ?? []).map((item) => ({ wrong: clean(item.wrong), right: clean(item.right), why: clean(item.why) })).filter((item) => item.why || item.right).slice(0, 6),
+      // Nhãn lỗi được quy về bộ cố định để sau này đếm và nhóm được theo kỹ năng.
+      issues: (data.issues ?? [])
+        .map((item) => ({ type: normaliseErrorType(item.type), wrong: clean(item.wrong), right: clean(item.right), why: clean(item.why) }))
+        .filter((item) => item.why || item.right)
+        .slice(0, 6),
     });
   } catch (error) {
     const message = error instanceof LlmError ? error.message : "Không chấm được bài.";

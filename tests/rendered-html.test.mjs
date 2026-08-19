@@ -103,7 +103,7 @@ test("keeps enrichment results when cloud sync fails and accepts slash alternati
     readFile(new URL("../app/api/ai/enrich/route.ts", import.meta.url), "utf8"),
   ]);
   assert.match(page, /fallbackSaveError/);
-  assert.doesNotMatch(page.slice(page.indexOf("if \(saveError\)"), page.indexOf("function resumeSession")), /throw saveError/);
+  assert.doesNotMatch(page.slice(page.indexOf("if (saveError)"), page.indexOf("function resumeSession")), /throw saveError/);
   assert.match(route, /word\.split\("\/"\)\[0\]/);
   assert.match(route, /gạch nối và dấu \//);
 });
