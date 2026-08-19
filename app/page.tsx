@@ -9,6 +9,9 @@ import ieltsAreaData from "../lib/ielts-areas.json";
 type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { wrong: string; right: string; why: string }[] };
 import { PASSAGE_SIZE, buildPassages, gradeTranslation } from "../lib/translation-check.mjs";
 import { advice, appendEntry as appendLogEntry, byDay, entriesSince, summarise, weakest } from "../lib/review-log.mjs";
+// Lịch ôn và các phép tính ngày: nguồn duy nhất ở lib/srs.mjs, giao diện chỉ gọi.
+import { daysUntil, isDueForReview, localDateString, scheduleFor, streakFrom, weekdayIndex, wordState } from "../lib/srs.mjs";
+import { clozeFor } from "../lib/cloze.mjs";
 
 type Rating = "again" | "hard" | "good" | "easy";
 // Kiểu thẻ trong phiên ôn. "mixed" xoay vòng 4 kiểu còn lại theo thứ tự thẻ.
@@ -102,49 +105,18 @@ function exampleFor(term: string, examples: ExampleMap) {
 
 // Khoét chỗ trống tại từ đang học. Nhiều từ khóa trong file PDF dính nhiễu OCR
 // ("white (n, adj)", "bus bicycle") nên phải thử dần từ chuỗi đầy đủ tới từng từ thành phần.
-function clozeFor(term: string, example: string) {
-  const cleaned = term.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
-  const candidates = [
-    term.trim(),
-    cleaned,
-    cleaned.split("/")[0].trim(),
-    ...cleaned
-      .split(/[\s/]+/)
-      .filter((word) => word.length >= 3)
-      .sort((a, b) => b.length - a.length),
-  ];
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    for (const pattern of [`\\b${escaped}\\b`, escaped]) {
-      const blanked = example.replace(new RegExp(pattern, "i"), "_____");
-      if (blanked !== example) return blanked;
-    }
-  }
-  return example;
-}
+
 const naturalExample = (term: string) => `I am learning how to use ${term} naturally.`;
 const naturalExampleVi = (term: string) => `Tôi đang học cách dùng từ “${term}” một cách tự nhiên.`;
 
 // Nguồn duy nhất tính hộp Leitner và khoảng ôn tiếp theo, dùng chung cho nút đánh giá và lúc lưu.
-function scheduleFor(card: WordCard, rating: Rating) {
-  const box = rating === "again" ? (card.box === 6 ? 2 : 1) : Math.min(6, card.box + (rating === "easy" ? 2 : rating === "good" ? 1 : 0));
-  const base = [0, 1, 3, 7, 14, 30, 90][box];
-  // Quên thì luôn gặp lại sau 1 ngày, đúng như lib/srs.ts. Nếu lấy theo hộp mới thì từ
-  // đã thuộc (hộp 6) tụt về hộp 2 sẽ được hẹn tận 3 ngày dù vừa quên.
-  const interval = rating === "again" ? 1 : rating === "hard" ? Math.max(1, Math.round((card.intervalDays ?? 1) * 0.6)) : Math.round(base * (rating === "easy" ? 1.3 : 1));
-  return { box, interval };
-}
+
 
 // Ngày theo lịch của máy người dùng. toISOString() trả về ngày UTC, ở GMT+7 sẽ lùi một ngày
 // trong khoảng 00:00–07:00 sáng, khiến từ bị xếp nhầm sang thứ hôm trước.
-function localDateString(date = new Date()) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
+
 // 0 = Thứ Hai … 6 = Chủ Nhật, khớp thứ tự dayNames.
-function weekdayIndex(date = new Date()) {
-  return (date.getDay() + 6) % 7;
-}
+
 
 // Từ do người dùng thêm được giữ lại trên máy, để mất kết nối Supabase cũng không mất dữ liệu khi tải lại trang.
 const localWordsKey = "lexilo:words:v1";
@@ -317,11 +289,7 @@ function writeExam(goal: ExamGoal | null) {
     // Bỏ qua khi trình duyệt chặn.
   }
 }
-function daysUntil(date: string) {
-  const target = new Date(`${date}T00:00:00`);
-  const today = new Date(`${localDateString()}T00:00:00`);
-  return Math.round((target.getTime() - today.getTime()) / 86400000);
-}
+
 
 // Chuỗi ngày học: lưu danh sách ngày có ít nhất một thẻ được chấm.
 const streakKey = "lexilo:streak:v1";
@@ -366,33 +334,7 @@ function markStudiedToday(): string[] {
   }
   return next;
 }
-function streakFrom(days: string[]) {
-  if (!days.length) return { current: 0, best: 0, studiedToday: false };
-  const set = new Set(days);
-  const today = localDateString();
-  const studiedToday = set.has(today);
-  const shift = (date: string, step: number) => {
-    const value = new Date(`${date}T00:00:00`);
-    value.setDate(value.getDate() + step);
-    return localDateString(value);
-  };
-  // Chuỗi vẫn được tính là đang chạy nếu hôm nay chưa học nhưng hôm qua có.
-  let cursor = studiedToday ? today : shift(today, -1);
-  let current = 0;
-  while (set.has(cursor)) {
-    current += 1;
-    cursor = shift(cursor, -1);
-  }
-  let best = 0;
-  let run = 0;
-  let previous = "";
-  for (const day of days) {
-    run = previous && shift(previous, 1) === day ? run + 1 : 1;
-    best = Math.max(best, run);
-    previous = day;
-  }
-  return { current, best, studiedToday };
-}
+
 
 // Phiên ôn đang dở, để đóng tab rồi quay lại vẫn học tiếp đúng chỗ.
 type StoredSession = { ids: string[]; index: number; mode: ReviewMode };
@@ -1958,18 +1900,10 @@ function DailyStudy({ words, startReview, startTopicReview }: { words: WordCard[
   );
 }
 
-function wordState(word: WordCard) {
-  if (word.box >= 6 || word.status === "mastered") return { key: "mastered", label: "✅ Đã thuộc" };
-  if (!word.reviewCount && word.status === "new") return { key: "new", label: "🆕 Chưa học" };
-  if (!word.dueDate || word.dueDate <= localDateString()) return { key: "due", label: "🔴 Cần ôn" };
-  return { key: "waiting", label: "⏳ Chưa tới hạn" };
-}
+
 
 // Một từ được đưa vào hàng đợi ôn khi đã tới hạn hoặc chưa học lần nào.
-function isDueForReview(word: WordCard) {
-  const key = wordState(word).key;
-  return key === "due" || key === "new";
-}
+
 
 // Từ ĐÃ học rồi và nay tới hạn ôn lại — khác với từ chưa học lần nào.
 // Đây là nhóm cần nhắc: học hôm thứ Ba, hôm nay thứ Tư đến lịch ôn.
