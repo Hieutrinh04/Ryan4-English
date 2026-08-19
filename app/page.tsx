@@ -8,14 +8,19 @@ import ieltsAreaData from "../lib/ielts-areas.json";
 // mẫu vẫn được công nhận đúng.
 type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { wrong: string; right: string; why: string }[] };
 import { PASSAGE_SIZE, buildPassages, gradeTranslation } from "../lib/translation-check.mjs";
-import { advice, appendEntry as appendLogEntry, byDay, entriesSince, summarise, weakest } from "../lib/review-log.mjs";
+import { advice, byDay, entriesSince, summarise, weakest } from "../lib/review-log.mjs";
 // Lịch ôn và các phép tính ngày: nguồn duy nhất ở lib/srs.mjs, giao diện chỉ gọi.
 import { daysUntil, isDueForReview, localDateString, scheduleFor, streakFrom, weekdayIndex, wordState } from "../lib/srs.mjs";
 import { clozeFor } from "../lib/cloze.mjs";
+// Kiểu dùng chung và tầng lưu trữ đã tách khỏi file này.
+import { detailsFrom, exampleFor, fallbackExample, isPdfVocabulary, isSeedWord, withMeanings,
+  type EnrichmentMap, type ExamGoal, type ExampleMap, type ImportedVocabulary, type Rating, type ReviewMode,
+  type UsageDetail, type UsageMap, type WeeklyVocabulary, type WordCard } from "../lib/types";
+import { activeTabKey, composeVietnamese, logReview, markDeleted, markStudiedToday, mergeStoredWords, readDeletedIds,
+  readExam, readLocalWords, readReviewLog, readSession, readStudyDays, weeklyImportKey, writeExam, writeLocalWords,
+  writeProgress, writeSession, type ReviewEntry, type StoredSession } from "../lib/storage";
 
-type Rating = "again" | "hard" | "good" | "easy";
 // Kiểu thẻ trong phiên ôn. "mixed" xoay vòng 4 kiểu còn lại theo thứ tự thẻ.
-type ReviewMode = "card" | "vi_en" | "en_vi" | "quiz" | "listen" | "mixed";
 const reviewModes: { value: ReviewMode; label: string }[] = [
   { value: "card", label: "Thẻ ghi nhớ" },
   { value: "vi_en", label: "Việt → Anh" },
@@ -29,79 +34,9 @@ const rotatingModes: ReviewMode[] = ["vi_en", "en_vi", "quiz", "listen"];
 const DAILY_REVIEW_LIMIT = 30;
 const DAILY_NEW_LIMIT = 8;
 const PDF_DAILY_PREVIEW_LIMIT = 20;
-type WordCard = {
-  id: string;
-  term: string;
-  ipa: string;
-  meaning: string;
-  example: string;
-  exampleVi?: string;
-  cloze: string;
-  definition: string;
-  topic: string;
-  box: number;
-  lapses: number;
-  starred?: boolean;
-  direction?: "vi_en" | "en_vi";
-  dueDate?: string;
-  status?: "new" | "learning" | "review" | "mastered";
-  intervalDays?: number;
-  reviewCount?: number;
-  partOfSpeech?: string;
-  note?: string;
-  collocation?: string;
-  collocationVi?: string;
-  synonyms?: string[];
-  antonyms?: string[];
-  related?: string[];
-  synonymDetails?: UsageDetail[];
-  antonymDetails?: UsageDetail[];
-  relatedDetails?: UsageDetail[];
-  paraphrases?: string[];
-  ieltsTopics?: string[];
-  addedDate?: string;
-  studyDay?: number;
-  lastReviewedAt?: string;
-  source?: string;
-  enrichmentCheckedAt?: string;
-};
-type UsageDetail = { term: string; meaningVi: string; example: string; exampleVi: string };
-
-type ImportedVocabulary = { number: number; term: string; partOfSpeech: string; ipa: string; meaning: string; topic: string; source: string };
-type WeeklyVocabulary = { id: string; term: string; meaning: string; partOfSpeech: string; studyDay: number; topic: string; source: string };
-
-// Định nghĩa, đồng/trái nghĩa, từ cùng chủ đề và chủ đề IELTS của bộ PDF, sinh sẵn bằng
-// scripts/enrich-vocabulary.mjs để người dùng không phải tra lại 973 từ trên máy mình.
-type EnrichmentMap = Record<string, { definition?: string; synonyms?: string[]; antonyms?: string[]; related?: string[]; ieltsTopics?: string[]; collocation?: string; collocationVi?: string; paraphrases?: string[] }>;
-
-// Ngữ cảnh của từng từ đồng/trái nghĩa, lưu chung một bảng tra theo từ vì các từ này
-// lặp lại rất nhiều giữa các mục từ. App tự ghép lại thành danh sách cho mỗi từ.
-type UsageMap = Record<string, { meaningVi: string; example: string; exampleVi: string }>;
-// Ghép nghĩa tiếng Việt vào sau mỗi từ khi đã có ngữ cảnh: "dynamic (năng động) · quiet (im lặng)".
-// Thẻ ôn tập cần gọn nên chỉ hiện nghĩa, phần câu ví dụ để dành cho màn chi tiết.
-function withMeanings(terms: string[], details: UsageDetail[] | undefined) {
-  const byTerm = new Map((details ?? []).map((item) => [item.term, item.meaningVi]));
-  return terms.map((term) => (byTerm.get(term) ? `${term} (${byTerm.get(term)})` : term)).join(" · ");
-}
-
-function detailsFrom(terms: string[] | undefined, usage: UsageMap): UsageDetail[] {
-  return (terms ?? [])
-    .slice(0, 4)
-    .map((term) => (usage[term] ? { term, ...usage[term] } : null))
-    .filter((item): item is UsageDetail => item !== null);
-}
-
-// Câu ví dụ riêng cho từng từ, soạn sẵn trong public/vocabulary-examples.json: term → [câu tiếng Anh, bản dịch].
-type ExampleMap = Record<string, [string, string]>;
 
 // Câu ví dụ mặc định, chỉ dùng cho từ chưa có câu riêng.
-const fallbackExample = (term: string) => `I am learning the word ${term}.`;
-const fallbackExampleVi = (term: string) => `Tôi đang học từ “${term}”.`;
 
-function exampleFor(term: string, examples: ExampleMap) {
-  const found = examples[term.trim().toLowerCase()];
-  return found ? { example: found[0], exampleVi: found[1] } : { example: fallbackExample(term), exampleVi: fallbackExampleVi(term) };
-}
 
 // Khoét chỗ trống tại từ đang học. Nhiều từ khóa trong file PDF dính nhiễu OCR
 // ("white (n, adj)", "bus bicycle") nên phải thử dần từ chuỗi đầy đủ tới từng từ thành phần.
@@ -119,248 +54,7 @@ const naturalExampleVi = (term: string) => `Tôi đang học cách dùng từ �
 
 
 // Từ do người dùng thêm được giữ lại trên máy, để mất kết nối Supabase cũng không mất dữ liệu khi tải lại trang.
-const localWordsKey = "lexilo:words:v1";
-const localWordsBackupKey = "lexilo:words:backup:v1";
-const weeklyImportKey = "lexilo:weekly-import:v1";
-// Danh sách từ đã xoá. writeLocalWords chỉ gộp thêm chứ không bao giờ bớt (để một lần nạp
-// lỗi không thổi bay cả kho), nên nếu không ghi nhận riêng thì từ đã xoá sẽ sống lại sau F5.
-const activeTabKey = "lexilo:tab:v1";
-const deletedIdsKey = "lexilo:deleted:v1";
-function readDeletedIds(): Set<string> {
-  try {
-    const raw = localStorage.getItem(deletedIdsKey);
-    const parsed = raw ? (JSON.parse(raw) as string[]) : [];
-    return new Set(Array.isArray(parsed) ? parsed : []);
-  } catch {
-    return new Set();
-  }
-}
-function markDeleted(id: string) {
-  try {
-    const ids = readDeletedIds();
-    ids.add(id);
-    // Giữ 500 mục gần nhất là thừa đủ, tránh phình vô hạn.
-    localStorage.setItem(deletedIdsKey, JSON.stringify([...ids].slice(-500)));
-  } catch {
-    // Bỏ qua khi trình duyệt chặn.
-  }
-}
-function readLocalWords(): WordCard[] {
-  try {
-    const raw = localStorage.getItem(localWordsKey) || localStorage.getItem(localWordsBackupKey);
-    const parsed = raw ? (JSON.parse(raw) as WordCard[]) : [];
-    if (!Array.isArray(parsed)) return [];
-    const deleted = readDeletedIds();
-    return parsed.filter((word) => word?.id && word.term && !deleted.has(word.id));
-  } catch {
-    return [];
-  }
-}
-// Từ đã lên được Supabase sẽ quay về theo đúng id, nên gộp theo id là đủ để không nhân đôi.
-// Tiến trình học được đắp lại sau cùng, áp cho cả từ cá nhân lẫn bộ PDF.
-// Gợi ý "từ hay đi cùng chủ đề" trước đây lấy thẳng rel_trg của Datamuse nên lẫn
-// tên riêng và từ hiếm (rescue → sar, lifeboat, firefighting). Thuật toán đã sửa,
-// nhưng mergeEnrichment luôn giữ giá trị cũ nếu ô đã có dữ liệu, nên từ đã lưu
-// trên máy phải được dọn một lần thì nút "Bổ sung từ thiếu" mới tra lại được.
-// Bộ từ PDF không cần dọn vì luôn dựng lại từ file dữ liệu mỗi lần tải trang.
-const relatedResetKey = "lexilo:related-reset:v2";
-// Dịch máy có lúc trả về tiếng Việt ở dạng tổ hợp (o + dấu mũ + dấu huyền rời).
-// Trình duyệt dựng ra "sô ̀i", "quô ́c gia" với dấu trôi ra ngoài chữ. Chuẩn hoá NFC
-// gộp chúng thành một ký tự. Route đã chuẩn hoá từ nguồn; hàm này vá dữ liệu đã lỡ
-// lưu trước đó trên máy người dùng.
-function composeVietnamese(word: WordCard): WordCard {
-  const fields = ["meaning", "example", "exampleVi", "definition", "collocation", "collocationVi", "cloze", "topic"] as const;
-  let changed = false;
-  const fixed = { ...word };
-  for (const field of fields) {
-    const value = word[field];
-    if (typeof value !== "string" || !value) continue;
-    const composed = value.normalize("NFC");
-    if (composed !== value) {
-      fixed[field] = composed;
-      changed = true;
-    }
-  }
-  const fixList = (list?: UsageDetail[]) =>
-    list?.map((item) => {
-      const next = { ...item, term: item.term.normalize("NFC"), meaningVi: item.meaningVi?.normalize("NFC") ?? item.meaningVi, example: item.example?.normalize("NFC") ?? item.example, exampleVi: item.exampleVi?.normalize("NFC") ?? item.exampleVi };
-      if (next.term !== item.term || next.meaningVi !== item.meaningVi || next.example !== item.example || next.exampleVi !== item.exampleVi) changed = true;
-      return next;
-    });
-  const details = { synonymDetails: fixList(word.synonymDetails), antonymDetails: fixList(word.antonymDetails), relatedDetails: fixList(word.relatedDetails) };
-  return changed ? { ...fixed, ...details } : word;
-}
 
-function clearLegacyRelated(words: WordCard[]) {
-  try {
-    if (localStorage.getItem(relatedResetKey)) return words;
-    localStorage.setItem(relatedResetKey, new Date().toISOString());
-  } catch {
-    return words;
-  }
-  return words.map((word) =>
-    isPdfVocabulary(word) || !word.related?.length
-      ? word
-      : { ...word, related: [], relatedDetails: [], enrichmentCheckedAt: undefined },
-  );
-}
-
-function mergeStoredWords(loaded: WordCard[]) {
-  const deleted = readDeletedIds();
-  const kept = loaded.filter((word) => !deleted.has(word.id));
-  const ids = new Set(kept.map((word) => word.id));
-  return applyProgress(clearLegacyRelated([...readLocalWords().filter((word) => !ids.has(word.id)), ...kept]).map(composeVietnamese));
-}
-function writeLocalWords(words: WordCard[]) {
-  try {
-    const personal = words.filter((word) => !isPdfVocabulary(word) && !isSeedWord(word));
-    const current = readLocalWords().filter((word) => !isSeedWord(word));
-    // Không cho một lần nạp lỗi/rỗng xóa kho từ đã lưu trước đó.
-    const merged = new Map(current.map((word) => [word.id, word]));
-    for (const word of personal) merged.set(word.id, word);
-    for (const id of readDeletedIds()) merged.delete(id);
-    // Chốt chặn cuối: không bao giờ ghi chữ tiếng Việt dạng tổ hợp xuống máy, dù
-    // nó đến từ đường nào (tra từ mới, bổ sung hàng loạt, đồng bộ cloud).
-    const serialized = JSON.stringify([...merged.values()].map(composeVietnamese));
-    localStorage.setItem(localWordsKey, serialized);
-    localStorage.setItem(localWordsBackupKey, serialized);
-  } catch {
-    // Hết dung lượng hoặc trình duyệt chặn — bỏ qua, dữ liệu vẫn còn trong phiên hiện tại.
-  }
-}
-
-// Tiến trình học (hộp Leitner, lịch ôn, số lần ôn) của MỌI từ, kể cả bộ PDF vốn không lưu nội dung từ.
-type WordProgress = Pick<WordCard, "box" | "lapses" | "dueDate" | "status" | "intervalDays" | "reviewCount" | "lastReviewedAt" | "starred" | "studyDay">;
-const progressKey = "lexilo:progress:v1";
-function readProgress(): Record<string, WordProgress> {
-  try {
-    const raw = localStorage.getItem(progressKey);
-    const parsed = raw ? (JSON.parse(raw) as Record<string, WordProgress>) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-function hasProgress(word: WordCard) {
-  return word.box > 1 || !!word.reviewCount || !!word.lapses || !!word.starred || !!word.dueDate || (!!word.status && word.status !== "new") || typeof word.studyDay === "number";
-}
-function writeProgress(words: WordCard[]) {
-  try {
-    // Chỉ ghi từ đã học để file không phình theo cả 983 từ chưa đụng tới.
-    const store: Record<string, WordProgress> = {};
-    for (const word of words) {
-      if (!hasProgress(word)) continue;
-      store[word.id] = { box: word.box, lapses: word.lapses, dueDate: word.dueDate, status: word.status, intervalDays: word.intervalDays, reviewCount: word.reviewCount, lastReviewedAt: word.lastReviewedAt, starred: word.starred, studyDay: word.studyDay };
-    }
-    localStorage.setItem(progressKey, JSON.stringify(store));
-  } catch {
-    // Bỏ qua như trên.
-  }
-}
-function applyProgress(words: WordCard[]) {
-  const store = readProgress();
-  return words.map((word) => {
-    const saved = store[word.id];
-    if (!saved) return word;
-    const merged = { ...word, ...saved };
-    // Với bộ Excel theo tuần, tên file là nguồn xác định folder; tiến độ cũ chỉ giữ
-    // Leitner/trạng thái và không được chuyển từ sang một ngày khác.
-    return word.source?.endsWith(".xlsx") ? { ...merged, studyDay: word.studyDay } : merged;
-  });
-}
-
-// Ngày thi mục tiêu, để đếm ngược trên trang chủ.
-type ExamGoal = { date: string; label: string };
-const examKey = "lexilo:exam:v1";
-function readExam(): ExamGoal | null {
-  try {
-    const raw = localStorage.getItem(examKey);
-    const parsed = raw ? (JSON.parse(raw) as ExamGoal) : null;
-    return parsed?.date ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function writeExam(goal: ExamGoal | null) {
-  try {
-    if (goal) localStorage.setItem(examKey, JSON.stringify(goal));
-    else localStorage.removeItem(examKey);
-  } catch {
-    // Bỏ qua khi trình duyệt chặn.
-  }
-}
-
-
-// Chuỗi ngày học: lưu danh sách ngày có ít nhất một thẻ được chấm.
-const streakKey = "lexilo:streak:v1";
-// Nhật ký ôn tập theo thời gian. Thẻ từ chỉ giữ tổng số lượt và tổng số lần quên,
-// không có ngày tháng, nên không trả lời được "tuần này học được bao nhiêu từ mới".
-const reviewLogKey = "lexilo:reviews:v1";
-type ReviewEntry = { at: string; id: string; term: string; rating: Rating; boxBefore: number; boxAfter: number; firstTime: boolean };
-function readReviewLog(): ReviewEntry[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(reviewLogKey) || "[]") as ReviewEntry[];
-    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.at === "string") : [];
-  } catch {
-    return [];
-  }
-}
-function logReview(entry: ReviewEntry) {
-  try {
-    localStorage.setItem(reviewLogKey, JSON.stringify(appendLogEntry(readReviewLog(), entry)));
-  } catch {
-    // Hết dung lượng thì bỏ qua — không được để việc ghi nhật ký chặn phiên học.
-  }
-}
-function readStudyDays(): string[] {
-  try {
-    const raw = localStorage.getItem(streakKey);
-    const parsed = raw ? (JSON.parse(raw) as string[]) : [];
-    return Array.isArray(parsed) ? [...new Set(parsed.filter((item) => typeof item === "string"))].sort() : [];
-  } catch {
-    return [];
-  }
-}
-function markStudiedToday(): string[] {
-  const days = readStudyDays();
-  const today = localDateString();
-  if (days.includes(today)) return days;
-  // Giữ hai năm gần nhất là đủ cho mọi thống kê hiện có.
-  const next = [...days, today].slice(-730);
-  try {
-    localStorage.setItem(streakKey, JSON.stringify(next));
-  } catch {
-    // Bỏ qua khi trình duyệt chặn.
-  }
-  return next;
-}
-
-
-// Phiên ôn đang dở, để đóng tab rồi quay lại vẫn học tiếp đúng chỗ.
-type StoredSession = { ids: string[]; index: number; mode: ReviewMode };
-const sessionKey = "lexilo:session:v1";
-function readSession(): StoredSession | null {
-  try {
-    const raw = localStorage.getItem(sessionKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredSession;
-    return Array.isArray(parsed?.ids) && parsed.ids.length && typeof parsed.index === "number" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function writeSession(session: StoredSession | null) {
-  try {
-    if (session) localStorage.setItem(sessionKey, JSON.stringify(session));
-    else localStorage.removeItem(sessionKey);
-  } catch {
-    // Bỏ qua như trên.
-  }
-}
-
-function isPdfVocabulary(word: WordCard) {
-  return word.source?.includes("MochiMochi") || word.id.startsWith("pdf-");
-}
 
 // Câu ví dụ do app tự dựng lúc nhập (chưa tra từ điển) phải được coi như ô trống,
 // nếu không thì "Dán danh sách" tạo ra cả trăm từ dùng chung một khuôn câu và
@@ -480,9 +174,7 @@ function parseTermLine(line: string): Omit<WordCard, "id" | "lapses"> | null {
   };
 }
 
-function isSeedWord(word: WordCard) {
-  return ["1", "2", "3", "4", "5"].includes(word.id);
-}
+
 
 function weeklyWordCards(items: WeeklyVocabulary[], examples: ExampleMap): WordCard[] {
   return items.map((item) => ({

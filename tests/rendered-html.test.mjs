@@ -25,13 +25,16 @@ test("server-renders the Lexilo application shell", async () => {
 });
 
 test("keeps personal vocabulary and the PDF collection separated", async () => {
-  const [page, vocabulary] = await Promise.all([
+  const [page, vocabulary, types] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../public/vocabulary-1000.json", import.meta.url), "utf8"),
+    readFile(new URL("../lib/types.ts", import.meta.url), "utf8"),
   ]);
   const items = JSON.parse(vocabulary);
   assert.equal(items.length, 983);
-  assert.match(page, /function isPdfVocabulary/);
+  // Vị từ này đã chuyển sang lib/types.ts; giao diện chỉ import và dùng.
+  assert.match(types, /export function isPdfVocabulary/);
+  assert.match(page, /isPdfVocabulary/);
   assert.match(page, /Thư mục học/);
   assert.match(page, /Học folder này/);
   // Điều cần giữ là Practice nhận TOÀN BỘ words, không phải danh sách đã lọc bỏ bộ
