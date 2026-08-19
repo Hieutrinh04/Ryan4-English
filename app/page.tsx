@@ -4,6 +4,7 @@ import { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction,
 import { aiFetch, supabase } from "../lib/supabase";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLesson, type DictationLevel } from "../lib/dictation-lessons";
 import ieltsAreaData from "../lib/ielts-areas.json";
+import ShadowingPractice from "../components/Shadowing";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
 // mẫu vẫn được công nhận đúng.
 type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { wrong: string; right: string; why: string }[] };
@@ -16,8 +17,8 @@ import { clozeFor } from "../lib/cloze.mjs";
 import { detailsFrom, exampleFor, fallbackExample, isPdfVocabulary, isSeedWord, withMeanings,
   type EnrichmentMap, type ExamGoal, type ExampleMap, type ImportedVocabulary, type Rating, type ReviewMode,
   type UsageDetail, type UsageMap, type WeeklyVocabulary, type WordCard } from "../lib/types";
-import { activeTabKey, composeVietnamese, logReview, markDeleted, markStudiedToday, mergeStoredWords, readDeletedIds,
-  readExam, readLocalWords, readReviewLog, readSession, readStudyDays, weeklyImportKey, writeExam, writeLocalWords,
+import { activeTabKey, composeVietnamese, logReview, logSpeaking, markDeleted, markStudiedToday, mergeStoredWords, readDeletedIds,
+  readExam, readLocalWords, readReviewLog, readSession, readSpeaking, readStudyDays, speakingMinutes, weeklyImportKey, writeExam, writeLocalWords,
   writeProgress, writeSession, type ReviewEntry, type StoredSession } from "../lib/storage";
 
 // Kiểu thẻ trong phiên ôn. "mixed" xoay vòng 4 kiểu còn lại theo thứ tự thẻ.
@@ -2598,8 +2599,8 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
     { label: "Từ điển", short: "C", url: "https://dictionary.cambridge.org/", tone: "teal" },
     { label: "Google Dịch", short: "G", url: "https://translate.google.com/?sl=en&tl=vi", tone: "sky" },
   ];
-  const [mode, setMode] = useState<PracticeMode>("menu");
-  const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(intent ?? null);
+  const [mode, setMode] = useState<PracticeMode>(intent === "shadow" ? "shadow" : "menu");
+  const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(intent === "shadow" ? null : intent ?? null);
   const [practiceWords, setPracticeWords] = useState<WordCard[]>([]);
   const [index, setIndex] = useState(0);
   const [result, setResult] = useState<string | null>(null);
@@ -2617,6 +2618,10 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
   const pdfWords = words.filter(isPdfVocabulary);
   const pdfTopics = [...new Set(pdfWords.flatMap((item) => item.topic.split(" · ")))];
   function chooseMode(nextMode: Exclude<PracticeMode, "menu">) {
+    if (nextMode === "shadow") {
+      setMode(nextMode);
+      return;
+    }
     setPendingMode(nextMode);
   }
   function chooseFolder(folderWords: WordCard[]) {
@@ -2689,6 +2694,11 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
             <b>Chép chính tả</b>
             <small>Nghe câu và gõ lại theo chủ đề, trình độ</small>
           </button>
+          <button onClick={() => chooseMode("shadow")}>
+            <span>◉</span>
+            <b>Nói nhại</b>
+            <small>Nghe câu mẫu, nói theo và xem máy nghe ra được bao nhiêu</small>
+          </button>
           <button onClick={() => chooseMode("translate")}>
             <span>⇄</span>
             <b>Dịch Việt → Anh</b>
@@ -2704,6 +2714,7 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
     );
   if (mode === "match") return <MatchGame words={activeWords} close={returnToModes} />;
   if (mode === "dictation") return <DictationPractice words={activeWords} close={returnToModes} />;
+  if (mode === "shadow") return <ShadowingPractice close={returnToModes} onPractised={logSpeaking} />;
   if (mode === "learn") return <LearnMode words={activeWords} setMode={setMode} />;
   if (mode === "test") return <TestMode words={activeWords} setMode={setMode} />;
   if (mode === "flash") return <FlashcardsMode words={activeWords} setMode={setMode} toggleStar={toggleStar} />;
@@ -2750,6 +2761,7 @@ const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: 
   { value: "translate", label: "Dịch Việt → Anh", icon: "⇄" },
   { value: "listen", label: "Nghe và viết", icon: "◖))" },
   { value: "dictation", label: "Chép chính tả", icon: "≋" },
+  { value: "shadow", label: "Nói nhại", icon: "◉" },
   { value: "match", label: "Nối cặp", icon: "⌘" },
 ];
 
@@ -2759,6 +2771,7 @@ const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
   test: "Kiểm tra",
   listen: "Nghe và viết",
   dictation: "Chép chính tả",
+  shadow: "Nói nhại",
   match: "Nối cặp",
   translate: "Dịch Việt → Anh",
 };
@@ -2806,7 +2819,7 @@ function normalizeAnswer(value: string) {
     .replace(/\s+/g, " ");
 }
 
-type PracticeMode = "menu" | "flash" | "learn" | "test" | "listen" | "match" | "dictation" | "translate";
+type PracticeMode = "menu" | "flash" | "learn" | "test" | "listen" | "match" | "dictation" | "shadow" | "translate";
 const practiceModeBar: { value: PracticeMode; label: string; icon: string }[] = [
   { value: "flash", label: "Thẻ ghi nhớ", icon: "▱" },
   { value: "learn", label: "Học", icon: "✎" },
@@ -4620,10 +4633,14 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
   const [days, setDays] = useState<number>(7);
   // Nhật ký chỉ đọc được trên máy nên phải chờ hydrate, giống các state khác.
   const [log, setLog] = useState<ReviewEntry[]>([]);
+  const [spoken, setSpoken] = useState<Record<string, number>>({});
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
     setLog(readReviewLog());
+    setSpoken(readSpeaking());
   }, []);
+  // Thời gian luyện nói đếm riêng: số từ đã thuộc không nói lên bạn nói được hay chưa.
+  const spokenMinutes = useMemo(() => speakingMinutes(spoken, days), [spoken, days]);
   const scoped: ReviewEntry[] = useMemo(() => entriesSince(log, days), [log, days]);
   const summary = useMemo(() => summarise(scoped), [scoped]);
   const weakWords = useMemo(() => weakest(scoped, 5), [scoped]);
@@ -4657,6 +4674,7 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
           <div>
             <h3>Bạn học thế nào trong {PERIODS.find((item) => item.key === days)?.label.toLowerCase()}</h3>
             <p>Đếm từ nhật ký ôn tập, mỗi lượt bấm đánh giá là một dòng.</p>
+            {spokenMinutes > 0 && <p className="period-speaking">◉ Đã luyện nói {spokenMinutes} phút trong quãng này.</p>}
           </div>
           <div className="period-tabs" role="group" aria-label="Khoảng thời gian">
             {PERIODS.map((item) => (

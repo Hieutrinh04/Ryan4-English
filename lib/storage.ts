@@ -250,3 +250,6 @@ export function writeSession(session: StoredSession | null) {
   }
 }
 
+
+// Bộ đếm thời gian luyện nói nằm ở lib/speaking-log.mjs (để test Node nạp được).
+export { logSpeaking, readSpeaking, speakingKey, speakingMinutes } from "./speaking-log.mjs";
