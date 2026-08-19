@@ -1,19 +1,27 @@
 "use client";
 
-import { Dispatch, FormEvent, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
+import { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLesson, type DictationLevel } from "../lib/dictation-lessons";
+import ieltsAreaData from "../lib/ielts-areas.json";
+// Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
+// mẫu vẫn được công nhận đúng.
+type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { wrong: string; right: string; why: string }[] };
+import { PASSAGE_SIZE, buildPassages, gradeTranslation } from "../lib/translation-check.mjs";
+import { advice, appendEntry as appendLogEntry, byDay, entriesSince, summarise, weakest } from "../lib/review-log.mjs";
 
 type Rating = "again" | "hard" | "good" | "easy";
 // Kiểu thẻ trong phiên ôn. "mixed" xoay vòng 4 kiểu còn lại theo thứ tự thẻ.
-type ReviewMode = "vi_en" | "en_vi" | "quiz" | "listen" | "mixed";
+type ReviewMode = "card" | "vi_en" | "en_vi" | "quiz" | "listen" | "mixed";
 const reviewModes: { value: ReviewMode; label: string }[] = [
+  { value: "card", label: "Thẻ ghi nhớ" },
   { value: "vi_en", label: "Việt → Anh" },
   { value: "en_vi", label: "Anh → Việt" },
   { value: "quiz", label: "Trắc nghiệm" },
   { value: "listen", label: "Nghe viết" },
   { value: "mixed", label: "Trộn" },
 ];
+// "Trộn" chỉ đảo giữa các kiểu có chấm điểm; thẻ ghi nhớ là kiểu xem lại tự do nên đứng ngoài.
 const rotatingModes: ReviewMode[] = ["vi_en", "en_vi", "quiz", "listen"];
 const DAILY_REVIEW_LIMIT = 30;
 const DAILY_NEW_LIMIT = 8;
@@ -178,11 +186,58 @@ function readLocalWords(): WordCard[] {
 }
 // Từ đã lên được Supabase sẽ quay về theo đúng id, nên gộp theo id là đủ để không nhân đôi.
 // Tiến trình học được đắp lại sau cùng, áp cho cả từ cá nhân lẫn bộ PDF.
+// Gợi ý "từ hay đi cùng chủ đề" trước đây lấy thẳng rel_trg của Datamuse nên lẫn
+// tên riêng và từ hiếm (rescue → sar, lifeboat, firefighting). Thuật toán đã sửa,
+// nhưng mergeEnrichment luôn giữ giá trị cũ nếu ô đã có dữ liệu, nên từ đã lưu
+// trên máy phải được dọn một lần thì nút "Bổ sung từ thiếu" mới tra lại được.
+// Bộ từ PDF không cần dọn vì luôn dựng lại từ file dữ liệu mỗi lần tải trang.
+const relatedResetKey = "lexilo:related-reset:v2";
+// Dịch máy có lúc trả về tiếng Việt ở dạng tổ hợp (o + dấu mũ + dấu huyền rời).
+// Trình duyệt dựng ra "sô ̀i", "quô ́c gia" với dấu trôi ra ngoài chữ. Chuẩn hoá NFC
+// gộp chúng thành một ký tự. Route đã chuẩn hoá từ nguồn; hàm này vá dữ liệu đã lỡ
+// lưu trước đó trên máy người dùng.
+function composeVietnamese(word: WordCard): WordCard {
+  const fields = ["meaning", "example", "exampleVi", "definition", "collocation", "collocationVi", "cloze", "topic"] as const;
+  let changed = false;
+  const fixed = { ...word };
+  for (const field of fields) {
+    const value = word[field];
+    if (typeof value !== "string" || !value) continue;
+    const composed = value.normalize("NFC");
+    if (composed !== value) {
+      fixed[field] = composed;
+      changed = true;
+    }
+  }
+  const fixList = (list?: UsageDetail[]) =>
+    list?.map((item) => {
+      const next = { ...item, term: item.term.normalize("NFC"), meaningVi: item.meaningVi?.normalize("NFC") ?? item.meaningVi, example: item.example?.normalize("NFC") ?? item.example, exampleVi: item.exampleVi?.normalize("NFC") ?? item.exampleVi };
+      if (next.term !== item.term || next.meaningVi !== item.meaningVi || next.example !== item.example || next.exampleVi !== item.exampleVi) changed = true;
+      return next;
+    });
+  const details = { synonymDetails: fixList(word.synonymDetails), antonymDetails: fixList(word.antonymDetails), relatedDetails: fixList(word.relatedDetails) };
+  return changed ? { ...fixed, ...details } : word;
+}
+
+function clearLegacyRelated(words: WordCard[]) {
+  try {
+    if (localStorage.getItem(relatedResetKey)) return words;
+    localStorage.setItem(relatedResetKey, new Date().toISOString());
+  } catch {
+    return words;
+  }
+  return words.map((word) =>
+    isPdfVocabulary(word) || !word.related?.length
+      ? word
+      : { ...word, related: [], relatedDetails: [], enrichmentCheckedAt: undefined },
+  );
+}
+
 function mergeStoredWords(loaded: WordCard[]) {
   const deleted = readDeletedIds();
   const kept = loaded.filter((word) => !deleted.has(word.id));
   const ids = new Set(kept.map((word) => word.id));
-  return applyProgress([...readLocalWords().filter((word) => !ids.has(word.id)), ...kept]);
+  return applyProgress(clearLegacyRelated([...readLocalWords().filter((word) => !ids.has(word.id)), ...kept]).map(composeVietnamese));
 }
 function writeLocalWords(words: WordCard[]) {
   try {
@@ -192,7 +247,9 @@ function writeLocalWords(words: WordCard[]) {
     const merged = new Map(current.map((word) => [word.id, word]));
     for (const word of personal) merged.set(word.id, word);
     for (const id of readDeletedIds()) merged.delete(id);
-    const serialized = JSON.stringify([...merged.values()]);
+    // Chốt chặn cuối: không bao giờ ghi chữ tiếng Việt dạng tổ hợp xuống máy, dù
+    // nó đến từ đường nào (tra từ mới, bổ sung hàng loạt, đồng bộ cloud).
+    const serialized = JSON.stringify([...merged.values()].map(composeVietnamese));
     localStorage.setItem(localWordsKey, serialized);
     localStorage.setItem(localWordsBackupKey, serialized);
   } catch {
@@ -268,6 +325,25 @@ function daysUntil(date: string) {
 
 // Chuỗi ngày học: lưu danh sách ngày có ít nhất một thẻ được chấm.
 const streakKey = "lexilo:streak:v1";
+// Nhật ký ôn tập theo thời gian. Thẻ từ chỉ giữ tổng số lượt và tổng số lần quên,
+// không có ngày tháng, nên không trả lời được "tuần này học được bao nhiêu từ mới".
+const reviewLogKey = "lexilo:reviews:v1";
+type ReviewEntry = { at: string; id: string; term: string; rating: Rating; boxBefore: number; boxAfter: number; firstTime: boolean };
+function readReviewLog(): ReviewEntry[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(reviewLogKey) || "[]") as ReviewEntry[];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.at === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function logReview(entry: ReviewEntry) {
+  try {
+    localStorage.setItem(reviewLogKey, JSON.stringify(appendLogEntry(readReviewLog(), entry)));
+  } catch {
+    // Hết dung lượng thì bỏ qua — không được để việc ghi nhật ký chặn phiên học.
+  }
+}
 function readStudyDays(): string[] {
   try {
     const raw = localStorage.getItem(streakKey);
@@ -376,8 +452,12 @@ function needsEnrichment(word: WordCard) {
   const missingUsageDetails = (!!word.synonyms?.length && !word.synonymDetails?.length) || (!!word.antonyms?.length && !word.antonymDetails?.length) || (!!word.related?.length && !word.relatedDetails?.length);
   return !isPdfVocabulary(word) && !isSeedWord(word) && (missingMeaning || missingUsageDetails || (!word.enrichmentCheckedAt && missingFields(word).length > 0));
 }
+// Một nghĩa trong từ điển, kèm bản dịch tiếng Việt để người dùng đọc mà chọn.
+type DictionarySense = { index: number; part_of_speech?: string; definition_en?: string; definition_vi?: string; example?: string };
 type EnrichPayload = {
   meaning_vi?: string;
+  sense?: number;
+  senses?: DictionarySense[];
   ipa?: string;
   part_of_speech?: string;
   definition_en?: string;
@@ -396,6 +476,11 @@ type EnrichPayload = {
 };
 // Chỉ đắp vào ô đang trống — không bao giờ đè lên nội dung người dùng đã tự sửa.
 function mergeEnrichment(word: WordCard, data: EnrichPayload): WordCard {
+  // Dữ liệu tra về đi thẳng vào state rồi xuống máy, không qua mergeStoredWords,
+  // nên phải tự ghép dấu tiếng Việt ở đây.
+  return composeVietnamese(mergeEnrichmentRaw(word, data));
+}
+function mergeEnrichmentRaw(word: WordCard, data: EnrichPayload): WordCard {
   const keepText = (current: string | undefined, incoming: string | undefined, placeholder?: string) => (current?.trim() && current !== placeholder ? current : (incoming?.trim() ?? current ?? ""));
   const keepList = (current: string[] | undefined, incoming: string[] | undefined) => (current?.length ? current : (incoming ?? []));
   // Câu khuôn do app tự dựng thì cho phép thay; câu người dùng tự viết thì giữ nguyên.
@@ -579,6 +664,14 @@ export default function Home() {
   const [words, setWords] = useState(initialWords);
   const [showAdd, setShowAdd] = useState(false);
   const [showBulkAdd, setShowBulkAdd] = useState(false);
+  // Chế độ luyện tập chọn thẳng từ thanh bên; null nghĩa là trang công cụ ngoài.
+  const [practiceIntent, setPracticeIntent] = useState<Exclude<PracticeMode, "menu"> | null>(null);
+  // Rời khỏi mục luyện tập thì bỏ chế độ đang chọn, để lần sau quay lại không nhảy
+  // thẳng vào chế độ cũ một cách bất ngờ.
+  const goTab = (next: typeof tab) => {
+    setPracticeIntent(null);
+    setTab(next);
+  };
   const [detailWord, setDetailWord] = useState<WordCard | null>(null);
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState("");
@@ -613,9 +706,6 @@ export default function Home() {
     }
     return [...picked, card].sort((a, b) => (a.id + index).localeCompare(b.id + index));
   }, [card, index, reviewQueue]);
-  const personalWords = useMemo(() => words.filter((word) => !isPdfVocabulary(word)), [words]);
-  // Chưa có từ cá nhân (chế độ demo) thì luyện tập và thống kê chạy trên bộ PDF thay vì hiện màn hình trống.
-  const studyPool = personalWords.length ? personalWords : words;
 
   // Chủ đề chỉ đọc được sau khi hydrate: nếu đọc localStorage lúc khởi tạo state thì HTML
   // dựng sẵn (luôn "dark") sẽ khác client và React báo lỗi hydration.
@@ -1035,6 +1125,27 @@ export default function Home() {
     startedAt.current = Date.now();
   }
 
+  // Thẻ ghi nhớ đi tới lui tự do và không chấm điểm: hộp Leitner giữ nguyên, không
+  // ghi nhật ký ôn tập. Đây là kiểu xem lại, coi nó là đã thuộc thì sai lịch ôn.
+  // Vẫn tính là có học trong ngày để chuỗi ngày học không bị đứt oan.
+  function stepCard(delta: number) {
+    if (delta > 0) setStudyDays(markStudiedToday());
+    setIndex((value) => Math.max(0, Math.min(reviewQueue.length, value + delta)));
+    setRevealed(false);
+    setAnswer("");
+    setChoice(null);
+    startedAt.current = Date.now();
+  }
+
+  // Xáo lại thứ tự hàng đợi và quay về thẻ đầu, như nút ⇄ bên Luyện tập.
+  function shuffleQueue() {
+    setReviewQueue((queue) => seededOrder(queue, Date.now() % 1000));
+    setIndex(0);
+    setRevealed(false);
+    setAnswer("");
+    setChoice(null);
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -1050,9 +1161,17 @@ export default function Home() {
       const isQuiz = activeMode === "quiz" && quizChoices.length >= 2;
       if (event.code === "Space" && !isQuiz) {
         event.preventDefault();
-        setRevealed(true);
+        // Thẻ ghi nhớ lật được hai chiều; kiểu có chấm điểm thì chỉ mở đáp án một lần.
+        setRevealed((value) => (activeMode === "card" ? !value : true));
+      }
+      if (activeMode === "card" && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        event.preventDefault();
+        stepCard(event.key === "ArrowRight" ? 1 : -1);
+        return;
       }
       if (["1", "2", "3", "4"].includes(event.key)) {
+        // Thẻ ghi nhớ không chấm điểm nên phím 1–4 không có tác dụng gì.
+        if (activeMode === "card") return;
         if (revealed) rate(({ 1: "again", 2: "hard", 3: "good", 4: "easy" } as Record<string, Rating>)[event.key]);
         else if (isQuiz) {
           const picked = quizChoices[Number(event.key) - 1];
@@ -1108,8 +1227,20 @@ export default function Home() {
       dueDate: localDateString(due),
       status: after === 6 ? ("mastered" as const) : ("review" as const),
       reviewCount: (card.reviewCount ?? 0) + 1,
+      lastReviewedAt: new Date().toISOString(),
     };
     setWords((current) => current.map((word) => (word.id !== card.id ? word : updated)));
+    // Ghi nhật ký trước khi state cập nhật, để còn biết hộp cũ và đây có phải lượt
+    // ôn đầu tiên của từ này hay không.
+    logReview({
+      at: new Date().toISOString(),
+      id: card.id,
+      term: card.term,
+      rating,
+      boxBefore: card.box,
+      boxAfter: after,
+      firstTime: !(card.reviewCount ?? 0),
+    });
     void persistReview(card, updated, rating, Date.now() - startedAt.current);
     setStudyDays(markStudiedToday());
     setSessionRatings((current) => [...current, rating]);
@@ -1239,7 +1370,10 @@ export default function Home() {
         answer={answer}
         setAnswer={setAnswer}
         reveal={() => setRevealed(true)}
+        flip={() => setRevealed((value) => !value)}
         rate={rate}
+        step={stepCard}
+        shuffle={shuffleQueue}
         close={exitReview}
         speak={speak}
         toggleStar={() => toggleStar(card.id)}
@@ -1262,18 +1396,38 @@ export default function Home() {
           <span className="brand-mark">L</span>
           <span>Lexilo</span>
         </div>
+        {/* Mọi chức năng nằm thẳng ở cột trái, chia theo nhóm. Trước đây bảy chế độ
+            luyện tập bị giấu sau một trang lưới, phải bấm hai lần mới tới. */}
         <nav aria-label="Điều hướng chính">
-          <button className={tab === "home" ? "nav-item active" : "nav-item"} onClick={() => setTab("home")}>
+          <span className="nav-group">TỔNG QUAN</span>
+          <button className={tab === "home" ? "nav-item active" : "nav-item"} onClick={() => goTab("home")}>
             <span>⌂</span> Hôm nay
           </button>
-          <button className={tab === "words" ? "nav-item active" : "nav-item"} onClick={() => setTab("words")}>
-            <span>▤</span> Từ vựng
-          </button>
-          <button className={tab === "practice" ? "nav-item active" : "nav-item"} onClick={() => setTab("practice")}>
-            <span>◇</span> Luyện tập
-          </button>
-          <button className={tab === "stats" ? "nav-item active" : "nav-item"} onClick={() => setTab("stats")}>
+          <button className={tab === "stats" ? "nav-item active" : "nav-item"} onClick={() => goTab("stats")}>
             <span>⌁</span> Thống kê
+          </button>
+
+          <span className="nav-group">LUYỆN TẬP</span>
+          {practiceNav.map((item) => (
+            <button
+              key={item.value}
+              className={tab === "practice" && practiceIntent === item.value ? "nav-item active" : "nav-item"}
+              onClick={() => {
+                setPracticeIntent(item.value);
+                setTab("practice");
+              }}
+            >
+              <span>{item.icon}</span> {item.label}
+            </button>
+          ))}
+
+          <span className="nav-group">THƯ VIỆN</span>
+          <button className={tab === "words" ? "nav-item active" : "nav-item"} onClick={() => goTab("words")}>
+            <span>▤</span> Từ vựng
+            <em className="nav-count">{words.length}</em>
+          </button>
+          <button className={tab === "practice" && !practiceIntent ? "nav-item active" : "nav-item"} onClick={() => { setPracticeIntent(null); setTab("practice"); }}>
+            <span>◇</span> Công cụ ngoài
           </button>
         </nav>
         <div className="sidebar-bottom">
@@ -1367,8 +1521,10 @@ export default function Home() {
             openWordDetail={(id) => setDetailWord(words.find((word) => word.id === id) ?? null)}
           />
         )}
-        {tab === "practice" && <Practice words={words} toggleStar={toggleStar} />}
-        {tab === "stats" && <Stats words={studyPool} scopeLabel={personalWords.length ? "Từ của tôi" : "Bộ từ vựng PDF"} />}
+        {/* key theo chế độ để mỗi lần chọn ở thanh bên là dựng lại từ đầu. */}
+        {tab === "practice" && <Practice key={practiceIntent ?? "menu"} words={words} toggleStar={toggleStar} intent={practiceIntent} />}
+        {/* Thống kê tính trên toàn bộ thư viện, cùng phạm vi với các ô ở trang chủ. */}
+        {tab === "stats" && <Stats words={words} scopeLabel="toàn bộ thư viện" streak={streakFrom(studyDays)} />}
       </section>
 
       <nav className="mobile-nav" aria-label="Điều hướng di động">
@@ -1425,9 +1581,18 @@ export default function Home() {
 
 function Dashboard({ words, startReview, startTopicReview, openWords, openPractice, startWordReview, startDueReview, exam, setExam, streak }: { words: WordCard[]; startReview: (dayIndex?: number | "pdf") => void; startTopicReview: (topic: string) => void; openWords: () => void; openPractice: () => void; startWordReview: (id: string) => void; startDueReview: () => void; exam: ExamGoal | null; setExam: (goal: ExamGoal | null) => void; streak: { current: number; best: number; studiedToday: boolean } }) {
   const personal = words.filter((word) => !isPdfVocabulary(word));
-  // Chưa có từ cá nhân thì các chỉ số ở đầu trang nói về bộ PDF, thay vì hiển thị toàn số 0.
+  // Chưa có từ cá nhân thì phiên học hôm nay lấy từ bộ PDF, thay vì trống trơn.
   const onlyPdf = !personal.length && words.length > 0;
-  const scheduledWords = onlyPdf ? words : personal;
+  // Các chỉ số ở đầu trang tính trên TOÀN BỘ thư viện, kể cả bộ PDF. Trước đây mỗi
+  // ô một phạm vi khác nhau — tổng số thì gồm PDF, "đang học" thì không, "lượt đã
+  // ôn" lại chỉ tính Từ của tôi — nên bốn con số không cộng trừ được với nhau.
+  const scheduledWords = words;
+  const pdfCount = words.length - personal.length;
+  // Danh sách từ đứng sau ô số liệu đang mở; null là chưa mở ô nào.
+  const [statList, setStatList] = useState<{ title: string; note: string; words: WordCard[] } | null>(null);
+  const masteredWords = words.filter((word) => wordState(word).key === "mastered");
+  const learningWords = words.filter((word) => wordState(word).key !== "mastered");
+  const reviewedWords = words.filter((word) => (word.reviewCount ?? 0) > 0).sort((a, b) => (b.reviewCount ?? 0) - (a.reviewCount ?? 0));
   const mastered = scheduledWords.filter((w) => wordState(w).key === "mastered").length;
   const todayQueue = onlyPdf ? buildCollectionQueue(words.filter(isPdfVocabulary)).slice(0, PDF_DAILY_PREVIEW_LIMIT) : buildTodayQueue(personal);
   const todayNew = todayQueue.filter((word) => wordState(word).key === "new").length;
@@ -1577,10 +1742,16 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
         </button>
       </section>
       <div className="stats-grid">
-        <Stat label="Tổng số từ" value={String(words.length)} note="Trong thư viện của bạn" icon="▤" tone="purple" />
-        <Stat label="Đang học" value={String(scheduledWords.length - mastered)} note={onlyPdf ? "Trong bộ từ vựng PDF" : "Không gồm bộ PDF"} icon="◔" tone="orange" />
-        <Stat label="Đã thuộc" value={String(mastered)} note={onlyPdf ? "Trong bộ từ vựng PDF" : "Trong lịch học hằng ngày"} icon="✓" tone="green" />
-        <Stat label="Lượt đã ôn" value={String(reviewedThisWeek)} note={onlyPdf ? "Trong bộ từ vựng PDF" : "Trong Từ của tôi"} icon="♨" tone="pink" />
+        {/* Bốn ô cùng một phạm vi: toàn bộ thư viện, gồm cả bộ PDF. Nhờ vậy
+            "đang học" + "đã thuộc" luôn cộng lại đúng bằng "tổng số từ". */}
+        <Stat label="Tổng số từ" value={String(words.length)} note={pdfCount ? `${personal.length} từ của bạn · ${pdfCount} từ bộ PDF` : "Trong thư viện của bạn"} icon="▤" tone="purple"
+          onOpen={() => setStatList({ title: "Tổng số từ", note: "TOÀN BỘ THƯ VIỆN", words })} />
+        <Stat label="Đang học" value={String(words.length - mastered)} note="Chưa lên hộp 6" icon="◔" tone="orange"
+          onOpen={() => setStatList({ title: "Đang học", note: "CHƯA LÊN HỘP 6", words: learningWords })} />
+        <Stat label="Đã thuộc" value={String(mastered)} note="Đã lên hộp 6" icon="✓" tone="green"
+          onOpen={() => setStatList({ title: "Đã thuộc", note: "ĐÃ LÊN HỘP 6", words: masteredWords })} />
+        <Stat label="Lượt đã ôn" value={String(reviewedThisWeek)} note="Toàn bộ thư viện" icon="♨" tone="pink"
+          onOpen={() => setStatList({ title: "Từ đã được ôn", note: "XẾP THEO SỐ LƯỢT ÔN", words: reviewedWords })} />
       </div>
       <LearningPlan reviewCount={todayReview} newCount={todayNew} startVocabulary={() => startReview(onlyPdf ? "pdf" : undefined)} openPractice={openPractice} />
       <DailyStudy words={words} startReview={startReview} startTopicReview={startTopicReview} />
@@ -1657,6 +1828,7 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
           </button>
         </div>
       )}
+      {statList && <WordListModal title={statList.title} note={statList.note} words={statList.words} close={() => setStatList(null)} />}
     </div>
   );
 }
@@ -1880,15 +2052,172 @@ function WeeklyTracker({ words }: { words: WordCard[] }) {
   );
 }
 
-function Stat({ label, value, note, icon, tone }: { label: string; value: string; note: string; icon: string; tone: string }) {
+// Rê chuột vào một từ tiếng Anh là tra nghĩa ngay tại chỗ.
+//
+// Kết quả được nhớ lại trong phiên: đọc một đoạn thì cùng một từ hay lặp lại, tra
+// lại mỗi lần vừa chậm vừa phí. Chờ 350ms mới gọi để lướt chuột qua không kích hoạt.
+type Glance = { term: string; ipa: string; meaningVi: string; senses: { part: string; definition: string; synonyms: string[] }[] };
+const glanceCache = new Map<string, Glance | "missing">();
+
+function EnglishText({ text, className }: { text: string; className?: string }) {
+  const [active, setActive] = useState<{ word: string; x: number; y: number } | null>(null);
+  const [data, setData] = useState<Glance | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "missing">("idle");
+  const timer = useRef<number | null>(null);
+
+  function show(word: string, element: HTMLElement) {
+    const clean = word.toLowerCase().replace(/[^a-z'-]/g, "");
+    if (clean.length < 2) return;
+    // Ghim bóng trong khung nhìn: từ ở sát mép phải hoặc gần đáy thì bóng sẽ tràn
+    // ra ngoài và không đọc được.
+    const box = element.getBoundingClientRect();
+    const width = Math.min(320, window.innerWidth - 24);
+    const height = 210;
+    const x = Math.max(12, Math.min(box.left, window.innerWidth - width - 12));
+    const y = box.bottom + height + 12 > window.innerHeight ? Math.max(12, box.top - height - 6) : box.bottom;
+    setActive({ word: clean, x, y });
+    const cached = glanceCache.get(clean);
+    if (cached) {
+      setData(cached === "missing" ? null : cached);
+      setState(cached === "missing" ? "missing" : "idle");
+      return;
+    }
+    setData(null);
+    setState("loading");
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/ai/glance?q=${encodeURIComponent(clean)}`);
+        const payload = (await response.json()) as Glance & { error?: string };
+        if (!response.ok || payload.error) throw new Error(payload.error);
+        glanceCache.set(clean, payload);
+        setData(payload);
+        setState("idle");
+      } catch {
+        glanceCache.set(clean, "missing");
+        setState("missing");
+      }
+    }, 350);
+  }
+  function hide() {
+    if (timer.current) window.clearTimeout(timer.current);
+    setActive(null);
+    setData(null);
+    setState("idle");
+  }
+
+  // Tách theo khoảng trắng để giữ nguyên dấu câu dính liền từ.
+  const pieces = text.split(/(\s+)/);
   return (
-    <div className="stat">
+    <span className={`en-text ${className ?? ""}`} onMouseLeave={hide}>
+      {pieces.map((piece, position) =>
+        /^\s+$/.test(piece) || !/[a-z]/i.test(piece) ? (
+          <span key={position}>{piece}</span>
+        ) : (
+          // onMouseOver thay vì onMouseEnter: mỗi thẻ chỉ chứa một từ, không có con
+          // nên hai cái tương đương, mà onMouseOver là sự kiện thường, không phụ
+          // thuộc cơ chế enter/leave của React.
+          <span key={position} className="en-word" onMouseOver={(event) => show(piece, event.currentTarget)} onFocus={(event) => show(piece, event.currentTarget)} tabIndex={-1}>
+            {piece}
+          </span>
+        ),
+      )}
+      {active && (
+        <span className="gloss" style={{ left: active.x, top: active.y + 6 }} role="tooltip">
+          <b className="gloss-term">{active.word}</b>
+          {state === "loading" && <em className="gloss-note">Đang tra…</em>}
+          {state === "missing" && <em className="gloss-note">Không tra được từ này.</em>}
+          {data && (
+            <>
+              {(data.ipa || data.meaningVi) && (
+                <span className="gloss-head">
+                  {data.ipa && <i>{data.ipa}</i>}
+                  {data.meaningVi && <strong>{data.meaningVi}</strong>}
+                </span>
+              )}
+              {data.senses.map((sense) => (
+                <span className="gloss-sense" key={sense.part}>
+                  <i>{sense.part}</i>
+                  <span>{sense.definition}</span>
+                  {!!sense.synonyms.length && <small>{[...new Set(sense.synonyms)].join(", ")}</small>}
+                </span>
+              ))}
+            </>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// Có onOpen thì ô số liệu bấm được để xem đúng những từ đã tạo ra con số đó.
+function Stat({ label, value, note, icon, tone, onOpen }: { label: string; value: string; note: string; icon: string; tone: string; onOpen?: () => void }) {
+  const body = (
+    <>
       <div className={`stat-icon ${tone}`}>{icon}</div>
-      <div>
+      {/* Đặt tên lớp rõ ràng thay vì dựa vào :last-child — bản bấm được có thêm mũi
+          tên ở cuối nên khối chữ mất display:grid, ba dòng dồn hết thành một. */}
+      <div className="stat-text">
         <span>{label}</span>
         <strong>{value}</strong>
         <small>{note}</small>
       </div>
+    </>
+  );
+  // Số 0 thì không có gì để xem — đừng mời bấm rồi mở ra hộp rỗng.
+  if (!onOpen || value === "0") return <div className="stat">{body}</div>;
+  return (
+    <button type="button" className="stat stat-open" onClick={onOpen} title={`Xem danh sách ${label.toLowerCase()}`}>
+      {body}
+      <span className="stat-arrow" aria-hidden="true">›</span>
+    </button>
+  );
+}
+
+// Danh sách từ đứng sau một con số thống kê. Bấm một dòng thì mở thẻ chi tiết.
+function WordListModal({ title, note, words, close }: { title: string; note: string; words: WordCard[]; close: () => void }) {
+  const [query, setQuery] = useState("");
+  const [detail, setDetail] = useState<WordCard | null>(null);
+  const shown = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return needle ? words.filter((word) => `${word.term} ${word.meaning}`.toLowerCase().includes(needle)) : words;
+  }, [words, query]);
+  const speak = (text: string) => window.speechSynthesis?.speak(new SpeechSynthesisUtterance(text));
+  return (
+    <div className="modal-backdrop" onMouseDown={close}>
+      <section className="modal word-list-modal" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <span className="eyebrow">{note}</span>
+            <h2>{title} · {words.length} từ</h2>
+          </div>
+          <button type="button" onClick={close} aria-label="Đóng">×</button>
+        </div>
+        {words.length > 8 && (
+          <div className="word-list-filter">
+            <input aria-label="Lọc danh sách" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Lọc theo từ hoặc nghĩa…" />
+          </div>
+        )}
+        {shown.length ? (
+          <>
+          <div className="word-list-head"><span>TỪ</span><span>NGHĨA</span><span>HỘP</span></div>
+          <div className="word-list-rows">
+            {shown.map((word) => (
+              <button type="button" key={word.id} onClick={() => setDetail(word)}>
+                <b className="wl-term">{word.term}</b>
+                <span className="wl-mean">{word.meaning || "—"}</span>
+                {/* Số lần quên chỉ hiện khi thực sự có — dòng nào cũng in "quên 0 lần" thì rối mắt. */}
+                {!!word.lapses && <span className="wl-lapse">quên {word.lapses}</span>}
+                <span className={`wl-box b${word.box}`}>{word.box}</span>
+              </button>
+            ))}
+          </div>
+          </>
+        ) : (
+          <p className="word-list-empty">{words.length ? "Không có từ nào khớp bộ lọc." : "Chưa có từ nào trong nhóm này."}</p>
+        )}
+        {detail && <WordDetail word={detail} close={() => setDetail(null)} speak={speak} />}
+      </section>
     </div>
   );
 }
@@ -2224,9 +2553,29 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, remove, impor
   );
 }
 
-function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, rate, close, speak, toggleStar, mode, modeSetting, setMode, choices, choice, pickChoice }: { card: WordCard; index: number; total: number; revealed: boolean; answer: string; setAnswer: (s: string) => void; reveal: () => void; rate: (r: Rating) => void; close: () => void; speak: (s: string) => void; toggleStar: () => void; mode: ReviewMode; modeSetting: ReviewMode; setMode: (m: ReviewMode) => void; choices: WordCard[]; choice: string | null; pickChoice: (id: string) => void }) {
+function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, flip, rate, step, shuffle, close, speak, toggleStar, mode, modeSetting, setMode, choices, choice, pickChoice }: { card: WordCard; index: number; total: number; revealed: boolean; answer: string; setAnswer: (s: string) => void; reveal: () => void; flip: () => void; rate: (r: Rating) => void; step: (delta: number) => void; shuffle: () => void; close: () => void; speak: (s: string) => void; toggleStar: () => void; mode: ReviewMode; modeSetting: ReviewMode; setMode: (m: ReviewMode) => void; choices: WordCard[]; choice: string | null; pickChoice: (id: string) => void }) {
   // Trắc nghiệm cần ít nhất 2 lựa chọn, hàng đợi quá ngắn thì lùi về thẻ Việt → Anh.
   const shownMode: ReviewMode = mode === "quiz" && choices.length < 2 ? "vi_en" : mode;
+  const [autoplay, setAutoplay] = useState(false);
+  // Bật theo dõi tiến độ thì thẻ ghi nhớ chấm điểm luôn: "Đã biết" = Được, "Đang học"
+  // = Quên, để lịch Leitner được cập nhật. Tắt thì chỉ xem lại, không đụng vào lịch.
+  const [tracking, setTracking] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const classify = (known: boolean) => rate(known ? "good" : "again");
+  // Tự động phát: lật thẻ rồi sang thẻ kế tiếp, nhịp giống Flashcards bên Luyện tập.
+  // Tự tắt khi hết bộ hoặc khi rời khỏi kiểu thẻ ghi nhớ.
+  useEffect(() => {
+    if (!autoplay || shownMode !== "card") return;
+    const timer = setTimeout(
+      () => {
+        if (!revealed) flip();
+        else if (index + 1 < total) step(1);
+        else setAutoplay(false);
+      },
+      revealed ? 2600 : 2200,
+    );
+    return () => clearTimeout(timer);
+  });
   const graded = shownMode === "quiz" ? (choice === null ? null : choice === card.id) : shownMode === "en_vi" || !answer.trim() ? null : normalizeAnswer(answer) === normalizeAnswer(card.term);
   return (
     <main className="review">
@@ -2251,11 +2600,31 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, r
       </header>
       <div className="review-modes" role="group" aria-label="Kiểu thẻ ôn tập">
         {reviewModes.map((item) => (
-          <button key={item.value} className={modeSetting === item.value ? "active" : ""} onClick={() => setMode(item.value)}>
+          <button
+            key={item.value}
+            className={modeSetting === item.value ? "active" : ""}
+            onClick={() => {
+              // Đổi kiểu thẻ thì dừng tự động phát, không để nó chạy ngầm ở kiểu khác.
+              setAutoplay(false);
+              setMode(item.value);
+            }}
+          >
             {item.label}
           </button>
         ))}
       </div>
+      {shownMode === "card" ? (
+        // Dùng chung thẻ lật với Flashcards bên Luyện tập, kể cả nút loa góc phải.
+        <div className="flash-stage" ref={stageRef}>
+          <FlipCard card={card} flipped={revealed} flip={flip} onSwipe={tracking ? classify : undefined} />
+          <div className="flash-tools">
+            {/* Không lặp nút sao ở đây: header của phiên ôn đã có sẵn một nút cho mọi kiểu thẻ. */}
+            <button onClick={() => speak(card.term)} aria-label={`Phát âm ${card.term}`}>
+              ◖))
+            </button>
+          </div>
+        </div>
+      ) : (
       <section className={`flashcard ${revealed ? "revealed" : ""}`}>
         {!revealed ? (
           <>
@@ -2356,7 +2725,68 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, r
           </>
         )}
       </section>
-      {!revealed ? (
+      )}
+      {shownMode === "card" ? (
+        <div className="flash-bar">
+          <label className="track-toggle">
+            <input
+              type="checkbox"
+              checked={tracking}
+              onChange={(event) => {
+                setTracking(event.target.checked);
+                setAutoplay(false);
+              }}
+            />
+            <span />
+            Theo dõi tiến độ
+          </label>
+
+          {tracking ? (
+            <div className="track-actions">
+              <button className="track-learning-btn" onClick={() => classify(false)}>
+                Đang học
+              </button>
+              <b>
+                {index + 1} / {total}
+              </b>
+              <button className="track-known-btn" onClick={() => classify(true)}>
+                Đã biết
+              </button>
+            </div>
+          ) : (
+            <div className="flash-nav">
+              <button onClick={() => step(-1)} disabled={index === 0} aria-label="Thẻ trước">
+                ←
+              </button>
+              <b>
+                {index + 1} / {total}
+              </b>
+              {/* Thẻ cuối bấm tiếp thì sang màn tổng kết của phiên, không khoá như bên Luyện tập. */}
+              <button onClick={() => step(1)} aria-label={index + 1 >= total ? "Kết thúc phiên" : "Thẻ sau"}>
+                →
+              </button>
+            </div>
+          )}
+          <div className="flash-options">
+            <button className={autoplay ? "active" : ""} onClick={() => setAutoplay((value) => !value)} aria-label="Tự động phát" title="Tự động phát">
+              {autoplay ? "❚❚" : "▶"}
+            </button>
+            <button onClick={shuffle} aria-label="Xáo trộn" title="Xáo trộn thứ tự thẻ">
+              ⇄
+            </button>
+            <button
+              onClick={() => {
+                if (document.fullscreenElement) void document.exitFullscreen();
+                else void stageRef.current?.requestFullscreen();
+              }}
+              aria-label="Toàn màn hình"
+              title="Toàn màn hình"
+            >
+              ⛶
+            </button>
+          </div>
+        </div>
+      ) : !revealed ? (
         <button className="reveal" onClick={reveal} disabled={shownMode === "quiz"}>
           {shownMode === "quiz" ? "Chọn một đáp án ở trên" : "Hiện đáp án"} {shownMode !== "quiz" && <kbd>Space</kbd>}
         </button>
@@ -2377,13 +2807,28 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, r
         </div>
       )}
       <footer>
-        Phím tắt: <kbd>Space</kbd> lật thẻ · <kbd>1–4</kbd> {shownMode === "quiz" && !revealed ? "chọn đáp án" : "đánh giá"} · <kbd>S</kbd> gắn sao · <kbd>Esc</kbd> thoát
+        {shownMode === "card" ? (
+          tracking ? (
+            <>
+              Kéo thẻ sang <b>phải</b> nếu đã biết, sang <b>trái</b> nếu đang học · <kbd>Space</kbd> lật thẻ · <kbd>S</kbd> gắn sao · <kbd>Esc</kbd> thoát
+            </>
+          ) : (
+            <>
+              Phím tắt: <kbd>Space</kbd> lật thẻ · <kbd>←</kbd> <kbd>→</kbd> chuyển thẻ · <kbd>S</kbd> gắn sao · <kbd>Esc</kbd> thoát
+            </>
+          )
+        ) : (
+          <>
+            Phím tắt: <kbd>Space</kbd> lật thẻ · <kbd>1–4</kbd> {shownMode === "quiz" && !revealed ? "chọn đáp án" : "đánh giá"} · <kbd>S</kbd> gắn sao · <kbd>Esc</kbd> thoát
+          </>
+        )}
       </footer>
     </main>
   );
 }
 
-function WordDetail({ word, close, study, speak }: { word: WordCard; close: () => void; study: () => void; speak: (text: string) => void }) {
+// study không bắt buộc: ở màn luyện tập không có chỗ để mở phiên ôn cho một từ lẻ.
+function WordDetail({ word, close, study, speak }: { word: WordCard; close: () => void; study?: () => void; speak: (text: string) => void }) {
   const usageFields = [
     ["Đồng nghĩa", word.synonyms, word.synonymDetails],
     ["Trái nghĩa", word.antonyms, word.antonymDetails],
@@ -2399,8 +2844,8 @@ function WordDetail({ word, close, study, speak }: { word: WordCard; close: () =
         </header>
         <button className="detail-speak" onClick={() => speak(word.term)}>◖)) Nghe phát âm</button>
         <section className="detail-meaning"><b>Nghĩa tiếng Việt</b><p>{word.meaning}</p><small>{word.definition || "Chưa có định nghĩa Anh–Anh."}</small></section>
-        {word.collocation && <section className="detail-collocation"><span>CỤM NÊN HỌC</span><h3>{word.collocation}</h3><p>{word.collocationVi}</p></section>}
-        <section className="detail-example"><b>Ví dụ thực tế</b><p>{word.example}</p>{word.exampleVi && <small>{word.exampleVi}</small>}</section>
+        {word.collocation && <section className="detail-collocation"><span>CỤM NÊN HỌC</span><h3><EnglishText text={word.collocation} /></h3><p>{word.collocationVi}</p></section>}
+        <section className="detail-example"><b>Ví dụ thực tế</b><p><EnglishText text={word.example} /></p>{word.exampleVi && <small>{word.exampleVi}</small>}</section>
         <div className="usage-detail-grid">
           {usageFields.map(([label, values, details]) => <section key={label}><b>{label}</b>{details?.length ? (
                 <div>
@@ -2433,7 +2878,7 @@ function WordDetail({ word, close, study, speak }: { word: WordCard; close: () =
             </section>
           ))}
         </div>
-        <footer><button onClick={close}>Đóng</button><button className="primary" onClick={study}>Học từ này →</button></footer>
+        <footer><button onClick={close}>Đóng</button>{study && <button className="primary" onClick={study}>Học từ này →</button>}</footer>
       </article>
     </div>
   );
@@ -2494,11 +2939,14 @@ function SessionSummary({ total, ratings, streak, close, restart }: { total: num
           </div>
         )}
         <p className="definition">
-          {excellent
-            ? streak.current > 1
-              ? `Giữ chuỗi ${streak.current} ngày rồi — kỷ lục của bạn là ${streak.best} ngày.`
-              : "Kết quả đã được đồng bộ vào lịch ôn tiếp theo của bạn."
-            : "Những thẻ bạn còn quên sẽ quay lại sớm hơn trong lịch ôn."}
+          {/* Thẻ ghi nhớ không chấm điểm nên không có thẻ nào vào lịch ôn — đừng hứa nhầm. */}
+          {!graded
+            ? `Bạn vừa xem lại ${total} thẻ. Chuyển sang kiểu có chấm điểm để lịch ôn được cập nhật.`
+            : excellent
+              ? streak.current > 1
+                ? `Giữ chuỗi ${streak.current} ngày rồi — kỷ lục của bạn là ${streak.best} ngày.`
+                : "Kết quả đã được đồng bộ vào lịch ôn tiếp theo của bạn."
+              : "Những thẻ bạn còn quên sẽ quay lại sớm hơn trong lịch ôn."}
         </p>
         <div className="summary-actions">
           <button onClick={close}>Về trang chủ</button>
@@ -2511,7 +2959,9 @@ function SessionSummary({ total, ratings, streak, close, restart }: { total: num
   );
 }
 
-function Practice({ words, toggleStar }: { words: WordCard[]; toggleStar?: (id: string) => void }) {
+// intent: chế độ được chọn thẳng từ thanh bên trái. Component được gắn key theo
+// intent nên mỗi lần chọn là dựng lại từ đầu — khỏi phải đồng bộ state trong effect.
+function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar?: (id: string) => void; intent?: Exclude<PracticeMode, "menu"> | null }) {
   const externalTools = [
     { label: "Luyện nghe A2", short: "EL", url: "https://elllo.org/book/A2/index.html", tone: "blue" },
     { label: "Hội thoại hằng ngày", short: "BE", url: "https://basicenglishspeaking.com/daily-english-conversation-topics/", tone: "orange" },
@@ -2522,8 +2972,8 @@ function Practice({ words, toggleStar }: { words: WordCard[]; toggleStar?: (id: 
     { label: "Từ điển", short: "C", url: "https://dictionary.cambridge.org/", tone: "teal" },
     { label: "Google Dịch", short: "G", url: "https://translate.google.com/?sl=en&tl=vi", tone: "sky" },
   ];
-  const [mode, setMode] = useState<"menu" | "flash" | "learn" | "test" | "listen" | "match" | "dictation">("menu");
-  const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(null);
+  const [mode, setMode] = useState<PracticeMode>("menu");
+  const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(intent ?? null);
   const [practiceWords, setPracticeWords] = useState<WordCard[]>([]);
   const [index, setIndex] = useState(0);
   const [result, setResult] = useState<string | null>(null);
@@ -2613,6 +3063,11 @@ function Practice({ words, toggleStar }: { words: WordCard[]; toggleStar?: (id: 
             <b>Chép chính tả</b>
             <small>Nghe câu và gõ lại theo chủ đề, trình độ</small>
           </button>
+          <button onClick={() => chooseMode("translate")}>
+            <span>⇄</span>
+            <b>Dịch Việt → Anh</b>
+            <small>Đọc đoạn tiếng Việt của folder, viết lại bằng tiếng Anh và được chấm</small>
+          </button>
           <button onClick={() => chooseMode("match")}>
             <span>⌘</span>
             <b>Nối cặp</b>
@@ -2626,6 +3081,7 @@ function Practice({ words, toggleStar }: { words: WordCard[]; toggleStar?: (id: 
   if (mode === "learn") return <LearnMode words={activeWords} setMode={setMode} />;
   if (mode === "test") return <TestMode words={activeWords} setMode={setMode} />;
   if (mode === "flash") return <FlashcardsMode words={activeWords} setMode={setMode} toggleStar={toggleStar} />;
+  if (mode === "translate") return <TranslateMode words={activeWords} setMode={setMode} back={returnToModes} />;
   return (
     <div className="page practice-session">
       <button className="back" onClick={returnToModes}>
@@ -2660,6 +3116,17 @@ function Practice({ words, toggleStar }: { words: WordCard[]; toggleStar?: (id: 
   );
 }
 
+// Thứ tự và nhãn của các chế độ khi hiện ở thanh bên trái.
+const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: string }[] = [
+  { value: "flash", label: "Thẻ ghi nhớ", icon: "▱" },
+  { value: "learn", label: "Học", icon: "✎" },
+  { value: "test", label: "Kiểm tra", icon: "◉" },
+  { value: "translate", label: "Dịch Việt → Anh", icon: "⇄" },
+  { value: "listen", label: "Nghe và viết", icon: "◖))" },
+  { value: "dictation", label: "Chép chính tả", icon: "≋" },
+  { value: "match", label: "Nối cặp", icon: "⌘" },
+];
+
 const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
   flash: "Flashcards",
   learn: "Học",
@@ -2667,6 +3134,7 @@ const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
   listen: "Nghe và viết",
   dictation: "Chép chính tả",
   match: "Nối cặp",
+  translate: "Dịch Việt → Anh",
 };
 
 function FolderPicker({ mode, personalWords, pdfWords, topics, choose, close }: { mode: Exclude<PracticeMode, "menu">; personalWords: WordCard[]; pdfWords: WordCard[]; topics: string[]; choose: (words: WordCard[]) => void; close: () => void }) {
@@ -2712,7 +3180,7 @@ function normalizeAnswer(value: string) {
     .replace(/\s+/g, " ");
 }
 
-type PracticeMode = "menu" | "flash" | "learn" | "test" | "listen" | "match" | "dictation";
+type PracticeMode = "menu" | "flash" | "learn" | "test" | "listen" | "match" | "dictation" | "translate";
 const practiceModeBar: { value: PracticeMode; label: string; icon: string }[] = [
   { value: "flash", label: "Thẻ ghi nhớ", icon: "▱" },
   { value: "learn", label: "Học", icon: "✎" },
@@ -2751,10 +3219,620 @@ function pickDistractors(pool: WordCard[], answer: WordCard, seed: number, howMa
 
 // Thẻ ghi nhớ kiểu Quizlet: đếm thẻ, lùi/tiến, xáo trộn, tự động phát, toàn màn hình
 // và tuỳ chọn theo dõi "đã biết / đang học" tách rời khỏi hộp Leitner.
+// Luyện dịch Việt → Anh trên chính folder từ vựng đang học.
+//
+// Cả folder được ghép thành một đoạn tiếng Việt, câu đang làm được tô sáng. Người
+// học viết lại bằng tiếng Anh, app đối chiếu với câu mẫu đi kèm từ đó rồi chỉ ra
+// chỗ lệch. App không có mô hình ngôn ngữ nên không dám phán một câu tự do là đúng
+// hay sai ngữ pháp — chỉ những lỗi chắc chắn (sai dạng từ, thiếu mạo từ, thiếu giới
+// từ, chưa dùng từ đang học) mới được gọi là lỗi. Xem lib/translation-check.mjs.
+function TranslateMode({ words, setMode, back }: { words: WordCard[]; setMode: (m: PracticeMode) => void; back: () => void }) {
+  // Chỉ nhận từ có đủ cả câu tiếng Anh lẫn bản dịch, vì bản dịch là đề bài còn câu
+  // tiếng Anh là đáp án mẫu.
+  const usable = useMemo(() => words.filter((word) => word.example?.trim() && word.exampleVi?.trim()), [words]);
+  // Bước chọn từ: không phải lúc nào cũng muốn học cả folder mấy trăm từ. Mặc định
+  // chọn sẵn 6 từ đầu — vừa một đoạn — rồi người học tự thêm bớt.
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(usable.slice(0, PASSAGE_SIZE).map((word) => word.id)));
+  const [choosing, setChoosing] = useState(true);
+  const [filter, setFilter] = useState("");
+  // Danh sách tự nhập, không thuộc folder nào. Những từ này chưa có câu ví dụ nên
+  // phải nhờ mô hình ngôn ngữ viết trước khi luyện được.
+  const [extraText, setExtraText] = useState("");
+  const [extraWords, setExtraWords] = useState<WordCard[]>([]);
+  const [extraState, setExtraState] = useState<"idle" | "loading" | "failed">("idle");
+  const [extraNote, setExtraNote] = useState("");
+  const extraTerms = useMemo(() => {
+    const seen = new Set(usable.map((word) => word.term.trim().toLowerCase()));
+    return extraText
+      .split(/[\n,;]+/)
+      .map((line) => line.replace(/^[-•*\d.)\s]+/, "").trim().replace(/\s+/g, " "))
+      .filter((term) => {
+        const key = term.toLowerCase();
+        if (!term || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 24);
+  }, [extraText, usable]);
+
+  async function writeExtras() {
+    if (!extraTerms.length || extraState === "loading") return;
+    setExtraState("loading");
+    setExtraNote("");
+    const made: WordCard[] = [];
+    let failed = 0;
+    for (let start = 0; start < extraTerms.length; start += PASSAGE_SIZE) {
+      const batch = extraTerms.slice(start, start + PASSAGE_SIZE);
+      try {
+        const response = await fetch("/api/ai/passage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ terms: batch, mode: batch.length < 2 ? "sentences" : extraMode }),
+        });
+        const data = (await response.json()) as { sentences?: { term: string; vi: string; en: string }[]; error?: string };
+        if (!response.ok || !data.sentences?.length) throw new Error(data.error ?? "hỏng");
+        data.sentences.forEach((item, position) => {
+          const term = batch.find((candidate) => candidate.toLowerCase() === item.term.toLowerCase()) ?? batch[position];
+          if (!term || !item.vi || !item.en) return;
+          made.push({
+            id: `extra-${term.toLowerCase().replace(/\s+/g, "-")}`,
+            term,
+            meaning: "",
+            example: item.en,
+            exampleVi: item.vi,
+            cloze: clozeFor(term, item.en),
+            definition: "",
+            // Đặt sẵn chủ đề để themeOf không tách chúng ra theo từ khoá: bạn đã
+            // chọn chúng thành một danh sách, và nếu chọn kiểu đoạn văn thì các câu
+            // vốn đã nối ý nhau — tách ra là hỏng mạch.
+            topic: "Danh sách của bạn",
+            ieltsTopics: ["Danh sách của bạn"],
+            ipa: "",
+            partOfSpeech: "",
+            box: 1,
+            lapses: 0,
+            status: "new",
+            reviewCount: 0,
+          } as WordCard);
+        });
+      } catch {
+        failed += batch.length;
+      }
+    }
+    setExtraWords(made);
+    setPicked((current) => new Set([...current, ...made.map((word) => word.id)]));
+    setExtraState(made.length ? "idle" : "failed");
+    setExtraNote(made.length ? `✓ Đã viết ví dụ cho ${made.length}/${extraTerms.length} từ${failed ? ` · ${failed} từ chưa viết được` : ""}.` : "Không gọi được mô hình ngôn ngữ nên chưa viết được ví dụ cho danh sách này.");
+  }
+
+  const [extraMode, setExtraMode] = useState<"passage" | "sentences">("sentences");
+  const pool = useMemo(() => [...usable, ...extraWords], [usable, extraWords]);
+  const chosen = useMemo(() => pool.filter((word) => picked.has(word.id)), [pool, picked]);
+  const shown = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    return needle ? pool.filter((word) => `${word.term} ${word.meaning}`.toLowerCase().includes(needle)) : pool;
+  }, [pool, filter]);
+  function toggle(id: string) {
+    setPicked((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Gom theo chủ đề, bỏ câu khuôn nói VỀ từ, rồi cắt thành từng đoạn ngắn đọc được.
+  const passages = useMemo(
+    () => buildPassages(chosen.map((word) => ({ word, vi: word.exampleVi!.trim(), en: word.example!.trim() })), { areas: ieltsAreaData as [string, string[]][] }),
+    [chosen],
+  );
+  const [passageIndex, setPassageIndex] = useState(0);
+  const passage = passages[passageIndex];
+  // Gemini viết lại đoạn này thành một mạch truyện liền lạc. Không gọi được thì vẫn
+  // dùng các câu ví dụ ghép sẵn — bài học không bao giờ bị chặn vì thiếu Gemini.
+  const [story, setStory] = useState<{ key: number; tasks: { word: WordCard; vi: string; en: string }[] } | null>(null);
+  const [storyState, setStoryState] = useState<"idle" | "loading" | "ready" | "failed" | "auto">("idle");
+  const fallbackTasks: { word: WordCard; vi: string; en: string }[] = useMemo(() => passage?.tasks ?? [], [passage]);
+  // Câu thay thế cho từng từ, khi người học thấy câu hiện tại không hay và bấm đổi.
+  const [replaced, setReplaced] = useState<Record<string, { vi: string; en: string }>>({});
+  const [swapping, setSwapping] = useState(false);
+  const [swapNote, setSwapNote] = useState("");
+  const baseTasks = story?.key === passageIndex ? story.tasks : fallbackTasks;
+  // Câu đã đổi thay chỗ câu gốc, kể cả khi đoạn văn được viết lại sau đó.
+  const tasks = useMemo(() => baseTasks.map((task) => (replaced[task.word.id] ? { ...task, ...replaced[task.word.id] } : task)), [baseTasks, replaced]);
+  const [index, setIndex] = useState(0);
+  const [typed, setTyped] = useState("");
+  const [checked, setChecked] = useState(false);
+  const [hintCount, setHintCount] = useState(0);
+  const [scores, setScores] = useState<number[]>([]);
+  const [aiGrade, setAiGrade] = useState<AiGrade | null>(null);
+  const [grading, setGrading] = useState(false);
+  // Thẻ chi tiết của từ, mở khi bấm vào tên từ ở bảng bên phải hoặc ở bước chọn từ.
+  const [detail, setDetail] = useState<WordCard | null>(null);
+  const speakWord = (text: string) => window.speechSynthesis?.speak(new SpeechSynthesisUtterance(text));
+  const current = tasks[index];
+  const result = useMemo(() => (current && checked ? gradeTranslation(current.en, typed, current.word.term) : null), [current, checked, typed]);
+  const referenceWords = current ? current.en.split(/\s+/) : [];
+  const average = scores.length ? Math.round(scores.reduce((total, item) => total + item, 0) / scores.length) : 0;
+
+  async function buildStory() {
+    if (!passage || storyState === "loading") return;
+    setStoryState("loading");
+    try {
+      const response = await fetch("/api/ai/passage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ terms: fallbackTasks.map((task) => task.word.term), topic: passage.topic }),
+      });
+      const data = (await response.json()) as { sentences?: { term: string; vi: string; en: string }[]; error?: string };
+      if (!response.ok || !data.sentences?.length) throw new Error(data.error ?? "Không dựng được đoạn văn.");
+      // Ghép câu Gemini viết trở lại đúng thẻ từ vựng, giữ nguyên thứ tự đã gửi đi.
+      const rebuilt = data.sentences
+        .map((item, position) => ({ word: fallbackTasks.find((task) => task.word.term.toLowerCase() === item.term.toLowerCase())?.word ?? fallbackTasks[position]?.word, vi: item.vi, en: item.en }))
+        .filter((item): item is { word: WordCard; vi: string; en: string } => Boolean(item.word));
+      if (rebuilt.length < 2) throw new Error("Đoạn văn không khớp với từ trong folder.");
+      setStory({ key: passageIndex, tasks: rebuilt });
+      setStoryState("ready");
+      setIndex(0);
+      setTyped("");
+      setChecked(false);
+      setAiGrade(null);
+    } catch {
+      setStoryState("failed");
+    }
+  }
+
+  // Người học thấy câu không hay thì xin câu khác cho chính từ đó.
+  async function swapSentence() {
+    if (!current || swapping) return;
+    setSwapping(true);
+    setSwapNote("");
+    try {
+      const response = await fetch("/api/ai/passage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ terms: [current.word.term], mode: "sentences", avoid: current.vi, topic: current.word.meaning || undefined }),
+      });
+      const data = (await response.json()) as { sentences?: { vi: string; en: string }[]; error?: string };
+      const made = data.sentences?.[0];
+      if (!response.ok || !made?.vi || !made?.en) throw new Error(data.error ?? "Không viết được câu khác.");
+      setReplaced((current2) => ({ ...current2, [current.word.id]: { vi: made.vi, en: made.en } }));
+      // Câu đổi rồi thì bài làm cũ không còn ý nghĩa, xoá đi để làm lại từ đầu.
+      setTyped("");
+      setChecked(false);
+      setAiGrade(null);
+      setHintCount(0);
+    } catch (error) {
+      setSwapNote(error instanceof Error ? error.message : "Không đổi được câu.");
+    } finally {
+      setSwapping(false);
+    }
+  }
+
+  async function check() {
+    if (!current || !typed.trim() || checked) return;
+    setChecked(true);
+    setScores((list) => [...list, gradeTranslation(current.en, typed, current.word.term).accuracy]);
+    setGrading(true);
+    try {
+      const response = await fetch("/api/ai/grade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vietnamese: current.vi, answer: typed, term: current.word.term, reference: current.en }),
+      });
+      const data = (await response.json()) as AiGrade & { error?: string };
+      setAiGrade(response.ok && !data.error ? data : null);
+    } catch {
+      setAiGrade(null);
+    } finally {
+      setGrading(false);
+    }
+  }
+  function next() {
+    setIndex((value) => value + 1);
+    setTyped("");
+    setChecked(false);
+    setHintCount(0);
+  }
+  function restart() {
+    setPassageIndex(0);
+    setIndex(0);
+    setTyped("");
+    setChecked(false);
+    setHintCount(0);
+    setScores([]);
+    setAiGrade(null);
+    setStory(null);
+    setStoryState("idle");
+  }
+  // Quay lại bước chọn từ, giữ nguyên những từ đang tick để chỉnh thêm bớt.
+  function backToPicker() {
+    restart();
+    setChoosing(true);
+  }
+  function nextPassage() {
+    setPassageIndex((value) => value + 1);
+    setIndex(0);
+    setTyped("");
+    setChecked(false);
+    setHintCount(0);
+  }
+
+  // Folder rỗng vẫn cho vào bước chọn, vì có thể học bằng danh sách tự nhập.
+  if (!pool.length && !choosing)
+    return (
+      <div className="page practice-session">
+        <button className="back" onClick={back}>← Chọn chế độ khác</button>
+        <div className="panel practice-card">
+          <h2>Folder này chưa có câu ví dụ kèm bản dịch</h2>
+          <p className="page-sub">Bài dịch cần cả câu tiếng Anh lẫn nghĩa tiếng Việt của câu đó. Hãy bấm “Bổ sung từ thiếu” ở trang Từ vựng rồi quay lại.</p>
+        </div>
+      </div>
+    );
+
+  // Bước chọn từ. Chọn xong mới dựng đoạn, nên không phải học cả folder mấy trăm từ.
+  if (choosing)
+    return (
+      <div className="page practice-session">
+        <button className="back" onClick={back}>← Chọn chế độ khác</button>
+        <div className="eyebrow">BƯỚC CHỌN TỪ</div>
+        <h1>Chọn từ để luyện dịch</h1>
+        <p className="page-sub">Folder có {usable.length} từ đủ dữ liệu. Chọn riêng những từ bạn muốn, hoặc tự nhập danh sách bên dưới — mỗi đoạn văn gồm {PASSAGE_SIZE} câu.</p>
+
+        <section className="extra-list">
+          <b>Danh sách riêng của bạn</b>
+          <p>Nhập từ không có trong folder — mỗi dòng một từ, hoặc ngăn nhau bằng dấu phẩy. App sẽ viết câu ví dụ kèm bản dịch cho chúng.</p>
+          <textarea value={extraText} onChange={(event) => setExtraText(event.target.value)} placeholder={"deadline\nnegotiate\nbudget cut"} />
+          <div className="extra-actions">
+            <div className="bulk-example-modes" role="group" aria-label="Kiểu ví dụ cho danh sách riêng">
+              <button type="button" className={extraMode === "sentences" ? "active" : ""} onClick={() => setExtraMode("sentences")}>
+                Từng câu riêng
+              </button>
+              <button type="button" className={extraMode === "passage" ? "active" : ""} onClick={() => setExtraMode("passage")}>
+                Một đoạn liền mạch
+              </button>
+            </div>
+            <button type="button" className="primary" disabled={!extraTerms.length || extraState === "loading"} onClick={() => void writeExtras()}>
+              {extraState === "loading" ? "◌ Đang viết ví dụ…" : `✦ Viết ví dụ cho ${extraTerms.length} từ`}
+            </button>
+          </div>
+          {extraNote && <p className={extraNote.startsWith("✓") ? "lookup-message success" : "lookup-message"}>{extraNote}</p>}
+        </section>
+        <div className="picker-tools">
+          <div className="picker-filter">
+            <input aria-label="Lọc danh sách từ" value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Lọc theo từ hoặc nghĩa…" />
+          </div>
+          <button type="button" onClick={() => setPicked(new Set(shown.map((word) => word.id)))}>Chọn tất cả{filter ? " (đang lọc)" : ""}</button>
+          <button type="button" onClick={() => setPicked(new Set())}>Bỏ chọn hết</button>
+        </div>
+        <div className="picker-grid">
+          {shown.map((word) => (
+            <div key={word.id} className={`picker-card ${picked.has(word.id) ? "active" : ""} ${word.id.startsWith("extra-") ? "own" : ""}`}>
+              <button type="button" className="picker-pick" onClick={() => toggle(word.id)}>
+                <span>{picked.has(word.id) ? "✓" : "＋"}</span>
+                <b>{word.term}</b>
+                {/* Từ tự nhập chưa có nghĩa nên hiện luôn câu ví dụ vừa viết cho dễ nhận. */}
+                <small>{word.id.startsWith("extra-") ? word.exampleVi : word.meaning}</small>
+              </button>
+              {/* Nút riêng để xem chi tiết, tách khỏi vùng bấm chọn nên không tick nhầm. */}
+              <button type="button" className="picker-info" onClick={() => setDetail(word)} aria-label={`Xem chi tiết từ ${word.term}`} title="Xem chi tiết">
+                ⓘ
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="picker-bar">
+          {/* Số đoạn lấy từ kết quả gom nhóm thật, vì các từ khác chủ đề sẽ tách ra
+              nhiều đoạn chứ không chỉ chia theo số lượng. */}
+          <b>Đã chọn {chosen.length} từ{passages.length ? ` · ${passages.length} đoạn` : ""}</b>
+          <button className="primary" type="button" disabled={!chosen.length} onClick={() => { restart(); setChoosing(false); }}>
+            Bắt đầu luyện dịch →
+          </button>
+        </div>
+        {detail && <WordDetail word={detail} close={() => setDetail(null)} speak={speakWord} />}
+      </div>
+    );
+
+  if (!passages.length)
+    return (
+      <div className="page practice-session">
+        <button className="back" onClick={backToPicker}>← Chọn từ khác</button>
+        <div className="panel practice-card">
+          <h2>Những từ đã chọn chưa dùng được</h2>
+          <p className="page-sub">Câu ví dụ của chúng là câu khuôn nói về chính từ đó nên không hợp để luyện dịch. Hãy chọn từ khác hoặc bổ sung lại ví dụ.</p>
+        </div>
+      </div>
+    );
+
+  // Xong đoạn này mà còn đoạn khác thì mời sang đoạn kế, chưa tổng kết vội.
+  if (index >= tasks.length && passageIndex + 1 < passages.length)
+    return (
+      <div className="page practice-session">
+        <PracticeModeBar mode="translate" setMode={setMode} />
+        <div className="panel practice-card">
+          <span className="summary-mark">✓</span>
+          <h2>Xong đoạn {passageIndex + 1} / {passages.length}</h2>
+          <p className="page-sub">Đoạn tiếp theo — <b>{passages[passageIndex + 1].topic}</b>, {passages[passageIndex + 1].tasks.length} câu.</p>
+          <div className="summary-actions">
+            <button onClick={back}>Thoát</button>
+            <button className="primary" onClick={nextPassage}>Đoạn tiếp theo →</button>
+          </div>
+        </div>
+      </div>
+    );
+
+  if (index >= tasks.length)
+    return (
+      <div className="page practice-session">
+        <PracticeModeBar mode="translate" setMode={setMode} />
+        <div className="panel practice-card">
+          <span className="summary-mark">{average >= 80 ? "🎉" : "✓"}</span>
+          <h2>Xong {scores.length} câu dịch</h2>
+          <div className="track-summary">
+            <div className="track-known"><strong>{average}</strong><span>điểm trung bình</span></div>
+            <div className="track-learning"><strong>{scores.filter((item) => item >= 90).length}/{scores.length}</strong><span>câu đạt từ 90 điểm</span></div>
+          </div>
+          <div className="summary-actions">
+            <button onClick={backToPicker}>Chọn từ khác</button>
+            <button onClick={back}>Đổi folder</button>
+            <button className="primary" onClick={restart}>Làm lại</button>
+          </div>
+        </div>
+      </div>
+    );
+
+  return (
+    <div className="page practice-session translate-page">
+      <PracticeModeBar mode="translate" setMode={setMode} />
+      <div className="translate-grid">
+        <section className="translate-source">
+          <div className="translate-head">
+            <span className="eyebrow">
+              {passage.topic} · ĐOẠN {passageIndex + 1}/{passages.length}
+              {storyState === "ready" && <em className="story-flag"> · ĐOẠN VĂN LIỀN MẠCH</em>}
+            </span>
+            <b>Câu {index + 1} / {tasks.length}</b>
+          </div>
+          <p className="translate-paragraph">
+            {tasks.map((task, position) => (
+              <span key={task.word.id} className={`${position === index ? "active" : position < index ? "done" : ""} ${replaced[task.word.id] ? "swapped" : ""}`}>
+                {task.vi}{" "}
+              </span>
+            ))}
+          </p>
+          <div className="translate-input">
+            <textarea
+              aria-label="Bản dịch tiếng Anh của bạn"
+              value={typed}
+              onChange={(event) => setTyped(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  if (checked) next();
+                  else check();
+                }
+              }}
+              placeholder="Viết câu tiếng Anh cho câu đang tô sáng…"
+            />
+          </div>
+          {storyState !== "ready" && storyState !== "auto" && (
+            <button className="story-build" type="button" disabled={storyState === "loading"} onClick={() => void buildStory()}>
+              {storyState === "loading" ? "◌ Đang viết đoạn văn…" : storyState === "failed" ? "↻ Thử viết lại đoạn văn liền mạch" : "✦ Viết lại thành đoạn văn liền mạch"}
+            </button>
+          )}
+          {storyState === "failed" && <p className="story-note">Không gọi được mô hình ngôn ngữ. Bạn vẫn luyện dịch bình thường với các câu ví dụ sẵn có.</p>}
+          {swapNote && <p className="story-note">{swapNote}</p>}
+          <div className="translate-actions">
+            <button onClick={backToPicker}>← Chọn từ</button>
+            {/* Câu không hay thì xin câu khác cho chính từ này, bài làm dở được xoá. */}
+            <button disabled={swapping} onClick={() => void swapSentence()} title="Viết câu khác cho từ này">
+              {swapping ? "◌ Đang đổi…" : "↻ Câu khác"}
+            </button>
+            <button disabled={hintCount >= referenceWords.length} onClick={() => setHintCount((value) => value + 1)}>
+              ♦ Gợi ý {hintCount ? `(${hintCount}/${referenceWords.length})` : ""}
+            </button>
+            {checked ? (
+              <button className="primary" onClick={next}>{index + 1 >= tasks.length ? "Xem kết quả →" : "Câu tiếp →"}</button>
+            ) : (
+              <button className="primary" disabled={!typed.trim()} onClick={check}>Chấm câu này</button>
+            )}
+          </div>
+          {hintCount > 0 && !checked && (
+            <p className="translate-hint">
+              {referenceWords.map((word, position) => (
+                <span key={position} className={position < hintCount ? "shown" : "hidden"}>
+                  {position < hintCount ? word : "_".repeat(Math.min(9, Math.max(2, word.replace(/[^a-z]/gi, "").length)))}
+                </span>
+              ))}
+            </p>
+          )}
+        </section>
+
+        <aside className="translate-feedback">
+          <div className="translate-meta">
+            {/* Bấm vào từ để mở thẻ chi tiết — nghĩa, IPA, cụm nên học, đồng/trái nghĩa. */}
+            <button type="button" className="meta-word" onClick={() => setDetail(current.word)} title={`Xem chi tiết từ ${current.word.term}`}>
+              <span>Từ đang luyện ⓘ</span>
+              <b>{current.word.term}</b>
+            </button>
+            {/* Có chấm bằng mô hình thì hiện điểm thật. "Khớp câu mẫu" chỉ là độ
+                giống một cách dịch, không phải điểm đúng/sai — đừng để nó đứng
+                ngang hàng và nói ngược lại kết luận. */}
+            <div>
+              <span>{aiGrade ? "Điểm bài dịch" : "Khớp câu mẫu"}</span>
+              <b>{aiGrade ? `${aiGrade.score}/100` : checked && result ? `${result.accuracy}%` : "—"}</b>
+            </div>
+          </div>
+          {!checked ? (
+            <p className="translate-empty">Viết câu tiếng Anh rồi bấm <b>Chấm câu này</b>. Bài sẽ được chấm và chỉ ra chỗ cần sửa.</p>
+          ) : (
+            result && (
+              <>
+                {grading && <p className="translate-empty">◌ Đang chấm bài…</p>}
+                {aiGrade && (
+                  <section className={aiGrade.correct ? "ai-grade correct" : "ai-grade"}>
+                    <div className="ai-grade-head">
+                      <b>{aiGrade.correct ? "✓ Câu của bạn đúng" : "Cần sửa"}</b>
+                      <span>{aiGrade.score}/100</span>
+                    </div>
+                    {aiGrade.suggestion && <p className="ai-grade-suggestion"><span>Gợi ý:</span> <EnglishText text={aiGrade.suggestion} /></p>}
+                    {aiGrade.issues.length > 0 && (
+                      <ul className="translate-notes">
+                        {aiGrade.issues.map((issue, position) => (
+                          <li key={position} className="form">
+                            {issue.wrong && issue.right && (
+                              <>
+                                <b>{issue.wrong}</b> → <b>{issue.right}</b> ·{" "}
+                              </>
+                            )}
+                            {issue.why}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {aiGrade.comment && <p className="ai-grade-comment">{aiGrade.comment}</p>}
+                  </section>
+                )}
+                {/* Khi đã chấm bằng mô hình, phần so câu mẫu chỉ còn là tham khảo và
+                    được thu gọn. Trước đây nó đứng ngang hàng rồi nói ngược: mô hình
+                    bảo "đúng 100/100" còn nó bảo "thiếu mạo từ the, cần sửa" — trong
+                    khi câu người học hoàn toàn đúng, chỉ khác cách diễn đạt. */}
+                {aiGrade ? (
+                  <details className="reference-fold">
+                    <summary>Đối chiếu từng từ với một cách dịch mẫu</summary>
+                    <p className="translate-diff">
+                      {result.operations.map((item, position) => (
+                        <span key={position} className={item.type}>
+                          {item.type === "extra" ? item.answer : item.reference}
+                        </span>
+                      ))}
+                    </p>
+                    <p className="translate-reference"><b>Một cách dịch:</b> <EnglishText text={current.en} /></p>
+                    <p className="translate-caveat">Đây chỉ là một cách dịch để bạn tham khảo. Câu của bạn khác nó không có nghĩa là sai — phần chấm ở trên mới là kết luận.</p>
+                  </details>
+                ) : (
+                  <>
+                    <h3>Đối chiếu với câu mẫu</h3>
+                    <p className="translate-diff">
+                      {result.operations.map((item, position) => (
+                        <span key={position} className={item.type}>
+                          {item.type === "extra" ? item.answer : item.reference}
+                        </span>
+                      ))}
+                    </p>
+                    <p className="translate-reference"><b>Câu mẫu:</b> <EnglishText text={current.en} /></p>
+                    {result.notes.length > 0 && (
+                      <>
+                        <h3>{result.notes.some((item) => item.kind !== "diff") ? "Cần sửa" : "Khác câu mẫu"}</h3>
+                        <ul className="translate-notes">
+                          {result.notes.map((item, position) => (
+                            <li key={position} className={item.kind}>
+                              {item.text.split("**").map((part, piece) => (piece % 2 ? <b key={piece}>{part}</b> : <span key={piece}>{part}</span>))}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    <p className={`translate-verdict ${result.verdict}`}>
+                      {result.verdict === "perfect"
+                        ? "Trùng khớp câu mẫu."
+                        : result.verdict === "errors"
+                          ? "Có lỗi chắc chắn cần sửa ở phần trên."
+                          : "Không thấy lỗi chắc chắn nào. Câu bạn diễn đạt khác câu mẫu — có thể vẫn đúng, hãy tự đối chiếu."}
+                    </p>
+                  </>
+                )}
+                <p className="translate-caveat">App chấm bằng cách so với câu mẫu, không phải bằng mô hình ngôn ngữ, nên một cách dịch đúng khác vẫn có thể bị báo là lệch.</p>
+              </>
+            )
+          )}
+        </aside>
+      </div>
+      {detail && <WordDetail word={detail} close={() => setDetail(null)} speak={speakWord} />}
+    </div>
+  );
+}
+
+// Thẻ lật dùng chung cho Flashcards ở Luyện tập và kiểu "Thẻ ghi nhớ" trong phiên ôn
+// tập, để hai chỗ không trôi ra hai kiểu giao diện khác nhau.
+// Kéo bao nhiêu pixel thì tính là đã chọn; dưới ngưỡng này coi như bấm để lật thẻ.
+const SWIPE_THRESHOLD = 90;
+
+function FlipCard({ card, flipped, flip, onSwipe }: { card: WordCard; flipped: boolean; flip: () => void; onSwipe?: (known: boolean) => void }) {
+  // Kéo sang phải là "đã biết", sang trái là "đang học" — chỉ bật khi đang theo dõi tiến độ.
+  const [drag, setDrag] = useState(0);
+  const startX = useRef<number | null>(null);
+  const moved = useRef(false);
+  const decided = drag > SWIPE_THRESHOLD ? "known" : drag < -SWIPE_THRESHOLD ? "learning" : "";
+
+  function onPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!onSwipe) return;
+    startX.current = event.clientX;
+    moved.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+  function onPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!onSwipe || startX.current === null) return;
+    const offset = event.clientX - startX.current;
+    // 12px là mức xê dịch quen thuộc của một cú bấm hơi rung tay; quá mức đó mới coi là kéo.
+    if (Math.abs(offset) > 12) moved.current = true;
+    setDrag(offset);
+  }
+  function onPointerUp() {
+    if (!onSwipe || startX.current === null) return;
+    startX.current = null;
+    if (Math.abs(drag) > SWIPE_THRESHOLD) onSwipe(drag > 0);
+    setDrag(0);
+  }
+
+  return (
+    <button
+      className={`quizlet-flashcard ${flipped ? "is-flipped" : ""} ${drag ? "is-dragging" : ""} ${decided ? `swipe-${decided}` : ""}`}
+      // Kéo xong thì đừng lật thẻ, nếu không mỗi lần phân loại sẽ lật oan một cái.
+      onClick={() => {
+        if (!moved.current) flip();
+        moved.current = false;
+      }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      style={drag ? { transform: `translateX(${drag}px) rotate(${drag / 26}deg)` } : undefined}
+    >
+      {onSwipe && (
+        <>
+          <span className="swipe-tag swipe-tag-learning" aria-hidden="true">
+            Đang học
+          </span>
+          <span className="swipe-tag swipe-tag-known" aria-hidden="true">
+            Đã biết
+          </span>
+        </>
+      )}
+      <span className="flash-front">
+        <small>TIẾNG ANH</small>
+        <b>{card.term}</b>
+        <em className="flash-ipa">{card.ipa}</em>
+        <em>{card.example}</em>
+        <i>Nhấn để lật thẻ</i>
+      </span>
+      <span className="flash-back">
+        <small>TIẾNG VIỆT</small>
+        <b>{card.meaning}</b>
+        <em>{card.exampleVi || "(chưa có bản dịch câu ví dụ)"}</em>
+        <i>Nhấn để lật lại</i>
+      </span>
+    </button>
+  );
+}
+
 function FlashcardsMode({ words, setMode, toggleStar }: { words: WordCard[]; setMode: (m: PracticeMode) => void; toggleStar?: (id: string) => void }) {
   const [shuffled, setShuffled] = useState(false);
   const [seed, setSeed] = useState(1);
-  const order = useMemo(() => (shuffled ? seededOrder(words, seed) : words), [words, shuffled, seed]);
+  // Chỉ ôn lại những từ đã đánh dấu "đang học"; null nghĩa là ôn cả bộ.
+  const [focusIds, setFocusIds] = useState<string[] | null>(null);
+  const deck = useMemo(() => (focusIds ? words.filter((word) => focusIds.includes(word.id)) : words), [words, focusIds]);
+  const order = useMemo(() => (shuffled ? seededOrder(deck, seed) : deck), [deck, shuffled, seed]);
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [autoplay, setAutoplay] = useState(false);
@@ -2782,20 +3860,14 @@ function FlashcardsMode({ words, setMode, toggleStar }: { words: WordCard[]; set
     setIndex((value) => value + 1);
   }
   function restart(onlyLearning: boolean) {
-    if (onlyLearning) {
-      const remaining = order.filter((word) => learning.includes(word.id));
-      if (remaining.length) setShuffled(false);
-      setKnown([]);
-      setLearning([]);
-      setIndex(0);
-      setFlipped(false);
-      setSeed((value) => value + 1);
-      return;
-    }
+    // Trước đây nhánh này tính ra danh sách từ đang học rồi... bỏ đi, nên nút
+    // "Ôn lại N từ đang học" thực chất ôn lại cả bộ. Giờ nó lọc thật.
+    setFocusIds(onlyLearning && learning.length ? learning : null);
     setKnown([]);
     setLearning([]);
     setIndex(0);
     setFlipped(false);
+    if (onlyLearning) setSeed((value) => value + 1);
   }
 
   // Tự động phát: lật thẻ rồi sang thẻ kế tiếp, dừng khi hết bộ.
@@ -2834,7 +3906,8 @@ function FlashcardsMode({ words, setMode, toggleStar }: { words: WordCard[]; set
         <PracticeModeBar mode="flash" setMode={setMode} />
         <div className="panel practice-card">
           <span className="summary-mark">✓</span>
-          <h2>Xong lượt thẻ ghi nhớ</h2>
+          <h2>Xong lượt thẻ ghi nhớ{focusIds ? " · phần đang học" : ""}</h2>
+          {focusIds && <p className="page-sub">Lượt này chỉ gồm {order.length} từ bạn đã đánh dấu đang học.</p>}
           <div className="track-summary">
             <div className="track-known">
               <strong>{known.length}</strong>
@@ -2846,7 +3919,7 @@ function FlashcardsMode({ words, setMode, toggleStar }: { words: WordCard[]; set
             </div>
           </div>
           <div className="summary-actions">
-            <button onClick={() => restart(false)}>Ôn lại tất cả</button>
+            <button onClick={() => restart(false)}>Ôn lại tất cả {words.length} từ</button>
             <button className="primary" disabled={!learning.length} onClick={() => restart(true)}>
               Ôn lại {learning.length} từ đang học
             </button>
@@ -2861,21 +3934,7 @@ function FlashcardsMode({ words, setMode, toggleStar }: { words: WordCard[]; set
     <div className="page practice-session" ref={stageRef}>
       <PracticeModeBar mode="flash" setMode={setMode} />
       <div className="flash-stage">
-        <button className={`quizlet-flashcard ${flipped ? "is-flipped" : ""}`} onClick={() => setFlipped((v) => !v)}>
-          <span className="flash-front">
-            <small>TIẾNG ANH</small>
-            <b>{card.term}</b>
-            <em className="flash-ipa">{card.ipa}</em>
-            <em>{card.example}</em>
-            <i>Nhấn để lật thẻ</i>
-          </span>
-          <span className="flash-back">
-            <small>TIẾNG VIỆT</small>
-            <b>{card.meaning}</b>
-            <em>{card.exampleVi || "(chưa có bản dịch câu ví dụ)"}</em>
-            <i>Nhấn để lật lại</i>
-          </span>
-        </button>
+        <FlipCard card={card} flipped={flipped} flip={() => setFlipped((v) => !v)} onSwipe={tracking ? classify : undefined} />
         <div className="flash-tools">
           <button onClick={() => speak(card.term)} aria-label={`Phát âm ${card.term}`}>
             ◖))
@@ -2965,6 +4024,11 @@ function FlashcardsMode({ words, setMode, toggleStar }: { words: WordCard[]; set
         </div>
       </div>
       <p className="flash-hint">
+        {tracking && (
+          <>
+            Kéo thẻ sang <b>phải</b> nếu đã biết, sang <b>trái</b> nếu đang học ·{" "}
+          </>
+        )}
         Phím tắt: <kbd>Space</kbd> lật thẻ · <kbd>←</kbd> <kbd>→</kbd> chuyển thẻ
       </p>
     </div>
@@ -3915,22 +4979,116 @@ function DictationPractice({ words, close }: { words: WordCard[]; close: () => v
   );
 }
 
-function Stats({ words, scopeLabel }: { words: WordCard[]; scopeLabel: string }) {
+const PERIODS = [
+  { key: 7, label: "7 ngày qua" },
+  { key: 30, label: "30 ngày qua" },
+  { key: 365, label: "365 ngày qua" },
+] as const;
+
+function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: string; streak: { current: number; best: number } }) {
   const boxes = [1, 2, 3, 4, 5, 6].map((box) => ({
     box,
     count: words.filter((w) => w.box === box).length,
   }));
   const max = Math.max(1, ...boxes.map((b) => b.count));
+  const [days, setDays] = useState<number>(7);
+  // Nhật ký chỉ đọc được trên máy nên phải chờ hydrate, giống các state khác.
+  const [log, setLog] = useState<ReviewEntry[]>([]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
+    setLog(readReviewLog());
+  }, []);
+  const scoped: ReviewEntry[] = useMemo(() => entriesSince(log, days), [log, days]);
+  const summary = useMemo(() => summarise(scoped), [scoped]);
+  const weakWords = useMemo(() => weakest(scoped, 5), [scoped]);
+  const daily = useMemo(() => byDay(scoped, Math.min(days, 30)), [scoped, days]);
+  const tips = useMemo(() => advice(summary, weakWords, streak.current), [summary, weakWords, streak.current]);
+  const peak = Math.max(1, ...daily.map((row: { reviews: number }) => row.reviews));
+  // Tổng cộng dồn từ chính thẻ từ: có từ trước khi bật nhật ký nên luôn lớn hơn hoặc
+  // bằng số của quãng đang xem. Nói rõ để không ai tưởng số liệu bị mất.
+  const allTimeReviews = words.reduce((total, word) => total + (word.reviewCount ?? 0), 0);
+  const allTimeLapses = words.reduce((total, word) => total + (word.lapses ?? 0), 0);
+  const [statList, setStatList] = useState<{ title: string; note: string; words: WordCard[] } | null>(null);
+  // Nhật ký chỉ giữ id, phải tra ngược lại thẻ từ để dựng danh sách xem được.
+  const byId = useMemo(() => new Map(words.map((word) => [word.id, word])), [words]);
+  const openIds = (title: string, note: string, ids: Set<string>) => {
+    const list = [...ids].map((id) => byId.get(id)).filter((word): word is WordCard => Boolean(word));
+    if (list.length) setStatList({ title, note, words: list });
+  };
+  const learnedIds = useMemo(() => new Set(scoped.filter((entry) => entry.firstTime).map((entry) => entry.id)), [scoped]);
+  const forgotIds = useMemo(() => new Set(scoped.filter((entry) => entry.rating === "again").map((entry) => entry.id)), [scoped]);
+  const masteredIds = useMemo(() => new Set(scoped.filter((entry) => entry.boxAfter === 6 && entry.boxBefore !== 6).map((entry) => entry.id)), [scoped]);
+  const touchedIds = useMemo(() => new Set(scoped.map((entry) => entry.id)), [scoped]);
+
   return (
     <div className="page">
       <div className="eyebrow">TIẾN ĐỘ CỦA BẠN</div>
       <h1>Thống kê</h1>
       <p className="page-sub">Tổng quan được tính trực tiếp trên {scopeLabel.toLowerCase()}.</p>
+
+      <section className="period-block">
+        <div className="period-head">
+          <div>
+            <h3>Bạn học thế nào trong {PERIODS.find((item) => item.key === days)?.label.toLowerCase()}</h3>
+            <p>Đếm từ nhật ký ôn tập, mỗi lượt bấm đánh giá là một dòng.</p>
+          </div>
+          <div className="period-tabs" role="group" aria-label="Khoảng thời gian">
+            {PERIODS.map((item) => (
+              <button key={item.key} type="button" className={days === item.key ? "active" : ""} onClick={() => setDays(item.key)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {!log.length ? (
+          <p className="period-empty">
+            Chưa có dữ liệu nào trong nhật ký. App bắt đầu ghi lại từng lượt ôn kèm thời gian <b>kể từ bản cập nhật này</b> — hãy học một phiên rồi quay lại. Các
+            con số cộng dồn từ trước vẫn còn: <b>{allTimeReviews}</b> lượt ôn và <b>{allTimeLapses}</b> lần quên, nhưng không có ngày tháng nên không chia theo tuần
+            tháng được.
+          </p>
+        ) : (
+          <>
+            <div className="period-grid">
+              <button type="button" className="period-stat" onClick={() => openIds("Từ mới đã học", "LẦN ĐẦU ĐƯỢC ÔN", learnedIds)}><strong>{summary.learned}</strong><span>từ mới đã học</span><small>lần đầu được ôn</small></button>
+              <button type="button" className="period-stat warn" onClick={() => openIds("Từ bị quên", "ĐÃ BẤM QUÊN", forgotIds)}><strong>{summary.forgotWords}</strong><span>từ bị quên</span><small>{summary.forgot} lượt bấm Quên</small></button>
+              <button type="button" className="period-stat good" onClick={() => openIds("Từ vừa thuộc", "MỚI LÊN HỘP 6", masteredIds)}><strong>{summary.mastered}</strong><span>từ vừa thuộc</span><small>mới lên hộp 6</small></button>
+              <div className="period-stat"><strong>{summary.accuracy}%</strong><span>tỉ lệ nhớ</span><small>Được + Dễ trên tổng lượt</small></div>
+              <button type="button" className="period-stat" onClick={() => openIds("Từ đã ôn trong quãng này", "CÓ TRONG NHẬT KÝ", touchedIds)}><strong>{summary.reviews}</strong><span>lượt ôn</span><small>{summary.perDay} lượt/ngày · {touchedIds.size} từ</small></button>
+              <div className="period-stat"><strong>{summary.activeDays}</strong><span>ngày có học</span><small>chuỗi hiện tại {streak.current} ngày</small></div>
+            </div>
+
+            <div className="period-chart" aria-label="Số lượt ôn theo ngày">
+              {daily.map((row: { day: string; reviews: number; forgot: number }) => (
+                <div key={row.day} title={`${row.day}: ${row.reviews} lượt, quên ${row.forgot}`}>
+                  <i style={{ height: `${Math.max(2, (row.reviews / peak) * 92)}px` }}>
+                    <em style={{ height: `${row.reviews ? (row.forgot / row.reviews) * 100 : 0}%` }} />
+                  </i>
+                  <span>{row.day.slice(8)}</span>
+                </div>
+              ))}
+            </div>
+            <p className="period-legend"><i className="ok" /> nhớ được · <i className="bad" /> quên · cột là một ngày</p>
+
+            {!!tips.length && (
+              <ul className="period-advice">
+                {tips.map((tip: { tone: string; text: string }, position: number) => (
+                  <li key={position} className={tip.tone}>{tip.text}</li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </section>
       <div className="stats-grid stats-overview">
-        <Stat label="Tổng từ" value={String(words.length)} note={`Đang tính trên ${scopeLabel}`} icon="▤" tone="purple" />
-        <Stat label="Đã thuộc" value={String(words.filter((w) => wordState(w).key === "mastered").length)} note="Hộp 6" icon="✓" tone="green" />
-        <Stat label="Từ cứng đầu" value={String(words.filter((w) => w.lapses >= 4).length)} note="Quên từ 4 lần" icon="♨" tone="pink" />
-        <Stat label="Đến hạn" value={String(words.filter(isDueForReview).length)} note="Cần ôn hôm nay" icon="◔" tone="orange" />
+        <Stat label="Tổng từ" value={String(words.length)} note={`Đang tính trên ${scopeLabel}`} icon="▤" tone="purple"
+          onOpen={() => setStatList({ title: "Tổng từ", note: "TOÀN BỘ THƯ VIỆN", words })} />
+        <Stat label="Đã thuộc" value={String(words.filter((w) => wordState(w).key === "mastered").length)} note="Hộp 6" icon="✓" tone="green"
+          onOpen={() => setStatList({ title: "Đã thuộc", note: "ĐÃ LÊN HỘP 6", words: words.filter((w) => wordState(w).key === "mastered") })} />
+        <Stat label="Từ cứng đầu" value={String(words.filter((w) => w.lapses >= 4).length)} note="Quên từ 4 lần" icon="♨" tone="pink"
+          onOpen={() => setStatList({ title: "Từ cứng đầu", note: "QUÊN TỪ 4 LẦN TRỞ LÊN", words: words.filter((w) => w.lapses >= 4).slice().sort((a, b) => b.lapses - a.lapses) })} />
+        <Stat label="Đến hạn" value={String(words.filter(isDueForReview).length)} note="Cần ôn hôm nay" icon="◔" tone="orange"
+          onOpen={() => setStatList({ title: "Đến hạn hôm nay", note: "CẦN ÔN LẠI", words: words.filter(isDueForReview) })} />
       </div>
       <div className="dashboard-grid">
         <section className="panel">
@@ -3963,6 +5121,7 @@ function Stats({ words, scopeLabel }: { words: WordCard[]; scopeLabel: string })
             ))}
         </section>
       </div>
+      {statList && <WordListModal title={statList.title} note={statList.note} words={statList.words} close={() => setStatList(null)} />}
     </div>
   );
 }
@@ -3981,11 +5140,52 @@ function BulkAddWords({ close, save, existingWords }: { close: () => void; save:
     });
   }, [text, normalizedExisting]);
   const valid = preview.filter((item) => !item.duplicate);
+  // Ví dụ do mô hình ngôn ngữ viết, tra theo từ. Chưa sinh thì vẫn lưu được bằng
+  // khung câu mặc định như trước — không sinh được cũng không chặn việc thêm từ.
+  const [written, setWritten] = useState<Record<string, { vi: string; en: string }>>({});
+  const [exampleMode, setExampleMode] = useState<"passage" | "sentences">("sentences");
+  const [writing, setWriting] = useState(false);
+  const [writeNote, setWriteNote] = useState("");
+
+  async function writeExamples() {
+    if (!valid.length || writing) return;
+    setWriting(true);
+    setWriteNote("");
+    const batches: string[][] = [];
+    // Mô hình chỉ nhận tối đa 12 từ một lượt; đoạn văn thì ngắn hơn cho liền mạch.
+    const size = exampleMode === "passage" ? 6 : 10;
+    for (let start = 0; start < valid.length; start += size) batches.push(valid.slice(start, start + size).map((item) => item.term));
+    const collected: Record<string, { vi: string; en: string }> = {};
+    let failed = 0;
+    for (const batch of batches) {
+      try {
+        const response = await fetch("/api/ai/passage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ terms: batch, mode: batch.length < 2 ? "sentences" : exampleMode }),
+        });
+        const data = (await response.json()) as { sentences?: { term: string; vi: string; en: string }[]; error?: string };
+        if (!response.ok || !data.sentences?.length) throw new Error(data.error ?? "hỏng");
+        data.sentences.forEach((item, position) => {
+          const term = batch.find((candidate) => candidate.toLowerCase() === item.term.toLowerCase()) ?? batch[position];
+          if (term && item.vi && item.en) collected[term] = { vi: item.vi, en: item.en };
+        });
+      } catch {
+        failed += batch.length;
+      }
+      setWritten({ ...collected });
+    }
+    setWriting(false);
+    const done = Object.keys(collected).length;
+    setWriteNote(done ? `✓ Đã viết ví dụ cho ${done}/${valid.length} từ${failed ? ` · ${failed} từ chưa viết được, sẽ dùng khung câu mặc định` : ""}.` : "Không gọi được mô hình ngôn ngữ. Các từ vẫn được thêm với khung câu mặc định.");
+  }
+
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!valid.length) return;
     save(valid.map(({ term }) => {
-      const example = naturalExample(term);
+      const made = written[term];
+      const example = made?.en ?? naturalExample(term);
       return {
         term,
         meaning: "Chưa bổ sung nghĩa",
@@ -3993,7 +5193,7 @@ function BulkAddWords({ close, save, existingWords }: { close: () => void; save:
         partOfSpeech: "",
         definition: "",
         example,
-        exampleVi: naturalExampleVi(term),
+        exampleVi: made?.vi ?? naturalExampleVi(term),
         cloze: clozeFor(term, example),
         collocation: "",
         collocationVi: "",
@@ -4017,6 +5217,35 @@ function BulkAddWords({ close, save, existingWords }: { close: () => void; save:
         <p className="bulk-help">Mỗi dòng là một từ hoặc cụm từ. Có thể giữ nguyên dấu “/”, ví dụ: <b>shopping cart / trolley</b>.</p>
         <label>Danh sách của bạn<textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} placeholder={"grocery shopping\nshopping cart / trolley\nbuggy\ndepartment/section\naisle"} /></label>
         <label>Folder ngày học<select value={studyDay} onChange={(event) => setStudyDay(Number(event.target.value))}>{dayNames.map((name, index) => <option value={index} key={name}>{name}</option>)}</select></label>
+        {!!valid.length && (
+          <section className="bulk-examples">
+            <b>Ví dụ tiếng Việt cho các từ này</b>
+            <div className="bulk-example-modes" role="group" aria-label="Kiểu ví dụ">
+              <button type="button" className={exampleMode === "sentences" ? "active" : ""} onClick={() => setExampleMode("sentences")}>
+                Từng câu riêng<small>Mỗi từ một câu độc lập</small>
+              </button>
+              <button type="button" className={exampleMode === "passage" ? "active" : ""} onClick={() => setExampleMode("passage")}>
+                Một đoạn liền mạch<small>Các câu nối ý nhau</small>
+              </button>
+            </div>
+            <button type="button" className="ai-fill" disabled={writing} onClick={() => void writeExamples()}>
+              {writing ? "◌ Đang viết ví dụ…" : `✦ Viết ví dụ cho ${valid.length} từ`}
+            </button>
+            {writeNote && <p className={writeNote.startsWith("✓") ? "lookup-message success" : "lookup-message"}>{writeNote}</p>}
+            {!!Object.keys(written).length && (
+              <div className="bulk-example-list">
+                {valid.filter((item) => written[item.term]).slice(0, 6).map((item) => (
+                  <article key={item.term}>
+                    <b>{item.term}</b>
+                    <p>{written[item.term].vi}</p>
+                    <small>{written[item.term].en}</small>
+                  </article>
+                ))}
+                {Object.keys(written).length > 6 && <span className="bulk-example-more">…và {Object.keys(written).length - 6} từ nữa</span>}
+              </div>
+            )}
+          </section>
+        )}
         {!!preview.length && <section className="bulk-preview"><div className="bulk-summary"><b>{valid.length} mục sẽ được thêm</b><span>{preview.length - valid.length} mục trùng sẽ bỏ qua</span></div><div className="bulk-preview-list">{preview.map((item, index) => <span className={item.duplicate ? "duplicate" : ""} key={`${item.term}-${index}`}>{item.duplicate ? "⊘" : "✓"} {item.term}</span>)}</div></section>}
         <p className="bulk-note">Sau khi lưu, dùng nút “Bổ sung từ thiếu” để tự điền nghĩa, IPA, ví dụ, cụm từ và nội dung IELTS.</p>
         <div className="modal-actions"><button type="button" onClick={close}>Hủy</button><button className="primary" type="submit" disabled={!valid.length}>Thêm {valid.length || ""} từ vào {dayNames[studyDay]}</button></div>
@@ -4047,7 +5276,74 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
   const [studyDay, setStudyDay] = useState(() => weekdayIndex());
   const [loading, setLoading] = useState(false);
   const [lookupMessage, setLookupMessage] = useState("");
+  // Các nghĩa từ điển của từ đang tra, đã xếp theo nghĩa người dùng nhập.
+  const [senses, setSenses] = useState<DictionarySense[]>([]);
+  const [chosenSense, setChosenSense] = useState<number | undefined>(undefined);
+  const [writingExample, setWritingExample] = useState(false);
+  const [exampleNote, setExampleNote] = useState("");
+  // Gợi ý từ theo tiền tố. pickedSuggestion để chọn xong thì đóng luôn danh sách,
+  // nếu không nó lại bật lên ngay vì ô nhập vừa đổi giá trị.
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [highlight, setHighlight] = useState(-1);
+  const [pickedSuggestion, setPickedSuggestion] = useState(false);
   const lookupRequest = useRef(0);
+  const suggestRequest = useRef(0);
+
+  function chooseSuggestion(word: string) {
+    setTerm(word);
+    setSuggestions([]);
+    setHighlight(-1);
+    setPickedSuggestion(true);
+  }
+
+  // Điều kiện ẩn/hiện tính lúc render chứ không xoá state trong effect — xoá đồng bộ
+  // trong effect bắt React dựng lại thêm một lượt.
+  const visibleSuggestions = pickedSuggestion || term.trim().length < 2 ? [] : suggestions;
+
+  useEffect(() => {
+    const value = term.trim().toLowerCase();
+    if (pickedSuggestion || value.length < 2) return;
+    const requestId = ++suggestRequest.current;
+    // Chờ 220ms cho người dùng gõ xong, khỏi bắn một lượt mạng mỗi phím.
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/ai/suggest?q=${encodeURIComponent(value)}`);
+        const data = (await response.json()) as { words?: string[] };
+        if (requestId !== suggestRequest.current) return;
+        // Bỏ chính từ đang gõ ra khỏi danh sách: gõ đủ rồi thì không cần gợi lại.
+        setSuggestions((data.words ?? []).filter((word) => word !== value));
+        setHighlight(-1);
+      } catch {
+        if (requestId === suggestRequest.current) setSuggestions([]);
+      }
+    }, 220);
+    return () => clearTimeout(timer);
+  }, [term, pickedSuggestion]);
+
+  // Viết câu ví dụ mới bằng mô hình ngôn ngữ, bám theo nghĩa người dùng đang nhập.
+  async function writeExample() {
+    const word = term.trim();
+    if (!word || writingExample) return;
+    setWritingExample(true);
+    setExampleNote("");
+    try {
+      const response = await fetch("/api/ai/passage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ terms: [word], mode: "sentences", topic: meaning.trim() || undefined }),
+      });
+      const data = (await response.json()) as { sentences?: { vi: string; en: string }[]; error?: string };
+      const made = data.sentences?.[0];
+      if (!response.ok || !made?.en || !made?.vi) throw new Error(data.error ?? "Không viết được ví dụ.");
+      setExample(made.en);
+      setExampleVi(made.vi);
+      setExampleNote("✓ Đã viết câu ví dụ mới kèm bản dịch.");
+    } catch (error) {
+      setExampleNote(error instanceof Error ? error.message : "Không viết được ví dụ.");
+    } finally {
+      setWritingExample(false);
+    }
+  }
   const normalizedTerm = term.trim().toLowerCase().replace(/\s+/g, " ");
   const duplicate = existingWords.find((word) => word.term.trim().toLowerCase().replace(/\s+/g, " ") === normalizedTerm);
   // setDetails là setter của useState nên phải nhận được cả hàm cập nhật, không chỉ mảng.
@@ -4074,7 +5370,7 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
       </section>
     );
   }
-  async function requestEnrichment(word: string) {
+  async function requestEnrichment(word: string, sense?: number) {
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -4084,7 +5380,8 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
           return await fetch("/api/ai/enrich", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ term: word, part_of_speech: partOfSpeech }),
+            // Gửi kèm nghĩa người dùng tự nhập để API xếp các nghĩa của từ điển theo đó.
+            body: JSON.stringify({ term: word, part_of_speech: partOfSpeech, meaning_vi: meaning.trim() || undefined, sense }),
             signal: controller.signal,
           });
         } finally {
@@ -4096,7 +5393,7 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
     }
     throw lastError;
   }
-  async function enrich(value = term) {
+  async function enrich(value = term, sense?: number) {
     const word = value.trim().replace(/\s+/g, " ");
     const requestId = ++lookupRequest.current;
     if (!/^[a-z][a-z'\- ]{0,59}$/i.test(word)) {
@@ -4115,13 +5412,15 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
     setLoading(true);
     setLookupMessage("Đang tra từ điển và chọn chủ đề…");
     try {
-      const response = await requestEnrichment(word);
+      const response = await requestEnrichment(word, sense);
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `Không thể tra từ (mã ${response.status}).`);
       if (requestId !== lookupRequest.current || data.term?.toLowerCase() !== word.toLowerCase()) return;
       setIpa(data.ipa || "");
       setPartOfSpeech(data.part_of_speech || "");
-      setMeaning(data.meaning_vi || "");
+      setMeaning((current) => current.trim() || data.meaning_vi || "");
+      setSenses(data.senses || []);
+      setChosenSense(data.sense);
       setDefinition(data.definition_en || "");
       setCollocation(data.collocation || "");
       setCollocationVi(data.collocation_vi || "");
@@ -4141,6 +5440,10 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
           ? "✓ Đã điền từ dữ liệu của từng từ. Cụm từ không có mục từ riêng nên phần định nghĩa là nghĩa từng từ — hãy sửa lại cho đúng ngữ cảnh."
           : data.example_source === "practical"
             ? `✓ Đã chọn cụm “${data.collocation}” và đặt trong câu đời thường dễ dùng.`
+          : data.example_source === "sense"
+            ? "✓ Đã lấy định nghĩa và câu ví dụ của đúng nghĩa bạn chọn."
+          : data.example_source === "corpus"
+            ? "✓ Từ điển không có câu ví dụ cho từ này nên đã lấy câu thật từ kho ngữ liệu Tatoeba."
           : data.example_source === "generated_phrase"
             ? `✓ Đã tự tạo cụm “${data.collocation}” và câu ngắn chứa cụm này. Hãy kiểm tra trước khi lưu.`
           : data.example_source === "template"
@@ -4211,30 +5514,108 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
             ×
           </button>
         </div>
-        <label>
+        <label className="term-field">
           Từ hoặc cụm từ tiếng Anh
           <input
             value={term}
+            autoComplete="off"
             onChange={(e) => {
               // Gõ tiếp làm kết quả đang chờ trở nên vô hiệu, phải tắt luôn trạng thái đang tải.
               lookupRequest.current++;
               setLoading(false);
               setLookupMessage("");
               setTerm(e.target.value);
+              setPickedSuggestion(false);
+              setHighlight(-1);
+            }}
+            onKeyDown={(event) => {
+              if (!visibleSuggestions.length) return;
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                setHighlight((current) => {
+                  const next = event.key === "ArrowDown" ? current + 1 : current - 1;
+                  return (next + suggestions.length) % suggestions.length;
+                });
+              } else if (event.key === "Enter" && highlight >= 0) {
+                event.preventDefault();
+                chooseSuggestion(visibleSuggestions[highlight]);
+              } else if (event.key === "Escape") {
+                setPickedSuggestion(true);
+              }
             }}
             placeholder="Ví dụ: meaningful hoặc take for granted"
           />
+          {/* Gợi ý từ theo tiền tố đang gõ, để không phải nhớ chính xác mặt chữ. */}
+          {!!visibleSuggestions.length && (
+            <div className="term-suggest" role="listbox">
+              {visibleSuggestions.map((word, position) => {
+                const had = existingWords.some((item) => item.term.trim().toLowerCase() === word);
+                return (
+                  <button
+                    type="button"
+                    key={word}
+                    role="option"
+                    aria-selected={position === highlight}
+                    className={position === highlight ? "active" : ""}
+                    onMouseEnter={() => setHighlight(position)}
+                    onClick={() => chooseSuggestion(word)}
+                  >
+                    <span>{word}</span>
+                    {had && <em>đã có trong kho</em>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </label>
         {duplicate && <p className="duplicate-warning">⚠ Từ “{duplicate.term}” đã được thêm trước đó{duplicate.addedDate ? ` vào ngày ${duplicate.addedDate}` : ""}{duplicate.topic ? ` · Chủ đề: ${duplicate.topic}` : ""}.</p>}
-        <button className="ai-fill" type="button" disabled={loading || !term} onClick={() => void enrich()}>
-          {loading ? "◌ Đang tự động điền…" : "✦ Tra và tự động điền"}
-        </button>
+        {/* Hai việc hay dùng nhất để ngay đây, đừng chôn dưới đáy form dài. */}
+        <div className="ai-actions">
+          <button className="ai-fill" type="button" disabled={loading || !term} onClick={() => void enrich()}>
+            {loading ? "◌ Đang tự động điền…" : "✦ Tra và tự động điền"}
+          </button>
+          <button className="ai-fill" type="button" disabled={writingExample || !term.trim()} onClick={() => void writeExample()} title="Viết câu ví dụ mới bám theo nghĩa bạn đang nhập">
+            {writingExample ? "◌ Đang viết ví dụ…" : "✎ Viết câu ví dụ"}
+          </button>
+        </div>
         {lookupMessage && <p className={lookupMessage.startsWith("✓") ? "lookup-message success" : "lookup-message"}>{lookupMessage}</p>}
+        {exampleNote && <p className={exampleNote.startsWith("✓") ? "lookup-message success" : "lookup-message"}>{exampleNote}</p>}
+        {/* Xem ngay kết quả tại đây, khỏi phải cuộn xuống cuối form để kiểm tra. */}
+        {example && (
+          <section className="example-peek">
+            <p>{example}</p>
+            {exampleVi && <small>{exampleVi}</small>}
+          </section>
+        )}
         <div className="form-grid">
           <label>
             Nghĩa tiếng Việt
             <input value={meaning} onChange={(e) => setMeaning(e.target.value)} placeholder="Tự động điền nghĩa..." />
           </label>
+          {senses.length > 1 && (
+            // Một từ mang nhiều nghĩa xa nhau ("fixed" = đã sửa / cố định / đã triệt sản).
+            // Máy chỉ xếp thứ tự theo nghĩa bạn gõ; chọn ở đây mới là chốt, và mọi trường
+            // còn lại được lấy lại theo đúng nghĩa đã chọn.
+            <section className="sense-picker">
+              <b>Từ này có {senses.length} nghĩa — chọn đúng nghĩa bạn cần</b>
+              <div>
+                {senses.map((item) => (
+                  <button
+                    type="button"
+                    key={item.index}
+                    className={item.index === chosenSense ? "active" : ""}
+                    disabled={loading}
+                    onClick={() => void enrich(term, item.index)}
+                  >
+                    <span>{item.part_of_speech}</span>
+                    <b>{item.definition_vi || item.definition_en}</b>
+                    {item.definition_vi && <small>{item.definition_en}</small>}
+                    {item.example && <em>{item.example}</em>}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
           <label>
             Ngày học
             <select value={studyDay} onChange={(e) => setStudyDay(Number(e.target.value))}>

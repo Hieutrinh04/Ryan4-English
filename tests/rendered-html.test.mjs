@@ -34,7 +34,10 @@ test("keeps personal vocabulary and the PDF collection separated", async () => {
   assert.match(page, /function isPdfVocabulary/);
   assert.match(page, /Thư mục học/);
   assert.match(page, /Học folder này/);
-  assert.match(page, /<Practice words=\{words\}/);
+  // Điều cần giữ là Practice nhận TOÀN BỘ words, không phải danh sách đã lọc bỏ bộ
+  // PDF. Cho phép có thêm prop khác đứng trước (key, intent…) — khớp cứng cả thứ tự
+  // prop thì thêm một prop là test đỏ dù ý nghĩa không đổi.
+  assert.match(page, /<Practice[^>]*\swords=\{words\}/);
   assert.match(page, /words\.filter\(\(word\) => !isPdfVocabulary\(word\)\)/);
 });
 

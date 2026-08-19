@@ -97,3 +97,381 @@
 .greeting h1 span.greeting-text{color:inherit}
 /* Chữ phụ nhỏ ở bản sáng đang mờ (2.9:1) — đậm lại cho đủ tương phản. */
 :root[data-theme="light"]{--text-3:#78738a;--muted:#6f6a80}
+
+
+/* Hàng chọn kiểu thẻ có margin-bottom âm để nép vào .flashcard (vốn có margin:auto).
+   Thẻ ghi nhớ dùng khung .flash-stage nên phải tự chừa khoảng, không thì bị đè lên. */
+/* Trong .review (flex + align-items:center) khung này co lại vừa nội dung, khiến
+   width:min(720px,100%) của thẻ không có gì để bám và thẻ bị bóp thành một cột.
+   Bên Luyện tập thẻ nằm trong .page khối nên không gặp lỗi này. */
+.review .flash-stage{width:min(720px,100%);margin:26px auto}
+.review .flash-bar{margin-bottom:6px}
+
+/* Kéo thẻ sang phải = đã biết, sang trái = đang học. */
+.quizlet-flashcard{touch-action:pan-y;transition:transform .18s ease}
+.quizlet-flashcard.is-dragging{transition:none;cursor:grabbing}
+.swipe-tag{position:absolute;top:20px;z-index:3;border:2px solid;border-radius:9px;padding:5px 12px;font-size:12px;font-weight:800;letter-spacing:.6px;opacity:0;transition:opacity .12s;pointer-events:none}
+.swipe-tag-learning{left:20px;color:var(--orange);border-color:var(--orange);transform:rotate(-9deg)}
+.swipe-tag-known{right:20px;color:var(--green);border-color:var(--green);transform:rotate(9deg)}
+.quizlet-flashcard.swipe-learning .swipe-tag-learning,.quizlet-flashcard.swipe-known .swipe-tag-known{opacity:1}
+.quizlet-flashcard.swipe-learning>.flash-front,.quizlet-flashcard.swipe-learning>.flash-back{border-color:var(--orange)}
+.quizlet-flashcard.swipe-known>.flash-front,.quizlet-flashcard.swipe-known>.flash-back{border-color:var(--green)}
+
+/* Bộ chọn nghĩa trong form thêm từ: trải hết bề ngang của lưới hai cột. */
+.sense-picker{grid-column:1/-1;margin:-4px 0 14px}
+.sense-picker>b{display:block;font-size:11px;font-weight:700;color:var(--text-2);margin-bottom:8px}
+.sense-picker>div{display:grid;gap:7px;max-height:230px;overflow-y:auto;padding-right:4px}
+.sense-picker button{display:grid;gap:3px;text-align:left;border:1px solid var(--line);background:var(--surface-2);border-radius:10px;padding:10px 12px}
+.sense-picker button:hover:not(:disabled){border-color:var(--line-accent)}
+.sense-picker button.active{border-color:var(--purple);background:var(--soft);box-shadow:0 0 0 3px #7569e51c}
+.sense-picker button:disabled{opacity:.55;cursor:default}
+.sense-picker span{font-size:9px;letter-spacing:.8px;font-weight:800;color:var(--purple)}
+.sense-picker button>b{font-size:12px;font-weight:700;color:var(--ink);line-height:1.45}
+.sense-picker small{font-size:10px;color:var(--text-3);line-height:1.45}
+.sense-picker em{font-style:normal;font-size:10px;color:var(--muted);line-height:1.45}
+
+/* Luyện dịch Việt → Anh: đoạn nguồn bên trái, phần chấm bên phải. */
+.translate-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:18px;align-items:start;margin-top:18px}
+.translate-source,.translate-feedback{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px}
+.translate-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.translate-head b{font-size:12px;color:var(--muted)}
+.translate-paragraph{font-family:Georgia,serif;font-size:16px;line-height:1.85;color:var(--text-3);margin:0;max-height:290px;overflow-y:auto}
+.translate-paragraph .done{color:var(--text-2)}
+.translate-paragraph .active{color:var(--pink);font-weight:700;background:var(--tint-pink);border-radius:4px;padding:1px 3px}
+.translate-input{display:block;margin-top:18px}
+.translate-input textarea{width:100%;min-height:120px;resize:vertical;border:2px solid var(--orange);border-radius:11px;background:var(--surface-2);color:var(--ink);padding:13px 15px;outline:0;font-family:inherit;font-size:14px;line-height:1.6}
+.translate-input textarea:focus{border-color:var(--purple);box-shadow:0 0 0 3px #7569e51c}
+.translate-actions{display:flex;gap:9px;margin-top:14px;flex-wrap:wrap}
+.translate-actions button{border:1px solid var(--line);background:var(--surface-2);color:var(--text-2);border-radius:10px;padding:11px 16px;font-weight:700}
+.translate-actions .primary{flex:1;min-width:150px;border-color:transparent;background:var(--purple);color:var(--on-accent)}
+.translate-actions button:disabled{opacity:.5;cursor:default}
+.translate-hint{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 0;font-family:Georgia,serif;font-size:15px}
+.translate-hint .shown{color:var(--green)}
+.translate-hint .hidden{color:var(--text-3);letter-spacing:2px}
+.translate-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.translate-meta>div{background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:12px;display:grid;gap:4px}
+.translate-meta span{font-size:10px;color:var(--text-3);letter-spacing:.6px;font-weight:700}
+.translate-meta b{font-size:17px}
+.translate-feedback h3{font-size:12px;margin:16px 0 8px;color:var(--text-2)}
+.translate-empty{font-size:13px;color:var(--muted);line-height:1.7;margin:0}
+.translate-diff{display:flex;flex-wrap:wrap;gap:5px;margin:0;font-family:Georgia,serif;font-size:15px}
+.translate-diff span{padding:3px 6px;border-radius:5px}
+.translate-diff .same{background:var(--tint-green);color:var(--green)}
+.translate-diff .form{background:var(--tint-orange);color:var(--orange);text-decoration:underline}
+.translate-diff .missing{background:var(--soft);color:var(--purple-dark);border:1px dashed var(--line-accent)}
+.translate-diff .extra{background:var(--tint-pink);color:var(--pink);text-decoration:line-through}
+.translate-reference{font-size:12px;color:var(--text-2);line-height:1.7;margin:14px 0 0}
+.translate-notes{margin:0;padding-left:18px;display:grid;gap:9px}
+.translate-notes li{font-size:12px;line-height:1.7;color:var(--text-2)}
+.translate-notes li.form::marker,.translate-notes li.article::marker,.translate-notes li.preposition::marker,.translate-notes li.target::marker{color:var(--orange)}
+.translate-notes li.diff::marker{color:var(--text-3)}
+.translate-notes b{color:var(--orange)}
+.translate-verdict{font-size:12px;font-weight:700;border-radius:9px;padding:10px 14px;margin:16px 0 0}
+.translate-verdict.perfect{background:var(--tint-green);color:var(--green)}
+.translate-verdict.errors{background:var(--tint-orange);color:var(--orange)}
+.translate-verdict.close,.translate-verdict.far{background:var(--surface-2);color:var(--text-2)}
+.translate-caveat{font-size:10px;color:var(--text-3);line-height:1.6;margin:10px 0 0}
+@media(max-width:900px){.translate-grid{grid-template-columns:1fr}}
+
+/* Đoạn văn do Gemini viết và phần chấm bài của Gemini. */
+.story-flag{font-style:normal;color:var(--green)}
+.story-build{width:100%;margin-top:14px;border:1px solid var(--line-accent);background:var(--surface-2);color:var(--purple-dark);border-radius:10px;padding:11px;font-weight:700}
+.story-build:disabled{opacity:.6;cursor:default}
+.story-note{font-size:11px;color:var(--orange);margin:8px 0 0;line-height:1.6}
+.ai-grade{border:1px solid var(--line-accent);background:var(--surface-2);border-radius:12px;padding:14px;margin-bottom:18px}
+.ai-grade.correct{border-color:var(--green-line);background:var(--tint-green)}
+.ai-grade-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:13px}
+.ai-grade-head span{font-size:12px;color:var(--muted);font-weight:700}
+.ai-grade.correct .ai-grade-head b{color:var(--green)}
+.ai-grade-suggestion{font-size:12px;line-height:1.7;color:var(--ink);margin:0 0 10px}
+.ai-grade-suggestion span{color:var(--purple-dark);font-weight:700}
+.ai-grade-comment{font-size:11px;color:var(--text-2);line-height:1.7;margin:10px 0 0}
+
+/* Chọn kiểu ví dụ khi dán danh sách từ. */
+.bulk-examples{border:1px solid var(--line);background:var(--surface-2);border-radius:12px;padding:15px;margin-bottom:14px}
+.bulk-examples>b{display:block;font-size:12px;margin-bottom:10px}
+.bulk-example-modes{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:11px}
+.bulk-example-modes button{display:grid;gap:3px;text-align:left;border:1px solid var(--line);background:var(--surface);color:var(--text-2);border-radius:10px;padding:10px 12px;font-size:12px;font-weight:700}
+.bulk-example-modes button.active{border-color:var(--purple);background:var(--soft);color:var(--purple-dark)}
+.bulk-example-modes small{font-size:10px;font-weight:400;color:var(--text-3);line-height:1.4}
+.bulk-example-list{display:grid;gap:8px;margin-top:11px;max-height:210px;overflow-y:auto}
+.bulk-example-list article{border:1px solid var(--line);background:var(--surface);border-radius:9px;padding:9px 11px;display:grid;gap:3px}
+.bulk-example-list b{font-size:12px;color:var(--purple-dark)}
+.bulk-example-list p{margin:0;font-size:12px;line-height:1.6}
+.bulk-example-list small{font-size:11px;color:var(--text-3);line-height:1.5}
+.bulk-example-more{font-size:11px;color:var(--text-3);text-align:center}
+@media(max-width:600px){.bulk-example-modes{grid-template-columns:1fr}}
+
+/* Hai nút AI đặt cạnh nhau ở đầu form thêm từ, và ô xem nhanh câu ví dụ. */
+.ai-actions{display:grid;grid-template-columns:1.5fr 1fr;gap:9px;margin:-2px 0 15px}
+.ai-actions .ai-fill{margin:0}
+.example-peek{border:1px solid var(--line);background:var(--surface-2);border-radius:10px;padding:11px 13px;margin:-6px 0 14px;display:grid;gap:4px}
+.example-peek p{margin:0;font-size:13px;line-height:1.6}
+.example-peek small{font-size:11px;color:var(--text-3);line-height:1.5}
+
+/* Bước chọn từ trước khi vào bài dịch. */
+.picker-tools{display:flex;gap:9px;margin:18px 0 14px;flex-wrap:wrap}
+.picker-filter{flex:1;min-width:200px;background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:10px 13px;display:flex}
+.picker-tools input{border:0;outline:0;background:none;width:100%;color:var(--ink)}
+.picker-tools button{border:1px solid var(--line);background:var(--surface);color:var(--text-2);border-radius:9px;padding:0 15px;font-weight:700;font-size:12px}
+.picker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:9px;max-height:52vh;overflow-y:auto;padding-right:4px}
+.picker-card{position:relative;border:1px solid var(--line);background:var(--surface);border-radius:10px}
+.picker-pick{display:grid;grid-template-columns:22px 1fr;grid-template-rows:auto auto;gap:0 9px;text-align:left;border:0;background:none;border-radius:10px;padding:11px 34px 11px 13px;width:100%}
+.picker-card.active{border-color:var(--purple);background:var(--soft)}
+.picker-grid span{grid-row:1/3;align-self:center;color:var(--text-3);font-size:15px;text-align:center}
+.picker-card.active .picker-pick span{color:var(--purple-dark)}
+.picker-grid b{font-size:13px}
+.picker-grid small{font-size:11px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.picker-bar{position:sticky;bottom:0;display:flex;justify-content:space-between;align-items:center;gap:14px;margin-top:16px;padding:14px 0 4px;background:linear-gradient(to top,var(--bg) 70%,transparent)}
+.picker-bar b{font-size:13px}
+
+/* Danh sách từ tự nhập trong bước chọn từ của bài luyện dịch. */
+.extra-list{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:16px;margin:18px 0 4px}
+.extra-list>b{display:block;font-size:13px;margin-bottom:5px}
+.extra-list>p{margin:0 0 11px;font-size:11px;color:var(--muted);line-height:1.6}
+.extra-list textarea{width:100%;min-height:78px;resize:vertical;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);color:var(--ink);padding:11px 13px;outline:0;font-family:inherit;font-size:13px;line-height:1.6}
+.extra-list textarea:focus{border-color:var(--purple);box-shadow:0 0 0 3px #7569e51c}
+.extra-actions{display:flex;gap:10px;align-items:center;margin-top:11px;flex-wrap:wrap}
+.extra-actions .bulk-example-modes{flex:1;min-width:230px;margin:0}
+.extra-actions .bulk-example-modes button{padding:9px 12px}
+.extra-actions .primary{border:0;border-radius:10px;padding:11px 17px;font-weight:800}
+.extra-actions .primary:disabled{background:var(--line);color:var(--text-3);box-shadow:none;cursor:default}
+.picker-card.own{border-style:dashed}
+.picker-card.own b::after{content:" · của bạn";font-size:9px;font-weight:700;color:var(--green);letter-spacing:.4px}
+
+/* Phần so câu mẫu thu gọn khi đã có chấm bằng mô hình — nó chỉ là tham khảo. */
+.reference-fold{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+.reference-fold summary{font-size:12px;color:var(--text-2);cursor:pointer;font-weight:700;list-style:none}
+.reference-fold summary::marker,.reference-fold summary::-webkit-details-marker{display:none}
+.reference-fold summary::before{content:"▸ ";color:var(--text-3)}
+.reference-fold[open] summary::before{content:"▾ "}
+.reference-fold .translate-diff{margin-top:11px}
+
+/* Nút xem chi tiết trên thẻ chọn từ, và tên từ bấm được ở bảng chấm bài. */
+.picker-info{position:absolute;top:7px;right:7px;border:0;background:none;color:var(--text-3);font-size:15px;line-height:1;padding:3px 5px;border-radius:6px}
+.picker-info:hover{color:var(--purple-dark);background:var(--surface-2)}
+.meta-word{border:1px solid var(--line);background:var(--surface-2);border-radius:11px;padding:12px;display:grid;gap:4px;text-align:left}
+.meta-word:hover{border-color:var(--line-accent)}
+.meta-word span{font-size:10px;color:var(--text-3);letter-spacing:.6px;font-weight:700}
+.meta-word b{font-size:17px;color:var(--purple-dark)}
+
+/* Câu đã đổi được đánh dấu nhẹ để biết nó khác đoạn gốc. */
+.translate-paragraph .swapped{border-bottom:1px dashed var(--line-accent)}
+
+/* Khối thống kê theo thời gian ở trang Thống kê. */
+.period-block{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;margin:20px 0}
+.period-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.period-head h3{margin:0;font-size:16px}
+.period-head p{margin:5px 0 0;font-size:11px;color:var(--muted)}
+.period-tabs{display:flex;gap:6px}
+.period-tabs button{border:1px solid var(--line);background:var(--surface-2);color:var(--text-2);border-radius:20px;padding:7px 14px;font-size:11px;font-weight:700}
+.period-tabs button.active{background:var(--soft);border-color:var(--line-accent);color:var(--purple-dark)}
+.period-empty{font-size:12px;color:var(--text-2);line-height:1.8;margin:0;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:14px 16px}
+.period-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.period-stat{background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:14px;display:grid;gap:2px}
+.period-stat strong{font-size:26px;line-height:1.1}
+.period-stat span{font-size:12px;font-weight:700;color:var(--text-2)}
+.period-stat small{font-size:10px;color:var(--text-3)}
+.period-stat.warn{border-color:var(--tint-orange)}
+.period-stat.warn strong{color:var(--orange)}
+.period-stat.good{border-color:var(--green-line)}
+.period-stat.good strong{color:var(--green)}
+.period-chart{display:flex;align-items:flex-end;gap:3px;height:120px;margin:20px 0 8px;overflow-x:auto;padding-bottom:2px}
+.period-chart>div{flex:1;min-width:12px;display:grid;justify-items:center;gap:5px}
+.period-chart i{display:block;width:100%;max-width:26px;background:var(--purple);border-radius:3px;position:relative;overflow:hidden}
+.period-chart em{position:absolute;left:0;right:0;bottom:0;display:block;background:var(--pink)}
+.period-chart span{font-size:9px;color:var(--text-3)}
+.period-legend{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text-3);margin:0}
+.period-legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.period-legend i.ok{background:var(--purple)}
+.period-legend i.bad{background:var(--pink)}
+.period-advice{margin:18px 0 0;padding-left:18px;display:grid;gap:8px}
+.period-advice li{font-size:12px;line-height:1.7;color:var(--text-2)}
+.period-advice li.warn::marker{color:var(--orange)}
+.period-advice li.good::marker{color:var(--green)}
+.period-advice li.info::marker{color:var(--text-3)}
+/* --orange của bản sáng (#e39b36) chỉ đạt 2.2:1 trên nền thẻ — đậm lại cho con số
+   lớn, vì đây là chỉ số người dùng cần đọc chứ không phải trang trí. */
+:root[data-theme="light"] .period-stat.warn strong{color:#b76d09}
+
+/* Ô số liệu bấm được. */
+.stat-open{width:100%;text-align:left;position:relative;font:inherit;padding-right:30px}
+.stat-open:hover{border-color:var(--line-accent)}
+.stat-arrow{position:absolute;right:13px;top:50%;transform:translateY(-50%);color:var(--text-3);font-size:19px;line-height:1}
+.stat-open:hover .stat-arrow{color:var(--purple-dark)}
+button.period-stat{font:inherit;text-align:left;cursor:pointer}
+button.period-stat:hover{border-color:var(--line-accent)}
+
+/* Hộp danh sách từ đứng sau một con số thống kê. */
+.word-list-modal{width:min(640px,100%);max-height:min(86vh,760px);display:flex;flex-direction:column;padding-bottom:20px}
+.word-list-modal .modal-head{margin-bottom:14px}
+.word-list-modal h2{margin:4px 0 0;font-size:19px}
+.word-list-filter{margin-bottom:10px;flex:none}
+.word-list-filter input{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 13px;outline:0;background:var(--surface-2);color:var(--ink);font-size:13px}
+.word-list-filter input:focus{border-color:var(--purple);box-shadow:0 0 0 3px #7569e51c}
+/* flex:1 + min-height:0 để vùng cuộn ăn hết chiều cao còn lại; thiếu min-height thì
+   nó phình theo nội dung và hộp chỉ hiện được vài dòng. */
+.word-list-head{display:grid;grid-template-columns:minmax(88px,32%) 1fr auto;gap:12px;padding:0 10px 7px;border-bottom:1px solid var(--line);font-size:9px;letter-spacing:.9px;font-weight:800;color:var(--text-3);flex:none}
+.word-list-rows{flex:1;min-height:0;display:grid;grid-auto-rows:max-content;gap:2px;overflow-y:auto;margin:0 -6px;padding:0 6px}
+/* Từ và nghĩa nằm cùng một hàng như bảng tra, không xếp chồng — dòng thấp hơn
+   nhiều nên nhìn được gấp đôi số từ trong cùng khung. */
+.word-list-rows button{display:grid;grid-template-columns:minmax(88px,32%) 1fr auto auto;align-items:center;gap:12px;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;border-radius:7px;padding:7px 10px;width:100%}
+.word-list-rows button:last-child{border-bottom:0}
+.word-list-rows button:hover{background:var(--surface-2)}
+.wl-term{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wl-mean{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.wl-lapse{font-size:10px;font-weight:700;color:var(--pink);background:var(--tint-pink);border-radius:20px;padding:3px 8px;white-space:nowrap}
+/* Hộp 1–3 là trạng thái mặc định của gần hết thư viện — tô đậm cả loạt thì rối
+   mắt, nên để nhạt. Chỉ hộp cao mới đáng chú ý. */
+.wl-box{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;font-size:11px;font-weight:800;color:var(--text-3)}
+.wl-box.b4,.wl-box.b5{background:var(--soft);color:var(--purple-dark)}
+.wl-box.b6{background:var(--tint-green);color:var(--green)}
+.word-list-empty{font-size:12px;color:var(--muted);margin:0;padding:18px 0;text-align:center}
+
+/* Gợi ý từ theo tiền tố dưới ô nhập từ mới. */
+.term-field{position:relative}
+.term-suggest{position:absolute;left:0;right:0;top:100%;z-index:5;margin-top:5px;background:var(--surface);border:1px solid var(--line-accent);border-radius:10px;box-shadow:0 16px 40px #1a163333;overflow:hidden;max-height:250px;overflow-y:auto}
+.term-suggest button{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;border:0;background:none;color:var(--ink);padding:9px 13px;font-size:13px;font-weight:500}
+.term-suggest button.active{background:var(--soft);color:var(--purple-dark)}
+.term-suggest em{font-style:normal;font-size:10px;color:var(--text-3);white-space:nowrap}
+
+/* Rê chuột vào từ tiếng Anh để tra nghĩa tại chỗ. */
+.en-text{position:relative}
+.en-word{border-radius:3px;cursor:help;transition:background .12s}
+.en-word:hover{background:var(--soft);color:var(--purple-dark)}
+.gloss{position:fixed;z-index:80;max-height:min(240px,60vh);overflow-y:auto;display:grid;gap:7px;width:min(320px,calc(100vw - 24px));background:var(--surface);border:1px solid var(--line-accent);border-radius:12px;box-shadow:0 20px 50px #16122c55;padding:13px 15px;pointer-events:none;font-family:Inter,"Segoe UI",Arial,sans-serif}
+.gloss-term{font-size:16px;font-weight:800;line-height:1.2}
+.gloss-note{font-style:normal;font-size:11px;color:var(--text-3)}
+.gloss-head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;padding-bottom:7px;border-bottom:1px solid var(--line)}
+.gloss-head i{font-style:normal;font-size:11px;color:var(--muted)}
+.gloss-head strong{font-size:13px;color:var(--purple-dark)}
+.gloss-sense{display:grid;gap:1px}
+.gloss-sense i{font-style:italic;font-size:10px;font-weight:700;color:var(--pink)}
+.gloss-sense span{font-size:11.5px;line-height:1.5;color:var(--text-2)}
+.gloss-sense small{font-size:10.5px;color:var(--text-3);line-height:1.45}
+
+/* .stat>div:last-child trong globals.css không còn khớp khi ô là nút có mũi tên. */
+.stat-text{display:grid}
+
+/* ── Dọn giao diện: gọn hơn, ít viền và bóng đổ hơn ───────────────────────────
+   Ý chính: bớt độ cao thừa, thống nhất bo góc, hạ tương phản của khung để nội
+   dung nổi lên thay vì cái khung. Chỉ là lớp CSS đè lên, không đụng cấu trúc. */
+
+/* Cột trái: nhóm theo mục, nút thấp và bớt tròn hơn. */
+.nav-group{display:block;font-size:9px;letter-spacing:1.3px;font-weight:800;color:var(--text-3);padding:0 15px;margin:16px 0 6px}
+.sidebar nav{gap:2px;margin-top:26px}
+.sidebar nav>.nav-group:first-child{margin-top:4px}
+.nav-item{padding:10px 14px;border-radius:9px;font-size:13.5px}
+.nav-item span{font-size:16px;width:19px}
+
+/* Ô số liệu: thấp lại, chữ nhỏ hơn, số vẫn là thứ nổi nhất. */
+.stat{padding:14px 15px;border-radius:12px;gap:12px}
+.stat-open{padding-right:26px}
+.stat-icon{width:34px;height:34px;border-radius:9px;font-size:15px}
+.stat span{font-size:10.5px;letter-spacing:.2px}
+.stat strong{font-size:22px;margin:1px 0}
+.stat small{font-size:9.5px;line-height:1.35}
+.stats-grid{gap:12px;margin:18px 0}
+
+/* Khung nội dung: bo góc thống nhất, bỏ bóng đổ nặng. */
+.panel{border-radius:12px;padding:20px}
+.hero-card{border-radius:14px;padding:24px 28px;box-shadow:none}
+.word-table,.stat,.panel{box-shadow:none}
+.dashboard-grid{gap:14px}
+.page{padding-top:44px}
+
+/* Tiêu đề nhỏ và tĩnh lại, để số liệu và nội dung dẫn dắt. */
+.eyebrow{font-size:10px;letter-spacing:1.3px}
+.greeting h1,.section-head h1{font-size:27px}
+.greeting{margin-bottom:26px}
+.panel h3{font-size:14px}
+/* Hai màu trang trí này ở bản sáng chỉ đạt 1.7:1 và 2.1:1 — đậm lại cho sạch mắt. */
+:root[data-theme="light"] .greeting h1 span{color:#b8791a}
+:root[data-theme="light"] .stat-icon.orange{color:#a76408}
+/* Ngôi sao gắn dấu ở bảng từ: vàng #d6a92e trên nền sáng chỉ 2.19:1. */
+:root[data-theme="light"] .word-main>button,:root[data-theme="light"] .word-tr>button{color:#9c6f0d}
+:root[data-theme="light"] .external-tool-icon.orange{color:#9a5b06}
+:root[data-theme="light"] .external-tool-icon.gold{color:#8a6410}
+:root[data-theme="light"] .external-tool-icon.green{color:#0f6b45}
+/* Thanh bên giờ chứa 10 mục nên phải cuộn được và các mục sát nhau hơn. */
+.sidebar{overflow-y:auto}
+.sidebar nav{gap:1px}
+.nav-item{padding:9px 14px;font-size:13px;position:relative}
+.nav-item span{font-size:15px;width:18px;flex:none}
+.nav-count{margin-left:auto;font-style:normal;font-size:10px;font-weight:700;color:var(--text-3);background:var(--surface-2);border-radius:20px;padding:2px 7px}
+.nav-item.active .nav-count{background:var(--surface);color:var(--purple-dark)}
+.nav-group{margin:14px 0 5px}
+/* Chỉ phần điều hướng cuộn; thương hiệu ở trên và các nút ở đáy luôn nhìn thấy. */
+.sidebar{overflow:hidden}
+.sidebar nav{flex:1;min-height:0;overflow-y:auto;padding-right:4px;margin-bottom:12px}
+.sidebar-bottom{flex:none}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   HỆ THIẾT KẾ — học từ cách senglish.net làm, không sao chép thương hiệu.
+   Ba điều khiến giao diện họ gọn:
+     1. Toàn bộ màu nền/viền/chữ phụ dùng CHUNG MỘT TÔNG (họ hue 330; ta hue 250
+        cho hợp màu tím sẵn có). Chỉ đổi độ sáng, không đổi tông → nhìn liền mạch.
+     2. Thang chữ ít bậc: 10 · 11 · 12 · 13 · 14 · 16 · 18 · 22 · 28 · 36.
+        Trước đây app dùng cả 9 / 9.5 / 10.5 / 11.5 / 13.5 — vụn và thiếu nhịp.
+     3. Tiêu đề lớn, đậm, giãn chữ âm; nút cao 32 hoặc 40, bo 8px.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+:root{
+  --bg:hsl(250 30% 7%);
+  --surface:hsl(250 28% 11%);
+  --surface-2:hsl(250 26% 15%);
+  --soft:hsl(250 40% 22%);
+  --ink:hsl(250 20% 97%);
+  --text-2:hsl(250 14% 80%);
+  --muted:hsl(250 12% 68%);
+  --text-3:hsl(250 10% 58%);
+  --line:hsl(250 22% 19%);
+  --line-accent:hsl(250 35% 32%);
+}
+:root[data-theme="light"]{
+  --bg:hsl(250 40% 98%);
+  --surface:hsl(0 0% 100%);
+  --surface-2:hsl(250 35% 97%);
+  --soft:hsl(250 60% 94%);
+  --ink:hsl(250 30% 14%);
+  --text-2:hsl(250 12% 32%);
+  --muted:hsl(250 10% 42%);
+  --text-3:hsl(250 10% 46%);
+  --line:hsl(250 25% 90%);
+  --line-accent:hsl(250 45% 80%);
+}
+
+body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-serif;font-size:15px;line-height:1.55;letter-spacing:0}
+
+/* Tiêu đề: to, đậm, giãn chữ âm — nhìn dứt khoát chứ không nhạt nhoà. */
+.greeting h1,.section-head h1,.page>h1{font-size:32px;font-weight:700;letter-spacing:-.8px;line-height:1.15}
+.page-sub,.greeting p,.section-head p{font-size:14px;line-height:1.6}
+.panel h3{font-size:15px;font-weight:700;letter-spacing:-.2px}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:1.4px}
+
+/* Thang chữ gom về ít bậc. */
+.stat span{font-size:12px;font-weight:600}
+.stat strong{font-size:26px;font-weight:700;letter-spacing:-.6px}
+.stat small{font-size:11px}
+.nav-group{font-size:10px;letter-spacing:1.4px}
+.nav-item{font-size:14px;font-weight:600}
+.word-main b{font-size:14px;font-weight:700}
+.word-main small{font-size:12px}
+.word-tr{font-size:13px}
+.period-stat strong{font-size:28px;font-weight:700;letter-spacing:-.6px}
+.period-stat span{font-size:13px}
+.period-stat small{font-size:11px}
+
+/* Nút: hai cỡ, một bo góc. */
+.primary,.ai-fill,.quick-add{border-radius:8px;font-weight:700;font-size:14px}
+.primary{padding:0 24px;height:40px;display:inline-flex;align-items:center;justify-content:center}
+.hero-card .primary{height:44px}
+.modal-actions>button,.summary-actions button{height:40px;border-radius:8px;font-weight:700;font-size:14px}
+.review-modes button,.period-tabs button,.bulk-example-modes button{font-size:12px;font-weight:600}
+
+/* Bo góc thống nhất: thẻ 12, khối lớn 16, phần tử nhỏ 8. */
+.panel,.stat,.word-table,.period-block,.extra-list,.bulk-examples{border-radius:12px}
+.hero-card,.modal{border-radius:16px}
+.nav-item,.word-tools label,.word-tools>button,.modal input,.modal textarea,.modal select{border-radius:8px}
+/* Biểu tượng đồng hồ ở thanh "phiên học đang dở": cam #e39b36 trên nền sáng chỉ 2.1:1. */
+:root[data-theme="light"] .resume-bar>span:first-child{color:#a45f05}
