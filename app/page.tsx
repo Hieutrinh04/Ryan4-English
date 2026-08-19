@@ -5,6 +5,7 @@ import { aiFetch, supabase } from "../lib/supabase";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLesson, type DictationLevel } from "../lib/dictation-lessons";
 import ieltsAreaData from "../lib/ielts-areas.json";
 import ShadowingPractice from "../components/Shadowing";
+import VocabPractice from "../components/VocabPractice";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
 // mẫu vẫn được công nhận đúng.
 type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { type: string; wrong: string; right: string; why: string }[] };
@@ -2675,6 +2676,11 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
         <h1>Luyện tập kiểu Quizlet</h1>
         <p className="page-sub">Chọn một chế độ để củng cố trí nhớ. Kết quả luyện tập không làm giảm hộp Leitner.</p>
         <div className="practice-grid quizlet-modes">
+          <button onClick={() => chooseMode("vocab")}>
+            <span>▤</span>
+            <b>Luyện từ vựng</b>
+            <small>Sáu cách luyện trên cùng một bộ từ: thẻ, gõ từ, nghe, đảo ngược, điền chỗ trống, hỗn hợp</small>
+          </button>
           <button onClick={() => chooseMode("flash")}>
             <span>▱</span>
             <b>Flashcards</b>
@@ -2721,6 +2727,7 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
   if (mode === "match") return <MatchGame words={activeWords} close={returnToModes} />;
   if (mode === "dictation") return <DictationPractice words={activeWords} close={returnToModes} />;
   if (mode === "shadow") return <ShadowingPractice close={returnToModes} onPractised={logSpeaking} />;
+  if (mode === "vocab") return <VocabPractice words={activeWords} close={returnToModes} />;
   if (mode === "learn") return <LearnMode words={activeWords} setMode={setMode} />;
   if (mode === "test") return <TestMode words={activeWords} setMode={setMode} />;
   if (mode === "flash") return <FlashcardsMode words={activeWords} setMode={setMode} toggleStar={toggleStar} />;
@@ -2761,6 +2768,7 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
 
 // Thứ tự và nhãn của các chế độ khi hiện ở thanh bên trái.
 const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: string }[] = [
+  { value: "vocab", label: "Luyện từ vựng", icon: "▤" },
   { value: "flash", label: "Thẻ ghi nhớ", icon: "▱" },
   { value: "learn", label: "Học", icon: "✎" },
   { value: "test", label: "Kiểm tra", icon: "◉" },
@@ -2772,6 +2780,7 @@ const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: 
 ];
 
 const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
+  vocab: "Luyện từ vựng",
   flash: "Flashcards",
   learn: "Học",
   test: "Kiểm tra",
@@ -2825,7 +2834,7 @@ function normalizeAnswer(value: string) {
     .replace(/\s+/g, " ");
 }
 
-type PracticeMode = "menu" | "flash" | "learn" | "test" | "listen" | "match" | "dictation" | "shadow" | "translate";
+type PracticeMode = "menu" | "vocab" | "flash" | "learn" | "test" | "listen" | "match" | "dictation" | "shadow" | "translate";
 const practiceModeBar: { value: PracticeMode; label: string; icon: string }[] = [
   { value: "flash", label: "Thẻ ghi nhớ", icon: "▱" },
   { value: "learn", label: "Học", icon: "✎" },
