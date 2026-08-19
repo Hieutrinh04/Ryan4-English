@@ -1,7 +1,7 @@
 "use client";
 
 import { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { aiFetch, supabase } from "../lib/supabase";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLesson, type DictationLevel } from "../lib/dictation-lessons";
 import ieltsAreaData from "../lib/ielts-areas.json";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
@@ -2890,7 +2890,7 @@ function TranslateMode({ words, setMode, back }: { words: WordCard[]; setMode: (
     for (let start = 0; start < extraTerms.length; start += PASSAGE_SIZE) {
       const batch = extraTerms.slice(start, start + PASSAGE_SIZE);
       try {
-        const response = await fetch("/api/ai/passage", {
+        const response = await aiFetch("/api/ai/passage", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ terms: batch, mode: batch.length < 2 ? "sentences" : extraMode }),
@@ -2985,7 +2985,7 @@ function TranslateMode({ words, setMode, back }: { words: WordCard[]; setMode: (
     if (!passage || storyState === "loading") return;
     setStoryState("loading");
     try {
-      const response = await fetch("/api/ai/passage", {
+      const response = await aiFetch("/api/ai/passage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ terms: fallbackTasks.map((task) => task.word.term), topic: passage.topic }),
@@ -3014,7 +3014,7 @@ function TranslateMode({ words, setMode, back }: { words: WordCard[]; setMode: (
     setSwapping(true);
     setSwapNote("");
     try {
-      const response = await fetch("/api/ai/passage", {
+      const response = await aiFetch("/api/ai/passage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ terms: [current.word.term], mode: "sentences", avoid: current.vi, topic: current.word.meaning || undefined }),
@@ -3041,7 +3041,7 @@ function TranslateMode({ words, setMode, back }: { words: WordCard[]; setMode: (
     setScores((list) => [...list, gradeTranslation(current.en, typed, current.word.term).accuracy]);
     setGrading(true);
     try {
-      const response = await fetch("/api/ai/grade", {
+      const response = await aiFetch("/api/ai/grade", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ vietnamese: current.vi, answer: typed, term: current.word.term, reference: current.en }),
@@ -4785,7 +4785,7 @@ function BulkAddWords({ close, save, existingWords }: { close: () => void; save:
     let failed = 0;
     for (const batch of batches) {
       try {
-        const response = await fetch("/api/ai/passage", {
+        const response = await aiFetch("/api/ai/passage", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ terms: batch, mode: batch.length < 2 ? "sentences" : exampleMode }),
@@ -4953,7 +4953,7 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
     setWritingExample(true);
     setExampleNote("");
     try {
-      const response = await fetch("/api/ai/passage", {
+      const response = await aiFetch("/api/ai/passage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ terms: [word], mode: "sentences", topic: meaning.trim() || undefined }),

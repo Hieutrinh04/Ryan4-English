@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { LlmError, generateJson, hasLlm } from "../../../../lib/llm";
+import { LlmError, activeModel, activeProvider, generateJson, hasLlm } from "../../../../lib/llm";
+import { identify, logUsage, refund, spend } from "../../../../lib/ai-guard";
 
 // Sinh một đoạn văn tiếng Việt có mạch truyện từ danh sách từ trong folder, kèm câu
 // tiếng Anh tương ứng để đối chiếu. Đây là thứ mà cách ghép câu ví dụ sẵn có không
@@ -18,6 +19,10 @@ export async function POST(request: Request) {
   if (!words.length) return NextResponse.json({ error: "Chưa có từ nào để viết ví dụ." }, { status: 400 });
   if (wantPassage && words.length < 2) return NextResponse.json({ error: "Cần ít nhất 2 từ để dựng đoạn văn." }, { status: 400 });
   if (!hasLlm()) return NextResponse.json({ error: "Chưa cấu hình OPENROUTER_API_KEY hoặc GEMINI_API_KEY." }, { status: 503 });
+
+  const caller = await identify(request);
+  const denied = spend(caller);
+  if (denied) return denied;
 
   const shared = `Ràng buộc:
 - Mỗi câu dùng đúng MỘT từ trong danh sách dưới đây, theo đúng thứ tự đã cho.
@@ -45,14 +50,24 @@ Với mỗi từ, viết MỘT câu ví dụ độc lập, đặt từ đó vào
 
 ${shared}`;
 
+  const startedAt = Date.now();
+  const usage = (ok: boolean) => logUsage(caller, { feature: "passage", ok, promptChars: prompt.length, latencyMs: Date.now() - startedAt, provider: activeProvider(), model: activeModel() });
   try {
     const data = await generateJson<{ sentences?: Sentence[] }>(prompt, { temperature: wantPassage ? 0.75 : 0.6, timeoutMs: 50000 });
     const sentences = (data.sentences ?? [])
       .map((item) => ({ term: String(item.term ?? "").trim(), vi: String(item.vi ?? "").normalize("NFC").trim(), en: String(item.en ?? "").trim() }))
       .filter((item) => item.term && item.vi && item.en);
-    if (!sentences.length) return NextResponse.json({ error: "Mô hình trả về nội dung không dùng được." }, { status: 502 });
+    if (!sentences.length) {
+      refund(caller);
+      await usage(false);
+      return NextResponse.json({ error: "Mô hình trả về nội dung không dùng được." }, { status: 502 });
+    }
+    await usage(true);
     return NextResponse.json({ sentences });
   } catch (error) {
+    // Mô hình hỏng là lỗi phía chúng ta, không trừ lượt của người học.
+    refund(caller);
+    await usage(false);
     const message = error instanceof LlmError ? error.message : "Không dựng được đoạn văn.";
     return NextResponse.json({ error: message }, { status: 502 });
   }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { LlmError, generateJson, hasLlm } from "../../../../lib/llm";
+import { LlmError, activeModel, activeProvider, generateJson, hasLlm } from "../../../../lib/llm";
+import { identify, logUsage, refund, spend } from "../../../../lib/ai-guard";
 import { normaliseErrorType, taxonomyPrompt } from "../../../../lib/error-taxonomy.mjs";
 
 // Chấm bài dịch Việt → Anh bằng Gemini. Khác hẳn cách so câu mẫu ở
@@ -15,6 +16,10 @@ export async function POST(request: Request) {
   const written = (answer ?? "").trim();
   if (!source || !written) return NextResponse.json({ error: "Thiếu câu tiếng Việt hoặc câu người học viết." }, { status: 400 });
   if (!hasLlm()) return NextResponse.json({ error: "Chưa cấu hình OPENROUTER_API_KEY hoặc GEMINI_API_KEY." }, { status: 503 });
+
+  const caller = await identify(request);
+  const denied = spend(caller);
+  if (denied) return denied;
 
   const prompt = `Bạn là giáo viên tiếng Anh, chấm bài dịch Việt–Anh cho người Việt.
 
@@ -35,8 +40,10 @@ Nguyên tắc chấm:
 Trả về JSON thuần theo đúng dạng:
 {"correct":true,"score":95,"suggestion":"bản dịch chuẩn của câu trên","issues":[{"type":"article","wrong":"phần sai trong câu người học","right":"phần đúng","why":"giải thích ngắn bằng tiếng Việt"}],"comment":"nhận xét chung bằng tiếng Việt"}`;
 
+  const startedAt = Date.now();
   try {
     const data = await generateJson<Grade>(prompt, { temperature: 0.2, thinking: "low", timeoutMs: 45000 });
+    await logUsage(caller, { feature: "grade", ok: true, promptChars: prompt.length, latencyMs: Date.now() - startedAt, provider: activeProvider(), model: activeModel() });
     const clean = (value?: string) => String(value ?? "").normalize("NFC").trim();
     return NextResponse.json({
       correct: Boolean(data.correct),
@@ -50,6 +57,9 @@ Trả về JSON thuần theo đúng dạng:
         .slice(0, 6),
     });
   } catch (error) {
+    // Mô hình hỏng là lỗi phía chúng ta, không trừ lượt của người học.
+    refund(caller);
+    await logUsage(caller, { feature: "grade", ok: false, promptChars: prompt.length, latencyMs: Date.now() - startedAt, provider: activeProvider(), model: activeModel() });
     const message = error instanceof LlmError ? error.message : "Không chấm được bài.";
     return NextResponse.json({ error: message }, { status: 502 });
   }

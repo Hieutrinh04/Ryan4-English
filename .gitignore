@@ -30,6 +30,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...trừ file mẫu: nó chỉ có tên biến và giá trị giả, cần theo dự án.
+!.env.example
 
 # vercel
 .vercel

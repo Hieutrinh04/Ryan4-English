@@ -20,6 +20,14 @@ export function activeProvider(): Provider {
   if (process.env.GEMINI_API_KEY?.trim()) return "gemini";
   return "none";
 }
+/** Tên mô hình đang dùng, để ghi vào ai_usage. */
+export function activeModel(): string {
+  const provider = activeProvider();
+  if (provider === "openrouter") return process.env.OPENROUTER_MODEL || OPENROUTER_MODEL_DEFAULT;
+  if (provider === "gemini") return GEMINI_MODEL;
+  return "";
+}
+
 export function hasLlm() {
   return activeProvider() !== "none";
 }
