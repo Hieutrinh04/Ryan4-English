@@ -5,6 +5,7 @@
 //     node scripts/enrich-vocabulary.mjs
 // Script có thể dừng giữa chừng và chạy lại: từ nào đã có trong file sẽ được bỏ qua.
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { MIN_SUGGESTIONS, topicNeighbours, topicalWords } from "../lib/topical-words.mjs";
 
 const vocabularyUrl = new URL("../public/vocabulary-1000.json", import.meta.url);
 const areasUrl = new URL("../lib/ielts-areas.json", import.meta.url);
@@ -13,6 +14,13 @@ const outputUrl = new URL("../public/vocabulary-enrichment.json", import.meta.ur
 const vocabulary = JSON.parse(readFileSync(vocabularyUrl, "utf8"));
 const ieltsAreas = JSON.parse(readFileSync(areasUrl, "utf8"));
 const store = existsSync(outputUrl) ? JSON.parse(readFileSync(outputUrl, "utf8")) : {};
+
+// Gom từ theo folder chủ đề để mượn khi Datamuse không đủ gợi ý sạch.
+const folderByTopic = new Map();
+for (const item of vocabulary) {
+  if (!folderByTopic.has(item.topic)) folderByTopic.set(item.topic, []);
+  folderByTopic.get(item.topic).push(item);
+}
 
 const keywordPatterns = new Map();
 function matchesKeyword(text, key) {
@@ -45,6 +53,17 @@ function lemmaOf(word) {
 }
 function uniqueWords(items, source) {
   return [...new Set(items.map((item) => item.trim().toLowerCase()).filter((item) => item && item !== source))].slice(0, 6);
+}
+
+// Từ cùng chủ đề cần thẻ md=fp để lọc theo tần suất; xem lib/topical-words.mjs.
+async function triggerCandidates(word) {
+  try {
+    const response = await fetch(`https://api.datamuse.com/words?rel_trg=${encodeURIComponent(word)}&md=fp&max=20`);
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
 }
 
 async function datamuse(word, relation) {
@@ -87,7 +106,7 @@ function lookupForm(term) {
 async function enrich(item) {
   const key = item.term.trim().toLowerCase();
   const query = lookupForm(item.term);
-  const [definition, synonymsRaw, antonymsRaw, triggers] = await Promise.all([definitionOf(query), datamuse(query, "rel_syn"), datamuse(query, "rel_ant"), datamuse(query, "rel_trg")]);
+  const [definition, synonymsRaw, antonymsRaw, triggerRaw] = await Promise.all([definitionOf(query), datamuse(query, "rel_syn"), datamuse(query, "rel_ant"), triggerCandidates(query)]);
   let antonyms = antonymsRaw;
   if (!antonyms.length) {
     for (const form of lemmaOf(query)) {
@@ -95,8 +114,14 @@ async function enrich(item) {
       if (antonyms.length) break;
     }
   }
+  const triggers = triggerRaw.map((item) => item?.word?.trim() ?? "").filter(Boolean);
   const synonyms = uniqueWords(synonymsRaw, query);
-  const related = uniqueWords(triggers, query).filter((word) => !synonyms.includes(word) && !antonyms.includes(word));
+  // Lấy dư 12 rồi mới trừ đồng/trái nghĩa để không bị hụt sau khi lọc.
+  const related = topicalWords(triggerRaw, query, 12).filter((word) => !synonyms.includes(word) && !antonyms.includes(word)).slice(0, 6);
+  // Từ hẹp nghĩa (trái cây, rau củ) hay bị lọc sạch — mượn thêm từ cùng folder.
+  const folder = folderByTopic.get(item.topic) ?? [];
+  if (related.length < MIN_SUGGESTIONS && folder.length > 1)
+    related.push(...topicNeighbours(item.term, folder, [...related, ...synonyms, ...antonyms], MIN_SUGGESTIONS - related.length));
   return {
     key,
     value: {
