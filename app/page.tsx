@@ -7,8 +7,14 @@ import ieltsAreaData from "../lib/ielts-areas.json";
 import ShadowingPractice from "../components/Shadowing";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
 // mẫu vẫn được công nhận đúng.
-type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { wrong: string; right: string; why: string }[] };
+type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { type: string; wrong: string; right: string; why: string }[] };
 import { PASSAGE_SIZE, buildPassages, gradeTranslation } from "../lib/translation-check.mjs";
+import { attemptAdvice, attemptsSince, logAttempt, makeAttempt, readAttempts, summariseAttempts,
+  typesFromIssues, typesFromNotes } from "../lib/error-log.mjs";
+import { pushTranslationAttempt } from "../lib/cloud-sync";
+// Một dòng nhật ký bài dịch. lib/error-log.mjs là JavaScript nên kiểu khai báo ở đây.
+type TranslationAttempt = { at: string; day: string; term: string; vi: string; answer: string; reference: string;
+  score: number; correct: boolean; gradedBy: "llm" | "reference"; errorTypes: string[] };
 import { advice, byDay, entriesSince, summarise, weakest } from "../lib/review-log.mjs";
 // Lịch ôn và các phép tính ngày: nguồn duy nhất ở lib/srs.mjs, giao diện chỉ gọi.
 import { daysUntil, isDueForReview, localDateString, scheduleFor, streakFrom, weekdayIndex, wordState } from "../lib/srs.mjs";
@@ -3050,22 +3056,60 @@ function TranslateMode({ words, setMode, back }: { words: WordCard[]; setMode: (
 
   async function check() {
     if (!current || !typed.trim() || checked) return;
+    const answer = typed;
+    const task = current;
     setChecked(true);
-    setScores((list) => [...list, gradeTranslation(current.en, typed, current.word.term).accuracy]);
+    const local = gradeTranslation(task.en, answer, task.word.term);
+    setScores((list) => [...list, local.accuracy]);
     setGrading(true);
+    let grade: AiGrade | null = null;
     try {
       const response = await aiFetch("/api/ai/grade", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vietnamese: current.vi, answer: typed, term: current.word.term, reference: current.en }),
+        body: JSON.stringify({ vietnamese: task.vi, answer, term: task.word.term, reference: task.en }),
       });
       const data = (await response.json()) as AiGrade & { error?: string };
-      setAiGrade(response.ok && !data.error ? data : null);
+      grade = response.ok && !data.error ? data : null;
+      setAiGrade(grade);
     } catch {
       setAiGrade(null);
     } finally {
       setGrading(false);
     }
+    recordAttempt(task, answer, local, grade);
+  }
+
+  // Nhật ký bài dịch nuôi phần "bạn hay sai gì" ở trang Thống kê. Mô hình chấm thì
+  // tin nhãn của mô hình; không có mô hình thì rút nhãn từ cách so câu mẫu — khắt
+  // khe hơn, nhưng vẫn hơn là không ghi gì.
+  function recordAttempt(task: { word: WordCard; vi: string; en: string }, answer: string, local: ReturnType<typeof gradeTranslation>, grade: AiGrade | null) {
+    const gradedBy = grade ? "llm" : "reference";
+    const errorTypes = grade ? typesFromIssues(grade.issues) : typesFromNotes(local.notes);
+    const attempt = makeAttempt({
+      term: task.word.term,
+      vietnamese: task.vi,
+      answer,
+      reference: task.en,
+      score: grade ? grade.score : local.accuracy,
+      correct: grade ? grade.correct : local.matchesReference,
+      gradedBy,
+      errorTypes,
+    });
+    logAttempt(attempt);
+    void pushTranslationAttempt({
+      term: task.word.term,
+      vietnamese: task.vi,
+      reference: task.en,
+      answer,
+      score: attempt.score,
+      correct: attempt.correct,
+      gradedBy,
+      corrected: grade?.suggestion,
+      comment: grade?.comment,
+      issues: grade?.issues,
+      errorTypes,
+    });
   }
   function next() {
     setIndex((value) => value + 1);
@@ -4634,13 +4678,19 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
   // Nhật ký chỉ đọc được trên máy nên phải chờ hydrate, giống các state khác.
   const [log, setLog] = useState<ReviewEntry[]>([]);
   const [spoken, setSpoken] = useState<Record<string, number>>({});
+  const [attempts, setAttempts] = useState<TranslationAttempt[]>([]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
     setLog(readReviewLog());
     setSpoken(readSpeaking());
+    setAttempts(readAttempts());
   }, []);
   // Thời gian luyện nói đếm riêng: số từ đã thuộc không nói lên bạn nói được hay chưa.
   const spokenMinutes = useMemo(() => speakingMinutes(spoken, days), [spoken, days]);
+  // Bài dịch đếm riêng khỏi lịch ôn: ôn thẻ đo trí nhớ, dịch câu đo khả năng viết ra.
+  const scopedAttempts: TranslationAttempt[] = useMemo(() => attemptsSince(attempts, days), [attempts, days]);
+  const errorSummary = useMemo(() => summariseAttempts(scopedAttempts), [scopedAttempts]);
+  const errorTips = useMemo(() => attemptAdvice(errorSummary, scopedAttempts), [errorSummary, scopedAttempts]);
   const scoped: ReviewEntry[] = useMemo(() => entriesSince(log, days), [log, days]);
   const summary = useMemo(() => summarise(scoped), [scoped]);
   const weakWords = useMemo(() => weakest(scoped, 5), [scoped]);
@@ -4724,6 +4774,45 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
           </>
         )}
       </section>
+      <section className="panel error-block">
+        <div className="error-head">
+          <div>
+            <h3>Bạn hay sai gì khi viết</h3>
+            <p>Đếm từ {errorSummary.attempts} bài dịch trong {PERIODS.find((item) => item.key === days)?.label.toLowerCase()}.</p>
+          </div>
+          {errorSummary.attempts > 0 && (
+            <div className="error-score">
+              <b>{errorSummary.avgScore}</b>
+              <small>điểm trung bình</small>
+            </div>
+          )}
+        </div>
+        {errorSummary.attempts === 0 ? (
+          <p className="period-empty">
+            Chưa có bài dịch nào trong quãng này. Vào <b>Luyện tập → Dịch Việt → Anh</b>, mỗi bài bạn làm sẽ được ghi lại kèm loại lỗi để chỗ này chỉ ra bạn cần sửa gì trước.
+          </p>
+        ) : (
+          <>
+            {errorSummary.byType.length > 0 && (
+              <div className="error-bars">
+                {errorSummary.byType.slice(0, 6).map((row: { type: string; label: string; count: number; share: number }) => (
+                  <div key={row.type} className="error-bar">
+                    <b>{row.label}</b>
+                    <i style={{ width: `${Math.max(6, row.share)}%` }} />
+                    <span>{row.count} lần · {row.share}%</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <ul className="shadowing-notes error-notes">
+              {errorTips.map((tip: { kind: string; text: string }, position: number) => (
+                <li key={position} className={tip.kind}>{tip.text}</li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+
       <div className="stats-grid stats-overview">
         <Stat label="Tổng từ" value={String(words.length)} note={`Đang tính trên ${scopeLabel}`} icon="▤" tone="purple"
           onOpen={() => setStatList({ title: "Tổng từ", note: "TOÀN BỘ THƯ VIỆN", words })} />

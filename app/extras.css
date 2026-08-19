@@ -564,3 +564,24 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
   .shadowing-tips span{grid-column:1/-1}
 }
 .period-speaking{margin:6px 0 0!important;color:var(--purple);font-size:11px;font-weight:800}
+
+/* ── Bảng lỗi hay mắc khi viết ─────────────────────────────────────────────── */
+.error-block{margin:20px 0}
+.error-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}
+.error-head h3{margin:0}
+.error-head p{margin:4px 0 0;color:var(--muted);font-size:11px}
+.error-score{text-align:right;flex-shrink:0}
+.error-score b{display:block;font-size:26px;color:var(--purple);line-height:1.15}
+.error-score small{color:var(--muted);font-size:10px}
+.error-bars{display:grid;gap:9px;margin-bottom:14px}
+.error-bar{display:grid;grid-template-columns:150px 1fr auto;align-items:center;gap:11px}
+.error-bar b{font-size:12px;font-weight:700}
+.error-bar i{height:9px;border-radius:5px;background:var(--purple);display:block;min-width:6px}
+.error-bar span{color:var(--muted);font-size:10px;white-space:nowrap}
+.error-notes{margin:0}
+@media(max-width:620px){
+  .error-head{flex-direction:column}
+  .error-score{text-align:left}
+  .error-bar{grid-template-columns:1fr auto}
+  .error-bar i{grid-column:1/-1}
+}
