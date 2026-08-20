@@ -8,6 +8,7 @@ import ShadowingPractice from "../components/Shadowing";
 import VocabPractice from "../components/VocabPractice";
 import Dictionary, { type NewWord } from "../components/Dictionary";
 import Icon, { type IconName } from "../components/Icon";
+import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
 // mẫu vẫn được công nhận đúng.
 type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { type: string; wrong: string; right: string; why: string }[] };
@@ -302,7 +303,7 @@ const heat = [0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 4, 2, 0, 1, 1, 2, 4, 3, 1, 2, 0, 3, 
 export default function Home() {
   // Luôn khởi tạo "home" để HTML dựng sẵn khớp với client; trang đã lưu được khôi phục sau khi hydrate.
   const [tab, setTab] = useState<"home" | "words" | "practice" | "stats" | "dictionary">("home");
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<string>(DEFAULT_THEME);
   const [reviewing, setReviewing] = useState(false);
   const [reviewQueue, setReviewQueue] = useState<WordCard[]>([]);
   const [revealed, setRevealed] = useState(false);
@@ -356,19 +357,14 @@ export default function Home() {
   // Chủ đề chỉ đọc được sau khi hydrate: nếu đọc localStorage lúc khởi tạo state thì HTML
   // dựng sẵn (luôn "dark") sẽ khác client và React báo lỗi hydration.
   useEffect(() => {
-    const saved = localStorage.getItem("lexilo:theme");
-    const nextTheme = saved === "light" ? "light" : "dark";
+    const saved = readTheme();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đồng bộ một lần với localStorage, không tạo vòng lặp render
-    setTheme(nextTheme);
-    document.documentElement.dataset.theme = nextTheme;
+    setTheme(saved);
+    applyTheme(saved);
   }, []);
-  function toggleTheme() {
-    setTheme((current) => {
-      const next = current === "dark" ? "light" : "dark";
-      document.documentElement.dataset.theme = next;
-      localStorage.setItem("lexilo:theme", next);
-      return next;
-    });
+  function chooseTheme(id: string) {
+    setTheme(writeTheme(id).id);
+    applyTheme(id);
   }
 
   useEffect(() => {
@@ -1075,15 +1071,9 @@ export default function Home() {
           <button className={tab === "dictionary" ? "nav-item active" : "nav-item"} onClick={() => goTab("dictionary")}>
             <Icon name="search" /> Từ điển AI
           </button>
-          <button className={tab === "practice" && !practiceIntent ? "nav-item active" : "nav-item"} onClick={() => { setPracticeIntent(null); setTab("practice"); }}>
-            <Icon name="compass" /> Công cụ ngoài
-          </button>
         </nav>
         <div className="sidebar-bottom">
-          <button className="theme-toggle" onClick={toggleTheme} aria-label={`Chuyển sang chế độ ${theme === "dark" ? "sáng" : "tối"}`}>
-            <Icon name={theme === "dark" ? "sun" : "moon"} />
-            <b>{theme === "dark" ? "Chế độ sáng" : "Chế độ tối"}</b>
-          </button>
+          <ThemeMenu current={theme} choose={chooseTheme} />
           <button className="profile" onClick={() => setShowAuth(true)}>
             <span className="avatar">RY</span>
             <span>
@@ -1102,7 +1092,16 @@ export default function Home() {
             <span>Lexilo</span>
           </div>
           <div className="mobile-head-actions">
-            <button onClick={toggleTheme} aria-label={`Chuyển sang chế độ ${theme === "dark" ? "sáng" : "tối"}`}>{theme === "dark" ? "☀" : "☾"}</button>
+            <button
+              onClick={() => {
+                const now = themeById(theme);
+                const pair = THEMES.find((item) => item.hue === now.hue && item.mode !== now.mode);
+                if (pair) chooseTheme(pair.id);
+              }}
+              aria-label={`Chuyển sang chế độ ${themeById(theme).mode === "dark" ? "sáng" : "tối"}`}
+            >
+              <Icon name={themeById(theme).mode === "dark" ? "sun" : "moon"} size={18} />
+            </button>
             <button onClick={() => setShowAdd(true)} aria-label="Thêm từ">＋</button>
           </div>
         </header>
@@ -2745,6 +2744,69 @@ function SessionSummary({ total, ratings, streak, close, restart }: { total: num
         </div>
       </section>
     </main>
+  );
+}
+
+/**
+ * Chọn giao diện: bốn tông màu, mỗi tông một bản sáng và một bản tối.
+ *
+ * Đặt ở đáy thanh bên vì đây là cài đặt, không phải chỗ để đi tới. Menu bung lên
+ * trên cho khỏi tràn khỏi màn hình.
+ */
+function ThemeMenu({ current, choose }: { current: string; choose: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const holder = useRef<HTMLDivElement>(null);
+  const now = themeById(current);
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!holder.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="theme-menu" ref={holder}>
+      <button className="theme-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="menu">
+        <Icon name={now.mode === "dark" ? "moon" : "sun"} />
+        <b>{now.label}</b>
+        <Icon name="chevron" size={15} className={open ? "add-menu-caret open" : "add-menu-caret"} />
+      </button>
+      {open && (
+        <div className="theme-menu-list" role="menu">
+          {themeGroups().map((group: { id: string; label: string; mode: string; hue: number }[]) => (
+            <div className="theme-menu-group" key={group[0].hue}>
+              {group.map((item) => (
+                <button
+                  key={item.id}
+                  role="menuitemradio"
+                  aria-checked={item.id === current}
+                  className={item.id === current ? "active" : ""}
+                  onClick={() => {
+                    choose(item.id);
+                    setOpen(false);
+                  }}
+                >
+                  {/* Chấm màu cho thấy đúng tông của lựa chọn đó, không phải tông đang dùng. */}
+                  <i className="theme-swatch" style={{ background: `hsl(${item.hue} ${item.mode === "dark" ? "87% 73%" : "74% 55%"})` }} />
+                  <Icon name={item.mode === "dark" ? "moon" : "sun"} size={16} />
+                  <span>{item.label}</span>
+                  {item.id === current && <Icon name="check" size={15} />}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -416,36 +416,59 @@ button.period-stat:hover{border-color:var(--line-accent)}
      3. Tiêu đề lớn, đậm, giãn chữ âm; nút cao 32 hoặc 40, bo 8px.
    ════════════════════════════════════════════════════════════════════════════ */
 
+/* Mọi màu nền, viền và màu nhấn dựng từ MỘT góc màu duy nhất. Đổi tông giao diện
+   chỉ là đổi --hue; thêm một tông mới cũng chỉ là thêm một con số, không phải
+   chép lại cả bảng màu. Xem lib/themes.mjs.
+
+   Màu ý nghĩa (xanh lá = đúng, hồng = sai, cam = cần chú ý) cố tình KHÔNG chạy
+   theo tông: chúng mang nghĩa chứ không phải màu thương hiệu. */
 :root{
-  --bg:hsl(250 30% 7%);
-  --surface:hsl(250 28% 11%);
-  --surface-2:hsl(250 26% 15%);
-  --soft:hsl(250 40% 22%);
-  --ink:hsl(250 20% 97%);
-  --text-2:hsl(250 14% 80%);
-  --muted:hsl(250 12% 68%);
-  --text-3:hsl(250 10% 58%);
-  --line:hsl(250 22% 19%);
-  --line-accent:hsl(250 35% 32%);
+  --hue:250;
+  --bg:hsl(var(--hue) 30% 7%);
+  --surface:hsl(var(--hue) 28% 11%);
+  --surface-2:hsl(var(--hue) 26% 15%);
+  --soft:hsl(var(--hue) 40% 22%);
+  --ink:hsl(var(--hue) 20% 97%);
+  --text-2:hsl(var(--hue) 14% 80%);
+  --muted:hsl(var(--hue) 12% 68%);
+  --text-3:hsl(var(--hue) 10% 58%);
+  --line:hsl(var(--hue) 22% 19%);
+  --line-accent:hsl(var(--hue) 35% 32%);
+  --purple:hsl(var(--hue) 87% 73%);
+  --purple-dark:hsl(var(--hue) 100% 80%);
+  --accent-solid:hsl(var(--hue) 58% 42%);
+  --heat-1:hsl(var(--hue) 37% 28%);
+  --heat-2:hsl(var(--hue) 41% 42%);
+  --heat-3:hsl(var(--hue) 51% 56%);
   --mark-ok:var(--green);
   --mark-swallow:var(--orange);
   --mark-missed:var(--pink);
 }
 :root[data-theme="light"]{
-  --bg:hsl(250 40% 98%);
+  --bg:hsl(var(--hue) 40% 98%);
   --surface:hsl(0 0% 100%);
-  --surface-2:hsl(250 35% 97%);
-  --soft:hsl(250 60% 94%);
-  --ink:hsl(250 30% 14%);
-  --text-2:hsl(250 12% 32%);
-  --muted:hsl(250 10% 42%);
-  --text-3:hsl(250 10% 46%);
-  --line:hsl(250 25% 90%);
-  --line-accent:hsl(250 45% 80%);
+  --surface-2:hsl(var(--hue) 35% 97%);
+  --soft:hsl(var(--hue) 60% 94%);
+  --ink:hsl(var(--hue) 30% 14%);
+  --text-2:hsl(var(--hue) 12% 32%);
+  --muted:hsl(var(--hue) 10% 42%);
+  --text-3:hsl(var(--hue) 10% 46%);
+  --line:hsl(var(--hue) 25% 90%);
+  --line-accent:hsl(var(--hue) 45% 80%);
+  --purple:hsl(var(--hue) 74% 66%);
+  --purple-dark:hsl(var(--hue) 65% 38%);
+  --accent-solid:hsl(var(--hue) 58% 44%);
+  --heat-1:hsl(var(--hue) 71% 92%);
+  --heat-2:hsl(var(--hue) 71% 83%);
+  --heat-3:hsl(var(--hue) 69% 72%);
   --mark-ok:#1c6b41;
   --mark-swallow:#8a5510;
   --mark-missed:#a3323b;
 }
+/* Bốn tông màu. Góc màu phải đặt trên :root để mọi biến ở trên đọc được. */
+:root[data-hue="285"]{--hue:285}
+:root[data-hue="335"]{--hue:335}
+:root[data-hue="205"]{--hue:205}
 
 body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-serif;font-size:15px;line-height:1.55;letter-spacing:0}
 
@@ -833,3 +856,27 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 .greeting .add-menu{flex-shrink:0}
 .greeting .add-menu-list{top:calc(100% + 8px);bottom:auto;left:auto;right:0;width:270px}
 @media(max-width:640px){.greeting{flex-direction:column;align-items:flex-start;gap:14px}}
+
+/* ── Chọn giao diện ────────────────────────────────────────────────────────── */
+.theme-menu{position:relative}
+.theme-toggle{width:100%;border:1px solid var(--line);background:var(--surface-2);color:var(--text-2);border-radius:10px}
+.theme-toggle:hover{border-color:var(--line-accent)}
+.theme-toggle b{flex:1;text-align:left}
+/* Nút nằm sát đáy thanh bên nên menu phải bung LÊN, nếu không sẽ tràn khỏi màn hình. */
+.theme-menu-list{position:absolute;left:0;bottom:calc(100% + 8px);z-index:20;width:200px;
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:6px;
+  box-shadow:0 18px 42px #0000004d;display:grid;gap:2px}
+.theme-menu-group{display:grid;gap:2px}
+.theme-menu-group + .theme-menu-group{border-top:1px solid var(--line);margin-top:4px;padding-top:5px}
+.theme-menu-list button{display:flex;align-items:center;gap:9px;width:100%;border:0;background:none;
+  color:var(--text-2);border-radius:8px;padding:8px 10px;font-size:12.5px;font-weight:600;text-align:left}
+.theme-menu-list button:hover{background:var(--surface-2);color:var(--ink)}
+.theme-menu-list button.active{background:var(--soft);color:var(--purple-dark)}
+.theme-menu-list button span{flex:1}
+.theme-menu-list svg{flex-shrink:0;opacity:.85}
+.theme-swatch{width:11px;height:11px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 1px #00000024}
+
+/* Nút đặc dùng nền tối hơn màu nhấn: --purple ở độ sáng dành cho CHỮ thì quá sáng
+   để đỡ chữ trắng — ở tông xanh chỉ còn 1.89. */
+.primary{background:var(--accent-solid)}
+.hero-card .primary{background:var(--surface);color:var(--purple-dark)}

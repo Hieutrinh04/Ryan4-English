@@ -29,7 +29,15 @@ export const metadata: Metadata = {
 //      đăng ký sau thì không cản được. Chỉ nuốt khi TOÀN BỘ stack nằm trong
 //      chrome-extension:// hoặc moz-extension://, nên lỗi thật của app vẫn hiện.
 const bootScript = `
-try{var t=localStorage.getItem("lexilo:theme");if(t==="light")document.documentElement.dataset.theme="light"}catch(e){}
+try{
+  var THEMES={sang:[250,"light"],toi:[250,"dark"],"tim-sang":[285,"light"],"tim-toi":[285,"dark"],
+    "hong-sang":[335,"light"],"hong-toi":[335,"dark"],"xanh-sang":[205,"light"],"xanh-toi":[205,"dark"]};
+  var t=localStorage.getItem("lexilo:theme");
+  if(t==="light")t="sang"; else if(t==="dark")t="toi";
+  var picked=THEMES[t]||THEMES.toi;
+  document.documentElement.dataset.theme=picked[1];
+  document.documentElement.dataset.hue=String(picked[0]);
+}catch(e){}
 (function(){
   function onlyExtension(stack){
     if(!stack) return false;
