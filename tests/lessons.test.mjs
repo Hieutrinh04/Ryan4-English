@@ -10,7 +10,7 @@ globalThis.localStorage = {
   removeItem: (key) => store.delete(key),
 };
 
-const { MAX_SENTENCES, lessonFromHash, lessonsKey, readLessons, removeLesson, sanitiseLesson, saveLesson, sentenceAt } =
+const { MAX_SENTENCES, lessonFromHash, lessonsKey, readLessonProgress, readLessons, removeLesson, sanitiseLesson, saveLesson, sentenceAt } =
   await import("../lib/lessons.mjs");
 
 const good = () => ({
@@ -122,4 +122,51 @@ test("sentenceAt: tìm đúng câu đang phát", () => {
   // Trước câu đầu thì vẫn trả câu đầu, không trả null làm hỏng giao diện.
   assert.equal(sentenceAt(sentences, -5).index, 1);
   assert.equal(sentenceAt([], 0), null);
+});
+
+test("đánh dấu câu đã làm, tách riêng theo cách luyện", async () => {
+  const { doneSentences, markSentence, readLessonProgress } = await import("../lib/lessons.mjs");
+  store.clear();
+  markSentence("yt-abc", "dictation", 1);
+  markSentence("yt-abc", "dictation", 3);
+  // Chép chính tả xong không có nghĩa là đã nói nhại được câu đó.
+  markSentence("yt-abc", "shadowing", 1);
+  const progress = readLessonProgress();
+  assert.deepEqual(doneSentences(progress, "yt-abc", "dictation"), [1, 3]);
+  assert.deepEqual(doneSentences(progress, "yt-abc", "shadowing"), [1]);
+});
+
+test("đánh dấu lại cùng một câu không tạo bản trùng", async () => {
+  const { doneSentences, markSentence } = await import("../lib/lessons.mjs");
+  store.clear();
+  markSentence("yt-abc", "dictation", 2);
+  const progress = markSentence("yt-abc", "dictation", 2);
+  assert.deepEqual(doneSentences(progress, "yt-abc", "dictation"), [2]);
+});
+
+test("số câu vô lý bị bỏ qua, không ghi rác", async () => {
+  const { doneSentences, markSentence } = await import("../lib/lessons.mjs");
+  store.clear();
+  markSentence("yt-abc", "dictation", 0);
+  markSentence("yt-abc", "dictation", -1);
+  markSentence("yt-abc", "dictation", 1.5);
+  markSentence("", "dictation", 1);
+  assert.deepEqual(doneSentences(readLessonProgress(), "yt-abc", "dictation"), []);
+});
+
+test("tiến độ hỏng trong localStorage không làm sập phần đọc", async () => {
+  const { lessonProgressKey, readLessonProgress } = await import("../lib/lessons.mjs");
+  store.clear();
+  store.set(lessonProgressKey, "[1,2,3]");
+  assert.deepEqual(readLessonProgress(), {});
+});
+
+test("xoá tiến độ của một bài không đụng bài khác", async () => {
+  const { clearLessonProgress, doneSentences, markSentence } = await import("../lib/lessons.mjs");
+  store.clear();
+  markSentence("yt-abc", "dictation", 1);
+  markSentence("yt-xyz", "dictation", 1);
+  const after = clearLessonProgress("yt-abc");
+  assert.deepEqual(doneSentences(after, "yt-abc", "dictation"), []);
+  assert.deepEqual(doneSentences(after, "yt-xyz", "dictation"), [1]);
 });

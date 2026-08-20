@@ -901,3 +901,86 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 .video-lessons li>button{border:1px solid var(--line);background:var(--surface);color:var(--muted);
   border-radius:7px;width:28px;height:28px;font-size:15px;line-height:1;flex-shrink:0}
 .video-lessons li>button:hover{border-color:var(--pink-line);color:var(--pink)}
+
+/* ── Học trên video: chép chính tả và nói nhại theo từng câu ───────────────── */
+.lesson-picker{margin-bottom:20px}
+.lesson-picker-page{padding-bottom:0}
+.lesson-picker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:12px}
+.lesson-picker-grid button{border:1px solid var(--line);background:var(--surface-2);color:var(--ink);
+  border-radius:12px;padding:13px 15px;display:grid;gap:4px;text-align:left}
+.lesson-picker-grid button:hover{border-color:var(--purple);background:var(--soft)}
+.lesson-picker-grid b{font-size:13px;line-height:1.4}
+.lesson-picker-grid small{color:var(--muted);font-size:10.5px}
+
+.video-lesson{max-width:1280px}
+.lesson-top{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.lesson-title{flex:1;min-width:0;display:grid;gap:2px}
+.lesson-title b{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lesson-title small{color:var(--muted);font-size:10.5px}
+.lesson-count{background:var(--surface-2);border:1px solid var(--line);border-radius:20px;
+  padding:5px 12px;font-size:11px;font-weight:800;color:var(--purple)}
+
+.lesson-body{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start}
+.lesson-main{display:grid;gap:14px;min-width:0}
+.yt-player{position:relative;padding-top:56.25%;background:#000;border-radius:14px;overflow:hidden}
+.yt-player>div,.yt-player iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.yt-failed{padding:28px;display:grid;place-items:center;gap:10px;text-align:center;padding-top:28px;height:auto}
+.yt-failed p{margin:0;color:var(--muted);font-size:12.5px}
+
+.lesson-controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.lesson-time{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.lesson-transport{display:flex;align-items:center;gap:7px}
+.lesson-transport button{border:1px solid var(--line);background:var(--surface);color:var(--text-2);
+  border-radius:9px;width:38px;height:38px;font-size:14px}
+.lesson-transport button:disabled{opacity:.4;cursor:not-allowed}
+.lesson-transport .primary{border:0;color:var(--on-accent);width:44px;height:44px;font-size:15px}
+.lesson-rates{display:flex;gap:4px}
+.lesson-rates button{border:1px solid transparent;background:var(--surface-2);color:var(--muted);
+  border-radius:16px;padding:6px 10px;font-size:10px;font-weight:700}
+.lesson-rates button.active{border-color:var(--purple);background:var(--soft);color:var(--purple-dark)}
+
+.lesson-work{display:grid;gap:14px}
+.lesson-work-head{display:flex;align-items:center;gap:12px;font-size:11px;color:var(--muted)}
+.lesson-work-head b{color:var(--purple);font-size:13px}
+.lesson-work-head em{margin-left:auto;font-style:normal;font-weight:800;color:var(--orange)}
+.lesson-work-head em.good{color:var(--mark-ok)}
+.lesson-shapes{display:flex;flex-wrap:wrap;gap:9px;font-family:Georgia,serif;font-size:15px;letter-spacing:2px}
+.lesson-shapes span{color:var(--text-3);border-bottom:1px solid var(--line-accent);padding-bottom:2px}
+.lesson-shapes span.ok{color:var(--mark-ok);border-color:var(--green-line);letter-spacing:0}
+.lesson-shapes span.miss{color:var(--mark-missed);border-color:var(--pink-line);letter-spacing:0}
+.lesson-names{margin:0;display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11px}
+.lesson-answer{display:flex;flex-wrap:wrap;gap:9px}
+.lesson-answer input{flex:1 1 240px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);
+  border-radius:10px;padding:13px 15px;font-size:15px}
+.lesson-answer input:focus{outline:2px solid var(--purple);outline-offset:-1px}
+.lesson-tools{display:flex;flex-wrap:wrap;gap:9px}
+.lesson-tools button{border:1px solid var(--line);background:var(--surface);color:var(--text-2);
+  border-radius:9px;padding:10px 15px;font-size:11.5px;font-weight:700}
+.lesson-tools button:disabled{opacity:.45;cursor:not-allowed}
+.lesson-tools .primary{border:0;color:var(--on-accent)}
+.lesson-tools .primary.listening{background:var(--pink)}
+.lesson-answer-text{margin:0;font-size:15px;line-height:1.6;color:var(--mark-ok)}
+.lesson-sentence{margin:0;font-size:19px;line-height:1.65}
+.lesson-next{justify-self:start}
+
+.lesson-list{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;
+  position:sticky;top:20px;max-height:calc(100vh - 40px);display:flex;flex-direction:column}
+.lesson-list-head{display:flex;justify-content:space-between;align-items:baseline;font-size:12px}
+.lesson-list-head b{font-size:13px}
+.lesson-list-head span{color:var(--muted);font-size:11px}
+.lesson-list-bar{height:4px;border-radius:2px;background:var(--surface-2);margin:10px 0 12px;overflow:hidden}
+.lesson-list-bar i{display:block;height:100%;background:var(--purple);border-radius:2px;transition:width .25s}
+.lesson-list ol{margin:0;padding:0;list-style:none;overflow-y:auto;display:grid;gap:5px}
+.lesson-list li button{width:100%;display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:start;
+  border:1px solid transparent;background:none;color:var(--text-2);border-radius:9px;padding:9px 10px;text-align:left}
+.lesson-list li button:hover{background:var(--surface-2)}
+.lesson-list li button.active{border-color:var(--purple);background:var(--soft);color:var(--ink)}
+.lesson-list li button.done .lesson-list-no{color:var(--mark-ok)}
+.lesson-list-no{font-size:10px;font-weight:800;color:var(--text-3)}
+.lesson-list-text{font-size:11.5px;line-height:1.5;overflow-wrap:anywhere}
+.lesson-list li em{font-style:normal;font-size:9.5px;color:var(--text-3);font-variant-numeric:tabular-nums}
+
+@media(max-width:1080px){
+  .lesson-body{grid-template-columns:1fr}
+  .lesson-list{position:static;max-height:340px}
+}

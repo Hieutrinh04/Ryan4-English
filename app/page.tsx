@@ -8,6 +8,7 @@ import ShadowingPractice from "../components/Shadowing";
 import VocabPractice from "../components/VocabPractice";
 import Dictionary, { type NewWord } from "../components/Dictionary";
 import Icon, { type IconName } from "../components/Icon";
+import VideoLesson from "../components/VideoLesson";
 import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
 import { lessonFromHash, readLessons, removeLesson, saveLesson } from "../lib/lessons.mjs";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
@@ -1200,7 +1201,7 @@ export default function Home() {
           />
         )}
         {/* key theo chế độ để mỗi lần chọn ở thanh bên là dựng lại từ đầu. */}
-        {tab === "practice" && <Practice key={practiceIntent ?? "menu"} words={words} intent={practiceIntent} />}
+        {tab === "practice" && <Practice key={practiceIntent ?? "menu"} words={words} intent={practiceIntent} lessons={lessons} onStudied={() => markStudiedToday()} />}
         {/* Thống kê tính trên toàn bộ thư viện, cùng phạm vi với các ô ở trang chủ. */}
         {tab === "stats" && <Stats words={words} scopeLabel="toàn bộ thư viện" streak={streakFrom(studyDays)} />}
         {tab === "dictionary" && (
@@ -2907,8 +2908,37 @@ function AddMenu({ onManual, onPaste, onDictionary }: { onManual: () => void; on
   );
 }
 
+/**
+ * Chọn một bài video để luyện.
+ *
+ * Hiện ngay trên đầu Dictation và Shadowing thay vì làm một mục riêng: cùng một
+ * bài video luyện được cả hai cách, tách ra thành hai chỗ chọn là bắt người học
+ * đi tìm hai lần.
+ */
+function VideoLessonPicker({ lessons, pick }: { lessons: VideoLesson[]; pick: (lesson: VideoLesson) => void }) {
+  if (!lessons.length) return null;
+  return (
+    <section className="panel lesson-picker">
+      <div className="panel-title">
+        <div>
+          <h3>Bài từ video</h3>
+          <p>Luyện trên chính video, nghe và làm theo từng câu.</p>
+        </div>
+      </div>
+      <div className="lesson-picker-grid">
+        {lessons.map((lesson) => (
+          <button key={lesson.id} onClick={() => pick(lesson)}>
+            <b>{lesson.title}</b>
+            <small>{[lesson.author, `${lesson.sentences.length} câu`].filter(Boolean).join(" · ")}</small>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /** Một bài nghe lấy từ video. Kho bài nằm ở lib/lessons.mjs. */
-type VideoLesson = { id: string; videoId: string; title: string; author: string; seconds: number; source: string; sentences: { text: string }[] };
+type VideoLesson = { id: string; videoId: string; title: string; author: string; seconds: number; source: string; sentences: { index: number; start: number; end: number; text: string }[] };
 
 /**
  * Kho bài lấy từ video.
@@ -2947,7 +2977,9 @@ function VideoLessons({ lessons, remove }: { lessons: VideoLesson[]; remove: (id
 
 // intent: chế độ được chọn thẳng từ thanh bên trái. Component được gắn key theo
 // intent nên mỗi lần chọn là dựng lại từ đầu — khỏi phải đồng bộ state trong effect.
-function Practice({ words, intent }: { words: WordCard[]; intent?: Exclude<PracticeMode, "menu"> | null }) {
+function Practice({ words, intent, lessons, onStudied }: { words: WordCard[]; intent?: Exclude<PracticeMode, "menu"> | null; lessons: VideoLesson[]; onStudied: () => void }) {
+  // Bài video đang mở; null nghĩa là đang ở màn hình chọn.
+  const [lesson, setLesson] = useState<VideoLesson | null>(null);
   const externalTools = [
     { label: "Luyện nghe A2", short: "EL", url: "https://elllo.org/book/A2/index.html", tone: "blue" },
     { label: "Hội thoại hằng ngày", short: "BE", url: "https://basicenglishspeaking.com/daily-english-conversation-topics/", tone: "orange" },
@@ -3080,8 +3112,20 @@ function Practice({ words, intent }: { words: WordCard[]; intent?: Exclude<Pract
       </div>
     );
   if (mode === "match") return <MatchGame words={activeWords} close={returnToModes} />;
-  if (mode === "dictation") return <DictationPractice words={activeWords} close={returnToModes} />;
-  if (mode === "shadow") return <ShadowingPractice close={returnToModes} onPractised={() => markStudiedToday()} />;
+  // Dictation và Shadowing dùng chung kho bài video; chọn bài rồi mới vào học.
+  if (mode === "dictation" || mode === "shadow") {
+    if (lesson) return <VideoLesson lesson={lesson} mode={mode === "shadow" ? "shadowing" : "dictation"} close={() => setLesson(null)} onStudied={onStudied} />;
+    return (
+      <>
+        <div className="page lesson-picker-page">
+          <VideoLessonPicker lessons={lessons} pick={setLesson} />
+        </div>
+        {mode === "dictation"
+          ? <DictationPractice words={activeWords} close={returnToModes} />
+          : <ShadowingPractice close={returnToModes} onPractised={onStudied} />}
+      </>
+    );
+  }
   if (mode === "vocab")
     return (
       <VocabPractice
