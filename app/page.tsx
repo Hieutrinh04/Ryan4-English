@@ -308,24 +308,6 @@ export default function Home() {
   const [index, setIndex] = useState(0);
   const [words, setWords] = useState(initialWords);
   const [showAdd, setShowAdd] = useState(false);
-  // Menu thêm từ: gộp ba lối thêm vào một nút thay vì xếp chồng từng nút một.
-  const [addMenu, setAddMenu] = useState(false);
-  const addMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!addMenu) return;
-    const onPointer = (event: PointerEvent) => {
-      if (!addMenuRef.current?.contains(event.target as Node)) setAddMenu(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setAddMenu(false);
-    };
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [addMenu]);
   const [showBulkAdd, setShowBulkAdd] = useState(false);
   // Chế độ luyện tập chọn thẳng từ thanh bên; null nghĩa là trang công cụ ngoài.
   const [practiceIntent, setPracticeIntent] = useState<Exclude<PracticeMode, "menu"> | null>(null);
@@ -1101,29 +1083,6 @@ export default function Home() {
             <span>{theme === "dark" ? "☀" : "☾"}</span>
             <b>{theme === "dark" ? "Chế độ sáng" : "Chế độ tối"}</b>
           </button>
-          <div className="add-menu" ref={addMenuRef}>
-            <button className="quick-add" onClick={() => setAddMenu((open) => !open)} aria-expanded={addMenu} aria-haspopup="menu">
-              <span>＋ Thêm từ</span>
-              <i className={addMenu ? "add-menu-caret open" : "add-menu-caret"}>⌄</i>
-            </button>
-            {addMenu && (
-              <div className="add-menu-list" role="menu">
-                <button role="menuitem" onClick={() => { setAddMenu(false); setShowAdd(true); }}>
-                  <span className="add-menu-icon">✎</span>
-                  <span><b>Thêm thủ công</b><small>Nhập từng từ bằng tay</small></span>
-                  <kbd>⌘ K</kbd>
-                </button>
-                <button role="menuitem" onClick={() => { setAddMenu(false); setShowBulkAdd(true); }}>
-                  <span className="add-menu-icon">☷</span>
-                  <span><b>Dán danh sách</b><small>Dán nhiều từ cùng lúc</small></span>
-                </button>
-                <button role="menuitem" onClick={() => { setAddMenu(false); goTab("dictionary"); }}>
-                  <span className="add-menu-icon">⌕</span>
-                  <span><b>Tra từ điển AI</b><small>Tra nghĩa rồi lưu vào danh sách</small></span>
-                </button>
-              </div>
-            )}
-          </div>
           <button className="profile" onClick={() => setShowAuth(true)}>
             <span className="avatar">RY</span>
             <span>
@@ -1178,6 +1137,7 @@ export default function Home() {
             toggleStar={toggleStar}
             add={() => setShowAdd(true)}
             bulkAdd={() => setShowBulkAdd(true)}
+            openDictionary={() => goTab("dictionary")}
             startTopicReview={startTopicReview}
             startDayReview={(day) => startReview(day)}
             fillMissingFields={() => void fillMissingFields()}
@@ -2049,7 +2009,7 @@ function WordListModal({ title, note, words, close }: { title: string; note: str
   );
 }
 
-function Words({ words, query, setQuery, toggleStar, add, bulkAdd, remove, importWords, startTopicReview, setStudyDay, startDayReview, openWordDetail, fillMissingFields, backfill }: { words: WordCard[]; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; startTopicReview: (topic: string) => void; setStudyDay: (id: string, day: number) => void; startDayReview: (day?: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null }) {
+function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionary, remove, importWords, startTopicReview, setStudyDay, startDayReview, openWordDetail, fillMissingFields, backfill }: { words: WordCard[]; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; openDictionary: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; startTopicReview: (topic: string) => void; setStudyDay: (id: string, day: number) => void; startDayReview: (day?: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null }) {
   const PAGE_SIZE = 25;
   const fileRef = useRef<HTMLInputElement>(null);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -2184,7 +2144,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, remove, impor
           <h1>Từ vựng</h1>
           <p>{collectionFilter === "pdf" ? (pdfTopic ? `${activeCollection.length} từ trong chủ đề ${pdfTopic}.` : `${pdfWords.length} từ trong ${pdfTopics.length} thư mục chủ đề.`) : `${personalWords.length} từ cá nhân · quản lý theo Leitner Box.`}</p>
         </div>
-        {collectionFilter === "daily" && <div className="section-actions"><button onClick={bulkAdd}>☷ Dán danh sách</button><button className="primary" onClick={add}>＋ Thêm từ mới</button></div>}
+        <div className="section-actions"><AddMenu onManual={add} onPaste={bulkAdd} onDictionary={openDictionary} /></div>
       </div>
       <div className="day-tabs">
         <button className={dayFilter === null && collectionFilter === "daily" ? "active" : ""} onClick={() => { setDayFilter(null); setCollectionFilter("daily"); setPdfTopic(null); setQuery(""); }}>
@@ -2783,6 +2743,69 @@ function SessionSummary({ total, ratings, streak, close, restart }: { total: num
         </div>
       </section>
     </main>
+  );
+}
+
+/**
+ * Nút "Thêm từ" kèm menu ba lối thêm.
+ *
+ * Đặt ngay đầu màn hình Danh sách từ chứ không nhét ở đáy thanh bên: thêm từ là
+ * việc làm TRÊN danh sách từ, để tận đáy cột trái thì vừa xa chỗ đang nhìn vừa
+ * biến thanh điều hướng thành chỗ chứa nút.
+ */
+function AddMenu({ onManual, onPaste, onDictionary }: { onManual: () => void; onPaste: () => void; onDictionary: () => void }) {
+  const [open, setOpen] = useState(false);
+  const holder = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!holder.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const items = [
+    { icon: "✎", label: "Thêm thủ công", hint: "Nhập từng từ bằng tay", key: "⌘ K", run: onManual },
+    { icon: "☷", label: "Dán danh sách", hint: "Dán nhiều từ cùng lúc", key: "", run: onPaste },
+    { icon: "⌕", label: "Tra từ điển AI", hint: "Tra nghĩa rồi lưu vào danh sách", key: "", run: onDictionary },
+  ];
+
+  return (
+    <div className="add-menu" ref={holder}>
+      <button className="primary add-menu-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="menu">
+        <span>＋ Thêm từ</span>
+        <i className={open ? "add-menu-caret open" : "add-menu-caret"}>⌄</i>
+      </button>
+      {open && (
+        <div className="add-menu-list" role="menu">
+          {items.map((item) => (
+            <button
+              key={item.label}
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                item.run();
+              }}
+            >
+              <span className="add-menu-icon">{item.icon}</span>
+              <span>
+                <b>{item.label}</b>
+                <small>{item.hint}</small>
+              </span>
+              {item.key && <kbd>{item.key}</kbd>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -4924,9 +4947,14 @@ function BulkAddWords({ close, save, existingWords }: { close: () => void; save:
     }));
   }
   return (
-    <div className="modal-backdrop" onMouseDown={close}>
-      <form className="modal bulk-add-modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
-        <div className="modal-head"><div><span className="eyebrow">THÊM NHANH</span><h2>Dán danh sách từ</h2></div><button type="button" onClick={close}>×</button></div>
+    <div className="full-screen-form">
+      <form className="modal bulk-add-modal form-screen" onSubmit={submit}>
+        <button type="button" className="back" onClick={close}>← Quay lại danh sách từ</button>
+        <div className="form-screen-head">
+          <span className="eyebrow">THÊM TỪ</span>
+          <h1>Dán danh sách từ</h1>
+          <p>Mỗi dòng một từ. App tự tách nghĩa và bỏ qua từ đã có trong danh sách.</p>
+        </div>
         <p className="bulk-help">Mỗi dòng là một từ hoặc cụm từ. Có thể giữ nguyên dấu “/”, ví dụ: <b>shopping cart / trolley</b>.</p>
         <label>Danh sách của bạn<textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} placeholder={"grocery shopping\nshopping cart / trolley\nbuggy\ndepartment/section\naisle"} /></label>
         <label>Folder ngày học<select value={studyDay} onChange={(event) => setStudyDay(Number(event.target.value))}>{dayNames.map((name, index) => <option value={index} key={name}>{name}</option>)}</select></label>
@@ -5216,16 +5244,13 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
     });
   }
   return (
-    <div className="modal-backdrop" onMouseDown={close}>
-      <form className="modal" onMouseDown={(e) => e.stopPropagation()} onSubmit={submit}>
-        <div className="modal-head">
-          <div>
-            <span className="eyebrow">THÊM NHANH</span>
-            <h2>Từ mới của bạn</h2>
-          </div>
-          <button type="button" onClick={close}>
-            ×
-          </button>
+    <div className="full-screen-form">
+      <form className="modal form-screen" onSubmit={submit}>
+        <button type="button" className="back" onClick={close}>← Quay lại danh sách từ</button>
+        <div className="form-screen-head">
+          <span className="eyebrow">THÊM TỪ</span>
+          <h1>Từ mới của bạn</h1>
+          <p>Nhập từ rồi bấm tra để app tự điền phiên âm, nghĩa và câu ví dụ.</p>
         </div>
         <label className="term-field">
           Từ hoặc cụm từ tiếng Anh
