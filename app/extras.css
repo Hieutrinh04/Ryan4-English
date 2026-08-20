@@ -657,3 +657,9 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 }
 .drill-flip{border:0;background:none;color:inherit;display:grid;justify-items:center;gap:12px;width:100%;padding:0}
 .drill-flip-hint{gap:0}
+.drill-empty{margin:0;color:var(--muted);font-size:13px;line-height:1.7;max-width:520px;text-align:center}
+.drill-selfcheck{display:flex;flex-wrap:wrap;justify-content:center;gap:10px}
+.drill-selfcheck button{border:1px solid var(--line);border-radius:10px;padding:11px 22px;font-size:12px;font-weight:800}
+.drill-selfcheck button.right{border-color:var(--green-line);background:var(--tint-green);color:var(--mark-ok)}
+.drill-selfcheck button.wrong{border-color:var(--pink-line);background:var(--tint-pink);color:var(--mark-missed)}
+.drill-selfcheck button:hover{filter:brightness(1.08)}

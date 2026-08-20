@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { WordCard } from "../lib/types";
-import { DRILL_MODES, choicesFor, clozeOf, hasIpa, isCorrect, modeForCard, seededOrder, summarise, supportsMode } from "../lib/vocab-drill.mjs";
+import { DRILL_MODES, choicesFor, clozeOf, deckSupports, hasIpa, isCorrect, resolveMode, seededOrder, summarise } from "../lib/vocab-drill.mjs";
 
 // Buổi luyện từ vựng: một bộ thẻ, sáu cách luyện, đổi qua lại bằng thanh tab mà
 // không mất chỗ đang đứng.
@@ -12,7 +12,7 @@ import { DRILL_MODES, choicesFor, clozeOf, hasIpa, isCorrect, modeForCard, seede
 // hết một vòng. Gộp lại thì đổi cách chỉ là một cú bấm.
 
 type Mode = "card" | "type" | "listen" | "reverse" | "cloze" | "mixed";
-type Result = { id: string; mode: string; correct: boolean };
+type Result = { id: string; mode: string; correct: boolean; graded: boolean };
 
 const MODE_HINT: Record<string, string> = {
   type: "Đọc nghĩa tiếng Việt rồi gõ lại từ tiếng Anh.",
@@ -39,7 +39,7 @@ function speak(text: string, region: "US" | "UK" = "US", rate = 1) {
   window.speechSynthesis?.speak(utterance);
 }
 
-export default function VocabPractice({ words, close }: { words: WordCard[]; close: () => void }) {
+export default function VocabPractice({ words, close, onStudied }: { words: WordCard[]; close: () => void; onStudied?: () => void }) {
   const [mode, setMode] = useState<Mode>("card");
   const [seed, setSeed] = useState(1);
   const [shuffled, setShuffled] = useState(false);
@@ -65,10 +65,10 @@ export default function VocabPractice({ words, close }: { words: WordCard[]; clo
   const stageRef = useRef<HTMLDivElement>(null);
 
   const card = deck[index];
-  // Thẻ thiếu dữ liệu cho chế độ đang chọn thì lùi về thẻ flashcard, chứ không hiện
-  // một ô trống không có đáp án.
-  const wanted = modeForCard(mode, index, seed) as Mode;
-  const active: Mode = supportsMode(card, wanted) ? wanted : "card";
+  const active = resolveMode(card, mode, index, seed) as Mode;
+  // Cả bộ không có thẻ nào hợp chế độ này thì nói thẳng, thay vì lặng lẽ hiện thẻ
+  // flashcard khiến người học tưởng bấm nhầm.
+  const modeUsable = deckSupports(deck, mode);
   const choices: WordCard[] = useMemo(
     () => (active === "reverse" && card ? (choicesFor(card, deck, index + seed) as WordCard[]) : []),
     [active, card, deck, index, seed],
@@ -101,9 +101,20 @@ export default function VocabPractice({ words, close }: { words: WordCard[]; clo
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  function record(correct: boolean) {
+  function record(correct: boolean, graded = true) {
     if (!card) return;
-    setResults((list) => [...list.filter((item) => item.id !== card.id), { id: card.id, mode: active, correct }]);
+    // Luyện tập không đụng hộp Leitner, nhưng vẫn là có học: không tính vào chuỗi
+    // ngày học thì một buổi luyện cả tiếng vẫn làm đứt chuỗi.
+    onStudied?.();
+    setResults((list) => [...list.filter((item) => item.id !== card.id), { id: card.id, mode: active, correct, graded }]);
+  }
+
+  /** Tự đánh giá ở chế độ thẻ, rồi sang thẻ kế tiếp — thay cho chế độ Thẻ ghi nhớ cũ. */
+  function selfCheck(known: boolean) {
+    record(known);
+    resetCard();
+    if (index >= deck.length - 1) setDone(true);
+    else setIndex((value) => value + 1);
   }
 
   function check() {
@@ -129,8 +140,8 @@ export default function VocabPractice({ words, close }: { words: WordCard[]; clo
 
   function next() {
     if (!card) return;
-    // Thẻ flashcard không chấm được nên chỉ ghi là đã xem, để đếm tiến trình.
-    if (active === "card" && !results.some((item) => item.id === card.id)) record(false);
+    // Lật qua mà không tự đánh giá thì chỉ ghi là đã xem, không tính vào tỉ lệ đúng.
+    if (active === "card" && !results.some((item) => item.id === card.id)) record(false, false);
     resetCard();
     if (index >= deck.length - 1) setDone(true);
     else setIndex((value) => value + 1);
@@ -216,14 +227,28 @@ export default function VocabPractice({ words, close }: { words: WordCard[]; clo
       </div>
 
       <div className="panel drill-card">
-        {active === "card" ? (
+        {!modeUsable ? (
+          <div className="drill-face">
+            <p className="drill-empty">
+              {mode === "cloze"
+                ? "Bộ từ này chưa có câu ví dụ thật nên chưa khoét được chỗ trống. Bấm “Bổ sung từ thiếu” ở trang Từ vựng để lấy ví dụ, hoặc chọn cách luyện khác."
+                : "Bộ từ này chưa đủ dữ liệu cho cách luyện đó. Chọn cách khác nhé."}
+            </p>
+          </div>
+        ) : active === "card" ? (
           <div className="drill-face">
             {flipped ? (
-              <button className="drill-flip" onClick={() => setFlipped(false)}>
-                <b className="drill-meaning">{card.meaning}</b>
-                {card.exampleVi && <p className="drill-example">{card.exampleVi}</p>}
-                <i>Nhấn để lật lại <kbd>Space</kbd></i>
-              </button>
+              <>
+                <button className="drill-flip" onClick={() => setFlipped(false)}>
+                  <b className="drill-meaning">{card.meaning}</b>
+                  {card.exampleVi && <p className="drill-example">{card.exampleVi}</p>}
+                  <i>Nhấn để lật lại <kbd>Space</kbd></i>
+                </button>
+                <span className="drill-selfcheck">
+                  <button className="wrong" onClick={() => selfCheck(false)}>Chưa thuộc</button>
+                  <button className="right" onClick={() => selfCheck(true)}>Đã biết</button>
+                </span>
+              </>
             ) : (
               <>
                 <button className="drill-flip" onClick={() => setFlipped(true)}>

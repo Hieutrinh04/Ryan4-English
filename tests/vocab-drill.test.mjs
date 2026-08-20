@@ -13,6 +13,9 @@ import {
   seededOrder,
   summarise,
   supportsMode,
+  deckSupports,
+  isTemplateExample,
+  resolveMode,
 } from "../lib/vocab-drill.mjs";
 
 const card = (over = {}) => ({
@@ -114,11 +117,11 @@ test("seededOrder: cùng seed cho cùng thứ tự, khác seed cho thứ tự kh
   assert.deepEqual([...seededOrder(items, 5)].sort((a, b) => a - b), items);
 });
 
-test("summarise: thẻ flashcard không tính vào tỉ lệ đúng", () => {
+test("summarise: thẻ lật qua mà không tự đánh giá thì không tính vào tỉ lệ đúng", () => {
   const results = [
-    { id: "1", mode: "card", correct: false },
-    { id: "2", mode: "type", correct: true },
-    { id: "3", mode: "cloze", correct: false },
+    { id: "1", mode: "card", correct: false, graded: false },
+    { id: "2", mode: "type", correct: true, graded: true },
+    { id: "3", mode: "cloze", correct: false, graded: true },
   ];
   const summary = summarise(results);
   assert.equal(summary.total, 3);
@@ -130,7 +133,19 @@ test("summarise: thẻ flashcard không tính vào tỉ lệ đúng", () => {
 
 test("summarise: chưa trả lời câu nào thì tỉ lệ là 0, không phải NaN", () => {
   assert.equal(summarise([]).accuracy, 0);
-  assert.equal(summarise([{ id: "1", mode: "card", correct: false }]).accuracy, 0);
+  assert.equal(summarise([{ id: "1", mode: "card", correct: false, graded: false }]).accuracy, 0);
+});
+
+test("summarise: tự đánh giá ở chế độ thẻ VẪN được tính", () => {
+  // Thay cho chế độ Thẻ ghi nhớ cũ: bấm Đã biết / Chưa thuộc là một lượt có chấm.
+  const summary = summarise([
+    { id: "1", mode: "card", correct: true, graded: true },
+    { id: "2", mode: "card", correct: false, graded: true },
+    { id: "3", mode: "card", correct: false, graded: false },
+  ]);
+  assert.equal(summary.answered, 2);
+  assert.equal(summary.accuracy, 50);
+  assert.deepEqual(summary.wrongCards, ["2"]);
 });
 
 test("hasIpa: chỗ dành sẵn không được coi là phiên âm thật", async () => {
@@ -176,4 +191,42 @@ test("nới lỏng biến thể không được kéo theo từ khác gần giố
   // "sit" và "site" là hai từ khác nhau, không phải hai dạng của một từ.
   assert.equal(isCorrect("sit", "site", true), false);
   assert.equal(isCorrect("site", "sit", true), false);
+});
+
+test("câu khuôn không được dùng làm bài điền chỗ trống", () => {
+  // Hai khuôn này dùng chung cho MỌI từ, khoét ra thì cả nghìn thẻ ra một câu.
+  assert.equal(isTemplateExample("brilliant", "I am learning how to use brilliant naturally."), true);
+  assert.equal(isTemplateExample("brilliant", "I am learning the word brilliant."), true);
+  assert.equal(isTemplateExample("brilliant", ""), true);
+  assert.equal(isTemplateExample("brilliant", "She had a brilliant idea."), false);
+  assert.equal(supportsMode(card({ cloze: undefined, example: "I am learning how to use brilliant naturally." }), "cloze"), false);
+});
+
+test("resolveMode: chế độ đơn thiếu dữ liệu thì lùi về thẻ flashcard", () => {
+  const thieu = card({ cloze: undefined, example: "I am learning the word brilliant." });
+  assert.equal(resolveMode(thieu, "cloze", 0), "card");
+  assert.equal(resolveMode(card(), "cloze", 0), "cloze");
+});
+
+test("resolveMode: hỗn hợp bốc chế độ khác còn dùng được, không lùi hàng loạt về thẻ", () => {
+  const thieu = card({ cloze: undefined, example: "I am learning the word brilliant." });
+  const modes = Array.from({ length: 12 }, (_, i) => resolveMode(thieu, "mixed", i));
+  assert.ok(!modes.includes("cloze"), "vẫn bốc phải chế độ không dùng được");
+  assert.ok(!modes.includes("card"), "lùi về lật thẻ thì hỗn hợp không còn là hỗn hợp");
+  assert.ok(new Set(modes).size > 1);
+});
+
+test("resolveMode: thẻ không đủ dữ liệu cho bất kỳ chế độ nào thì mới về thẻ flashcard", () => {
+  const trong = card({ meaning: "", cloze: undefined, example: "" });
+  // Chỉ còn "listen" là luôn dùng được, vì chỉ cần đọc chính từ đó.
+  assert.equal(resolveMode(trong, "mixed", 0), "listen");
+});
+
+test("deckSupports: biết cả bộ có hợp chế độ đó không", () => {
+  const khuon = [card({ cloze: undefined, example: "I am learning the word brilliant." })];
+  assert.equal(deckSupports(khuon, "cloze"), false);
+  assert.equal(deckSupports([card()], "cloze"), true);
+  // Lật thẻ và hỗn hợp thì bộ nào cũng luyện được.
+  assert.equal(deckSupports(khuon, "card"), true);
+  assert.equal(deckSupports(khuon, "mixed"), true);
 });

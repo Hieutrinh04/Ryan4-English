@@ -1,6 +1,6 @@
 "use client";
 
-import { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
+import { Dispatch, FormEvent, Fragment, PointerEvent as ReactPointerEvent, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { aiFetch, supabase } from "../lib/supabase";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLesson, type DictationLevel } from "../lib/dictation-lessons";
 import ieltsAreaData from "../lib/ielts-areas.json";
@@ -1049,18 +1049,20 @@ export default function Home() {
             <span>⌁</span> Thống kê
           </button>
 
-          <span className="nav-group">LUYỆN TẬP</span>
-          {practiceNav.map((item) => (
-            <button
-              key={item.value}
-              className={tab === "practice" && practiceIntent === item.value ? "nav-item active" : "nav-item"}
-              onClick={() => {
-                setPracticeIntent(item.value);
-                setTab("practice");
-              }}
-            >
-              <span>{item.icon}</span> {item.label}
-            </button>
+          {practiceNav.map((item, position) => (
+            <Fragment key={item.value}>
+              {/* Tiêu đề nhóm chỉ in ra ở mục đầu tiên của nhóm đó. */}
+              {practiceNav[position - 1]?.group !== item.group && <span className="nav-group">{item.group}</span>}
+              <button
+                className={tab === "practice" && practiceIntent === item.value ? "nav-item active" : "nav-item"}
+                onClick={() => {
+                  setPracticeIntent(item.value);
+                  setTab("practice");
+                }}
+              >
+                <span>{item.icon}</span> {item.label}
+              </button>
+            </Fragment>
           ))}
 
           <span className="nav-group">THƯ VIỆN</span>
@@ -1164,7 +1166,7 @@ export default function Home() {
           />
         )}
         {/* key theo chế độ để mỗi lần chọn ở thanh bên là dựng lại từ đầu. */}
-        {tab === "practice" && <Practice key={practiceIntent ?? "menu"} words={words} toggleStar={toggleStar} intent={practiceIntent} />}
+        {tab === "practice" && <Practice key={practiceIntent ?? "menu"} words={words} intent={practiceIntent} />}
         {/* Thống kê tính trên toàn bộ thư viện, cùng phạm vi với các ô ở trang chủ. */}
         {tab === "stats" && <Stats words={words} scopeLabel="toàn bộ thư viện" streak={streakFrom(studyDays)} />}
       </section>
@@ -2595,7 +2597,7 @@ function SessionSummary({ total, ratings, streak, close, restart }: { total: num
 
 // intent: chế độ được chọn thẳng từ thanh bên trái. Component được gắn key theo
 // intent nên mỗi lần chọn là dựng lại từ đầu — khỏi phải đồng bộ state trong effect.
-function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar?: (id: string) => void; intent?: Exclude<PracticeMode, "menu"> | null }) {
+function Practice({ words, intent }: { words: WordCard[]; intent?: Exclude<PracticeMode, "menu"> | null }) {
   const externalTools = [
     { label: "Luyện nghe A2", short: "EL", url: "https://elllo.org/book/A2/index.html", tone: "blue" },
     { label: "Hội thoại hằng ngày", short: "BE", url: "https://basicenglishspeaking.com/daily-english-conversation-topics/", tone: "orange" },
@@ -2609,9 +2611,6 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
   const [mode, setMode] = useState<PracticeMode>(intent === "shadow" ? "shadow" : "menu");
   const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(intent === "shadow" ? null : intent ?? null);
   const [practiceWords, setPracticeWords] = useState<WordCard[]>([]);
-  const [index, setIndex] = useState(0);
-  const [result, setResult] = useState<string | null>(null);
-  const [typed, setTyped] = useState("");
   if (!words.length)
     return (
       <div className="page">
@@ -2620,7 +2619,6 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
       </div>
     );
   const activeWords = practiceWords.length ? practiceWords : words;
-  const word = activeWords[index % activeWords.length];
   const personalWords = words.filter((item) => !isPdfVocabulary(item));
   const pdfWords = words.filter(isPdfVocabulary);
   const pdfTopics = [...new Set(pdfWords.flatMap((item) => item.topic.split(" · ")))];
@@ -2634,9 +2632,6 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
   function chooseFolder(folderWords: WordCard[]) {
     if (!pendingMode || !folderWords.length) return;
     setPracticeWords(folderWords);
-    setIndex(0);
-    setResult(null);
-    setTyped("");
     setMode(pendingMode);
     setPendingMode(null);
   }
@@ -2644,11 +2639,6 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
     setMode("menu");
     setPendingMode(null);
     setPracticeWords([]);
-  }
-  function next() {
-    setIndex((i) => i + 1);
-    setResult(null);
-    setTyped("");
   }
   if (mode === "menu" && pendingMode)
     return (
@@ -2679,27 +2669,17 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
           <button onClick={() => chooseMode("vocab")}>
             <span>▤</span>
             <b>Luyện từ vựng</b>
-            <small>Sáu cách luyện trên cùng một bộ từ: thẻ, gõ từ, nghe, đảo ngược, điền chỗ trống, hỗn hợp</small>
-          </button>
-          <button onClick={() => chooseMode("flash")}>
-            <span>▱</span>
-            <b>Flashcards</b>
-            <small>Lật thẻ, nghe phát âm và tự kiểm tra</small>
+            <small>Sáu cách luyện trên cùng một bộ từ: lật thẻ, gõ từ, nghe, đảo ngược, điền chỗ trống, hỗn hợp</small>
           </button>
           <button onClick={() => chooseMode("learn")}>
             <span>✎</span>
-            <b>Học</b>
-            <small>Từ trắc nghiệm lên tự gõ, lặp lại tới khi thuộc hết</small>
+            <b>Học tới khi thuộc</b>
+            <small>Lặp lại riêng những từ còn sai cho tới khi thuộc hết bộ</small>
           </button>
           <button onClick={() => chooseMode("test")}>
             <span>◉</span>
-            <b>Kiểm tra</b>
-            <small>Bài kiểm tra trộn nhiều dạng câu, chấm điểm cuối bài</small>
-          </button>
-          <button onClick={() => chooseMode("listen")}>
-            <span>◖))</span>
-            <b>Nghe và viết</b>
-            <small>Nghe phát âm rồi nhập lại từ</small>
+            <b>Kiểm tra chấm điểm</b>
+            <small>Làm một mạch không xem đáp án, chấm điểm ở cuối bài</small>
           </button>
           <button onClick={() => chooseMode("dictation")}>
             <span>≋</span>
@@ -2726,65 +2706,30 @@ function Practice({ words, toggleStar, intent }: { words: WordCard[]; toggleStar
     );
   if (mode === "match") return <MatchGame words={activeWords} close={returnToModes} />;
   if (mode === "dictation") return <DictationPractice words={activeWords} close={returnToModes} />;
-  if (mode === "shadow") return <ShadowingPractice close={returnToModes} onPractised={logSpeaking} />;
-  if (mode === "vocab") return <VocabPractice words={activeWords} close={returnToModes} />;
+  if (mode === "shadow") return <ShadowingPractice close={returnToModes} onPractised={(seconds) => { logSpeaking(seconds); markStudiedToday(); }} />;
+  if (mode === "vocab") return <VocabPractice words={activeWords} close={returnToModes} onStudied={markStudiedToday} />;
   if (mode === "learn") return <LearnMode words={activeWords} setMode={setMode} />;
   if (mode === "test") return <TestMode words={activeWords} setMode={setMode} />;
-  if (mode === "flash") return <FlashcardsMode words={activeWords} setMode={setMode} toggleStar={toggleStar} />;
-  if (mode === "translate") return <TranslateMode words={activeWords} setMode={setMode} back={returnToModes} />;
-  return (
-    <div className="page practice-session">
-      <button className="back" onClick={returnToModes}>
-        ← Chọn chế độ khác
-      </button>
-      <div className="panel practice-card">
-        <div className="eyebrow">CÂU {index + 1}</div>
-        <button className="listen-btn" onClick={() => window.speechSynthesis?.speak(new SpeechSynthesisUtterance(word.term))}>
-          ◖))
-        </button>
-        <h2>Nghe và nhập từ</h2>
-        <input
-          className="listen-input"
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") setResult(normalizeAnswer(typed) === normalizeAnswer(word.term) ? "Đúng rồi!" : "Đáp án: " + word.term);
-          }}
-          placeholder="Nhập từ nghe được…"
-        />
-        <button className="primary" onClick={() => setResult(normalizeAnswer(typed) === normalizeAnswer(word.term) ? "Đúng rồi!" : "Đáp án: " + word.term)}>
-          Kiểm tra
-        </button>
-        {result && (
-          <div className={result.startsWith("Đúng") ? "practice-result good" : "practice-result"}>
-            {result}
-            <button onClick={next}>Câu tiếp →</button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return <TranslateMode words={activeWords} setMode={setMode} back={returnToModes} />;
 }
 
 // Thứ tự và nhãn của các chế độ khi hiện ở thanh bên trái.
-const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: string }[] = [
-  { value: "vocab", label: "Luyện từ vựng", icon: "▤" },
-  { value: "flash", label: "Thẻ ghi nhớ", icon: "▱" },
-  { value: "learn", label: "Học", icon: "✎" },
-  { value: "test", label: "Kiểm tra", icon: "◉" },
-  { value: "translate", label: "Dịch Việt → Anh", icon: "⇄" },
-  { value: "listen", label: "Nghe và viết", icon: "◖))" },
-  { value: "dictation", label: "Chép chính tả", icon: "≋" },
-  { value: "shadow", label: "Nói nhại", icon: "◉" },
-  { value: "match", label: "Nối cặp", icon: "⌘" },
+// Xếp theo việc người học đang muốn làm, không theo tên chế độ. Nhóm trên là học
+// thuộc mặt chữ và nghĩa; nhóm dưới là dùng vốn từ đó vào nghe, nói, viết.
+const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: string; group: string }[] = [
+  { value: "vocab", label: "Luyện từ vựng", icon: "▤", group: "HỌC TỪ" },
+  { value: "learn", label: "Học tới khi thuộc", icon: "✎", group: "HỌC TỪ" },
+  { value: "test", label: "Kiểm tra chấm điểm", icon: "◉", group: "HỌC TỪ" },
+  { value: "match", label: "Nối cặp", icon: "⌘", group: "HỌC TỪ" },
+  { value: "dictation", label: "Chép chính tả", icon: "≋", group: "DÙNG TỪ" },
+  { value: "shadow", label: "Nói nhại", icon: "◐", group: "DÙNG TỪ" },
+  { value: "translate", label: "Dịch Việt → Anh", icon: "⇄", group: "DÙNG TỪ" },
 ];
 
 const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
   vocab: "Luyện từ vựng",
-  flash: "Flashcards",
-  learn: "Học",
-  test: "Kiểm tra",
-  listen: "Nghe và viết",
+  learn: "Học tới khi thuộc",
+  test: "Kiểm tra chấm điểm",
   dictation: "Chép chính tả",
   shadow: "Nói nhại",
   match: "Nối cặp",
@@ -2834,10 +2779,12 @@ function normalizeAnswer(value: string) {
     .replace(/\s+/g, " ");
 }
 
-type PracticeMode = "menu" | "vocab" | "flash" | "learn" | "test" | "listen" | "match" | "dictation" | "shadow" | "translate";
+// "flash" và "listen" đã bị bỏ: chúng làm đúng việc mà hai tab "Thẻ flashcard"
+// và "Nghe" trong Luyện từ vựng đã làm, chỉ ít tính năng hơn.
+type PracticeMode = "menu" | "vocab" | "learn" | "test" | "match" | "dictation" | "shadow" | "translate";
 const practiceModeBar: { value: PracticeMode; label: string; icon: string }[] = [
-  { value: "flash", label: "Thẻ ghi nhớ", icon: "▱" },
-  { value: "learn", label: "Học", icon: "✎" },
+  { value: "vocab", label: "Luyện từ vựng", icon: "▤" },
+  { value: "learn", label: "Học tới khi thuộc", icon: "✎" },
   { value: "test", label: "Kiểm tra", icon: "◉" },
 ];
 function PracticeModeBar({ mode, setMode }: { mode: PracticeMode; setMode: (m: PracticeMode) => void }) {
@@ -3106,6 +3053,7 @@ function TranslateMode({ words, setMode, back }: { words: WordCard[]; setMode: (
       errorTypes,
     });
     logAttempt(attempt);
+    markStudiedToday();
     void pushTranslationAttempt({
       term: task.word.term,
       vietnamese: task.vi,
@@ -3515,215 +3463,6 @@ function FlipCard({ card, flipped, flip, onSwipe }: { card: WordCard; flipped: b
         <i>Nhấn để lật lại</i>
       </span>
     </button>
-  );
-}
-
-function FlashcardsMode({ words, setMode, toggleStar }: { words: WordCard[]; setMode: (m: PracticeMode) => void; toggleStar?: (id: string) => void }) {
-  const [shuffled, setShuffled] = useState(false);
-  const [seed, setSeed] = useState(1);
-  // Chỉ ôn lại những từ đã đánh dấu "đang học"; null nghĩa là ôn cả bộ.
-  const [focusIds, setFocusIds] = useState<string[] | null>(null);
-  const deck = useMemo(() => (focusIds ? words.filter((word) => focusIds.includes(word.id)) : words), [words, focusIds]);
-  const order = useMemo(() => (shuffled ? seededOrder(deck, seed) : deck), [deck, shuffled, seed]);
-  const [index, setIndex] = useState(0);
-  const [flipped, setFlipped] = useState(false);
-  const [autoplay, setAutoplay] = useState(false);
-  const [tracking, setTracking] = useState(false);
-  const [known, setKnown] = useState<string[]>([]);
-  const [learning, setLearning] = useState<string[]>([]);
-  const stageRef = useRef<HTMLDivElement>(null);
-  const card = order[index];
-  const done = tracking && index >= order.length;
-
-  const speak = (text: string) => {
-    const voice = new SpeechSynthesisUtterance(text);
-    voice.lang = "en-US";
-    window.speechSynthesis?.speak(voice);
-  };
-  function go(step: number) {
-    setFlipped(false);
-    setIndex((value) => Math.min(order.length - (tracking ? 0 : 1), Math.max(0, value + step)));
-  }
-  function classify(isKnown: boolean) {
-    if (!card) return;
-    if (isKnown) setKnown((list) => [...new Set([...list, card.id])]);
-    else setLearning((list) => [...new Set([...list, card.id])]);
-    setFlipped(false);
-    setIndex((value) => value + 1);
-  }
-  function restart(onlyLearning: boolean) {
-    // Trước đây nhánh này tính ra danh sách từ đang học rồi... bỏ đi, nên nút
-    // "Ôn lại N từ đang học" thực chất ôn lại cả bộ. Giờ nó lọc thật.
-    setFocusIds(onlyLearning && learning.length ? learning : null);
-    setKnown([]);
-    setLearning([]);
-    setIndex(0);
-    setFlipped(false);
-    if (onlyLearning) setSeed((value) => value + 1);
-  }
-
-  // Tự động phát: lật thẻ rồi sang thẻ kế tiếp, dừng khi hết bộ.
-  useEffect(() => {
-    if (!autoplay || done || !card) return;
-    const timer = setTimeout(
-      () => {
-        if (!flipped) setFlipped(true);
-        else if (index < order.length - 1) {
-          setFlipped(false);
-          setIndex((value) => value + 1);
-        } else setAutoplay(false);
-      },
-      flipped ? 2600 : 2200,
-    );
-    return () => clearTimeout(timer);
-  }, [autoplay, flipped, index, order.length, done, card]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.target as HTMLElement)?.tagName === "INPUT") return;
-      if (event.key === "ArrowRight") go(1);
-      if (event.key === "ArrowLeft") go(-1);
-      if (event.code === "Space") {
-        event.preventDefault();
-        setFlipped((value) => !value);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-
-  if (done)
-    return (
-      <div className="page practice-session">
-        <PracticeModeBar mode="flash" setMode={setMode} />
-        <div className="panel practice-card">
-          <span className="summary-mark">✓</span>
-          <h2>Xong lượt thẻ ghi nhớ{focusIds ? " · phần đang học" : ""}</h2>
-          {focusIds && <p className="page-sub">Lượt này chỉ gồm {order.length} từ bạn đã đánh dấu đang học.</p>}
-          <div className="track-summary">
-            <div className="track-known">
-              <strong>{known.length}</strong>
-              <span>Đã biết</span>
-            </div>
-            <div className="track-learning">
-              <strong>{learning.length}</strong>
-              <span>Đang học</span>
-            </div>
-          </div>
-          <div className="summary-actions">
-            <button onClick={() => restart(false)}>Ôn lại tất cả {words.length} từ</button>
-            <button className="primary" disabled={!learning.length} onClick={() => restart(true)}>
-              Ôn lại {learning.length} từ đang học
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-
-  if (!card) return null;
-
-  return (
-    <div className="page practice-session" ref={stageRef}>
-      <PracticeModeBar mode="flash" setMode={setMode} />
-      <div className="flash-stage">
-        <FlipCard card={card} flipped={flipped} flip={() => setFlipped((v) => !v)} onSwipe={tracking ? classify : undefined} />
-        <div className="flash-tools">
-          <button onClick={() => speak(card.term)} aria-label={`Phát âm ${card.term}`}>
-            ◖))
-          </button>
-          {toggleStar && (
-            <button onClick={() => toggleStar(card.id)} aria-label="Gắn sao" className={card.starred ? "starred" : ""}>
-              {card.starred ? "★" : "☆"}
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="flash-progress">
-        <i style={{ width: `${((index + 1) / order.length) * 100}%` }} />
-      </div>
-
-      <div className="flash-bar">
-        <label className="track-toggle">
-          <input
-            type="checkbox"
-            checked={tracking}
-            onChange={(event) => {
-              setTracking(event.target.checked);
-              setIndex(0);
-              setFlipped(false);
-              setKnown([]);
-              setLearning([]);
-            }}
-          />
-          <span />
-          Theo dõi tiến độ
-        </label>
-
-        {tracking ? (
-          <div className="track-actions">
-            <button className="track-learning-btn" onClick={() => classify(false)}>
-              Đang học
-            </button>
-            <b>
-              {index + 1} / {order.length}
-            </b>
-            <button className="track-known-btn" onClick={() => classify(true)}>
-              Đã biết
-            </button>
-          </div>
-        ) : (
-          <div className="flash-nav">
-            <button onClick={() => go(-1)} disabled={index === 0} aria-label="Thẻ trước">
-              ←
-            </button>
-            <b>
-              {index + 1} / {order.length}
-            </b>
-            <button onClick={() => go(1)} disabled={index >= order.length - 1} aria-label="Thẻ sau">
-              →
-            </button>
-          </div>
-        )}
-
-        <div className="flash-options">
-          <button className={autoplay ? "active" : ""} onClick={() => setAutoplay((v) => !v)} aria-label="Tự động phát" title="Tự động phát">
-            {autoplay ? "❚❚" : "▶"}
-          </button>
-          <button
-            className={shuffled ? "active" : ""}
-            onClick={() => {
-              setShuffled((v) => !v);
-              setSeed((value) => value + 1);
-              setIndex(0);
-              setFlipped(false);
-            }}
-            aria-label="Xáo trộn"
-            title="Xáo trộn"
-          >
-            ⇄
-          </button>
-          <button
-            onClick={() => {
-              if (document.fullscreenElement) void document.exitFullscreen();
-              else void stageRef.current?.requestFullscreen();
-            }}
-            aria-label="Toàn màn hình"
-            title="Toàn màn hình"
-          >
-            ⛶
-          </button>
-        </div>
-      </div>
-      <p className="flash-hint">
-        {tracking && (
-          <>
-            Kéo thẻ sang <b>phải</b> nếu đã biết, sang <b>trái</b> nếu đang học ·{" "}
-          </>
-        )}
-        Phím tắt: <kbd>Space</kbd> lật thẻ · <kbd>←</kbd> <kbd>→</kbd> chuyển thẻ
-      </p>
-    </div>
   );
 }
 
