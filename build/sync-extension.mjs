@@ -23,9 +23,9 @@ function takeFunction(text, name) {
   // Nhận cả hàm có export lẫn hàm nội bộ: sentencesFrom còn gọi tới hàm round
   // không xuất ra ngoài, thiếu nó thì bản chép không chạy.
   let start = text.indexOf(`export function ${name}(`);
-  if (start < 0) start = text.indexOf(`
-function ${name}(`) + 1;
+  if (start < 0) start = text.indexOf(`\nfunction ${name}(`) + 1;
   if (start <= 0) throw new Error(`${SOURCE} không còn hàm ${name} — cập nhật lại danh sách trong build/sync-extension.mjs`);
+
   // Lùi lên để giữ khối chú thích ngay trên hàm.
   let from = start;
   const before = text.slice(0, start).trimEnd();
@@ -63,14 +63,15 @@ function ${name}(`) + 1;
   throw new Error(`không cắt được hàm ${name}`);
 }
 
-const helpers = [];
-// SENTENCE_END và round là phụ thuộc nội bộ của sentencesFrom.
-const sentenceEnd = source.match(/^const SENTENCE_END = .+$/m);
-if (!sentenceEnd) throw new Error("không tìm thấy SENTENCE_END");
-helpers.push(sentenceEnd[0]);
-helpers.push(takeFunction(source, "round"));
-
 const parts = WANTED.map((name) => takeFunction(source, name));
+const body = parts.join("\n");
+
+// Chỉ chép helper mà các hàm trên THẬT SỰ gọi tới. Chép cả cụm cố định thì mỗi
+// lần bản gốc đổi cách viết là bản chép thừa một hằng số chết, và lint bắt lỗi.
+const helpers = [];
+const sentenceEnd = source.match(/^const SENTENCE_END = .+$/m);
+if (sentenceEnd && body.includes("SENTENCE_END")) helpers.push(sentenceEnd[0]);
+if (body.includes("round(")) helpers.push(takeFunction(source, "round"));
 
 const output = `// TỆP NÀY ĐƯỢC SINH RA TỰ ĐỘNG — ĐỪNG SỬA TAY.
 // Nguồn: ${SOURCE}. Sinh lại bằng: npm run build:extension
@@ -84,4 +85,4 @@ ${parts.join("\n\n")}
 `;
 
 writeFileSync(TARGET, output);
-console.log(`đã sinh ${TARGET} từ ${SOURCE} (${WANTED.length} hàm)`);
+console.log(`đã sinh ${TARGET} từ ${SOURCE} (${WANTED.length} hàm, ${helpers.length} helper)`);

@@ -33,6 +33,30 @@ test("bài hợp lệ được làm sạch và giữ đủ trường", () => {
   assert.equal(lesson.title, "Một bài nói");
   assert.equal(lesson.seconds, 844);
   assert.equal(lesson.source, "extension");
+  assert.ok(lesson.sentences.length >= 1);
+  // Mốc giờ phải trùm từ đầu câu đầu tới cuối câu cuối, kể cả khi có gộp.
+  assert.equal(lesson.sentences[0].start, 0);
+  assert.equal(lesson.sentences.at(-1).end, 5);
+});
+
+test("hai mẩu quá ngắn được gộp thành một câu để luyện", () => {
+  // Phụ đề hay cắt "Hello there." và "How are you?" thành hai dòng riêng. Chép
+  // chính tả từng mẩu ba chữ thì không luyện được gì, nên gộp lại.
+  const lesson = sanitiseLesson(good());
+  assert.equal(lesson.sentences.length, 1);
+  assert.match(lesson.sentences[0].text, /Hello there./);
+  assert.match(lesson.sentences[0].text, /How are you?/);
+});
+
+test("câu đã đủ dài thì KHÔNG bị gộp với câu sau", () => {
+  const long = "I usually get up at quarter past six and have porridge for breakfast every single morning.";
+  const lesson = sanitiseLesson({
+    ...good(),
+    sentences: [
+      { start: 0, end: 6, text: long },
+      { start: 6, end: 12, text: long },
+    ],
+  });
   assert.equal(lesson.sentences.length, 2);
 });
 
@@ -56,9 +80,10 @@ test("mốc giờ hỏng bị đưa về 0 thay vì thành NaN", () => {
 
 test("số câu và độ dài câu bị chặn, tránh nhồi dữ liệu khổng lồ", () => {
   const many = Array.from({ length: MAX_SENTENCES + 500 }, () => ({ start: 0, end: 1, text: "Hi." }));
-  assert.equal(sanitiseLesson({ ...good(), sentences: many }).sentences.length, MAX_SENTENCES);
+  // Sau khi gộp thì còn ít hơn, nhưng điều cần giữ là KHÔNG vượt trần.
+  assert.ok(sanitiseLesson({ ...good(), sentences: many }).sentences.length <= MAX_SENTENCES);
   const long = sanitiseLesson({ ...good(), sentences: [{ start: 0, end: 1, text: "a".repeat(9000) }] });
-  assert.equal(long.sentences[0].text.length, 400);
+  assert.ok(long.sentences[0].text.length <= 400);
 });
 
 test("nguồn lạ bị quy về 'paste', không tin giá trị gửi tới", () => {
@@ -66,7 +91,14 @@ test("nguồn lạ bị quy về 'paste', không tin giá trị gửi tới", ()
 });
 
 test("số thứ tự câu được đánh lại, không tin số gửi tới", () => {
-  const lesson = sanitiseLesson({ ...good(), sentences: [{ index: 99, start: 0, end: 1, text: "Hi." }, { index: 99, start: 1, end: 2, text: "Bye." }] });
+  const long = "I usually get up at quarter past six and have porridge for breakfast every single morning.";
+  const lesson = sanitiseLesson({
+    ...good(),
+    sentences: [
+      { index: 99, start: 0, end: 6, text: long },
+      { index: 99, start: 6, end: 12, text: long },
+    ],
+  });
   assert.deepEqual(lesson.sentences.map((s) => s.index), [1, 2]);
 });
 

@@ -8,7 +8,8 @@
 export type IconName =
   | "home" | "chart" | "headphones" | "mic" | "pen" | "book" | "list" | "search"
   | "compass" | "sun" | "moon" | "plus" | "chevron" | "flame" | "clock" | "target"
-  | "cards" | "keyboard" | "volume" | "swap" | "blank" | "shuffle" | "check" | "trophy";
+  | "cards" | "keyboard" | "volume" | "swap" | "blank" | "shuffle" | "check" | "trophy"
+  | "play" | "previous" | "replay" | "sparkles" | "arrow" | "stop";
 
 const PATHS: Record<IconName, string> = {
   home: "M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5",
@@ -35,6 +36,12 @@ const PATHS: Record<IconName, string> = {
   shuffle: "M3 6h3l4 6 4 6h4M3 18h3l4-6M17 3l3 3-3 3M17 15l3 3-3 3",
   check: "m4 12.5 5 5 11-11",
   trophy: "M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M12 14v4M8.5 20h7",
+  play: "m8 5 11 7-11 7z",
+  previous: "M6 5v14M18 6l-8 6 8 6z",
+  replay: "M5 8V4m0 0h4M5 4l3 3a7 7 0 1 1-2 9",
+  sparkles: "m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM5 14l.7 2.3L8 17l-2.3.7L5 20l-.7-2.3L2 17l2.3-.7zM19 14l.6 1.9 1.9.6-1.9.6L19 19l-.6-1.9-1.9-.6 1.9-.6z",
+  arrow: "M5 12h14m-5-5 5 5-5 5",
+  stop: "M7 7h10v10H7z",
 };
 
 /** Biểu tượng nét, thừa hưởng màu chữ (currentColor) của phần tử chứa nó. */

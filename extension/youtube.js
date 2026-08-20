@@ -4,8 +4,6 @@
 // Tiện ích Chrome không nạp được tệp ngoài thư mục của nó, nên phải chép sang.
 // Chép bằng lệnh để app và tiện ích không bao giờ cắt câu khác nhau.
 
-const SENTENCE_END = /[.!?]["')\]]?$/;
-
 function round(value) {
   return Math.max(0, Math.round(value * 100) / 100);
 }
@@ -68,16 +66,31 @@ export function cuesFromJson3(payload) {
  * maxWords chặn trường hợp cả đoạn không có dấu chấm nào — thường gặp ở phụ đề
  * máy tự nghe — để không sinh ra một "câu" dài sáu dòng không ai chép nổi.
  */
-export function sentencesFrom(cues, { maxWords = 30 } = {}) {
+export function sentencesFrom(cues, { maxWords = 30, maxSentences = 2 } = {}) {
   const sentences = [];
   let buffer = "";
   let start = 0;
   let end = 0;
+  let sentenceCount = 0;
 
   const flush = () => {
     const text = buffer.replace(/\s+/g, " ").trim();
-    if (text) sentences.push({ index: sentences.length + 1, start: round(start), end: round(end), text });
+    if (text) {
+      const words = text.split(/\s+/).filter(Boolean);
+      const chunks = [];
+      for (let at = 0; at < words.length; at += maxWords) chunks.push(words.slice(at, at + maxWords).join(" "));
+      const duration = Math.max(0, end - start);
+      let used = 0;
+      for (const chunk of chunks) {
+        const count = chunk.split(/\s+/).length;
+        const chunkStart = start + duration * (used / words.length);
+        used += count;
+        const chunkEnd = start + duration * (used / words.length);
+        sentences.push({ index: sentences.length + 1, start: round(chunkStart), end: round(chunkEnd), text: chunk });
+      }
+    }
     buffer = "";
+    sentenceCount = 0;
   };
 
   for (const cue of cues ?? []) {
@@ -85,7 +98,8 @@ export function sentencesFrom(cues, { maxWords = 30 } = {}) {
     end = cue.end;
     buffer = buffer ? `${buffer} ${cue.text}` : cue.text;
     const words = buffer.split(/\s+/).filter(Boolean);
-    if (SENTENCE_END.test(buffer.trim()) || words.length >= maxWords) flush();
+    sentenceCount += (cue.text.match(/[.!?]["')\]]?(?:\s|$)/g) ?? []).length;
+    if (sentenceCount >= maxSentences || words.length >= maxWords) flush();
   }
   flush();
   return sentences;

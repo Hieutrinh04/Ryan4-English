@@ -27,9 +27,12 @@ type Filter = "all" | "video" | "builtin";
 
 const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "Tất cả" },
-  { value: "video", label: "Từ video" },
-  { value: "builtin", label: "Bài có sẵn" },
+  { value: "video", label: "Video của tôi" },
+  { value: "builtin", label: "Thư viện Lexilo" },
 ];
+
+const TOPICS = ["BBC Learning English", "Hội thoại", "Công việc", "Du lịch", "Công nghệ", "IELTS", "TOEIC"];
+const LEVELS = ["Tất cả cấp độ", "A1", "A2", "B1", "B2", "C1"];
 
 function minutes(seconds: number) {
   if (!seconds) return "";
@@ -50,40 +53,53 @@ export default function LessonLibrary({
   close: () => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
+  const [topic, setTopic] = useState("Tất cả");
+  const [level, setLevel] = useState("Tất cả cấp độ");
   const showVideo = filter !== "builtin";
   const showBuiltIn = filter !== "video";
 
   return (
-    <div className="page lesson-library">
-      <button className="back" onClick={close}>← Chọn chức năng khác</button>
-      <div className="eyebrow">LUYỆN NGHE</div>
-      <h1>{mode === "dictation" ? "Nghe chép chính tả" : "Nói nhại theo câu mẫu"}</h1>
-      <p className="page-sub">
-        {mode === "dictation"
-          ? "Nghe từng câu rồi gõ lại đúng những gì nghe được."
-          : "Nghe câu mẫu, nói đuổi theo, rồi xem máy nghe ra được bao nhiêu phần lời của bạn."}
-      </p>
+    <div className="page lesson-library lesson-library-v2">
+      <header className="library-hero">
+        <div className="library-title-row">
+          <button className="library-back" onClick={close} aria-label="Quay lại">←</button>
+          <span className="library-mode-icon"><Icon name={mode === "dictation" ? "headphones" : "mic"} size={19} /></span>
+          <div>
+            <h1>{mode === "dictation" ? "Luyện Dictation" : "Luyện Shadowing"}</h1>
+            <p>{mode === "dictation" ? "Chọn chủ đề để luyện kỹ năng nghe" : "Chọn chủ đề để luyện kỹ năng nói"}</p>
+          </div>
+        </div>
+        <div className="library-summary"><span>▣ <b>{lessons.length}</b> đang học</span><i /> <span className="complete">✓ <b>0</b> đã hoàn thành</span></div>
+      </header>
 
-      <div className="library-filters" role="group" aria-label="Lọc bài">
-        {FILTERS.map((item) => (
-          <button key={item.value} className={filter === item.value ? "active" : ""} onClick={() => setFilter(item.value)}>
-            {item.label}
-            {item.value === "video" && lessons.length > 0 && <em>{lessons.length}</em>}
-          </button>
-        ))}
+      <div className="library-filter-panel">
+        <div className="library-filters" role="group" aria-label="Lọc nguồn bài">
+          {FILTERS.map((item) => (
+            <button key={item.value} className={filter === item.value ? "active" : ""} onClick={() => setFilter(item.value)}>
+              {item.label}{item.value === "video" && lessons.length > 0 && <em>{lessons.length}</em>}
+            </button>
+          ))}
+        </div>
+        <div className="library-chip-row" role="group" aria-label="Lọc chủ đề">
+          {["Tất cả", ...TOPICS].map((item) => <button key={item} className={topic === item ? "active" : ""} onClick={() => setTopic(item)}>{item}</button>)}
+        </div>
+        <div className="library-chip-row levels" role="group" aria-label="Lọc cấp độ">
+          {LEVELS.map((item) => <button key={item} className={level === item ? "active" : ""} onClick={() => setLevel(item)}>{item}</button>)}
+        </div>
       </div>
 
       {showVideo && (
         <section className="library-block">
-          <h3>Bài từ video</h3>
+          <div className="library-section-title"><h2>Tiếp tục học</h2><span>{lessons.length ? `${lessons.length} bài của bạn` : "Thêm video từ YouTube để bắt đầu"}</span></div>
           {lessons.length ? (
             <div className="library-grid">
               {lessons.map((lesson) => (
                 <button key={lesson.id} className="library-card video" onClick={() => pickVideo(lesson)}>
                   {/* Ảnh bìa lấy thẳng từ YouTube theo mã video, không phải tải về lưu. */}
-                  <span className="library-thumb" style={{ backgroundImage: `url(https://i.ytimg.com/vi/${lesson.videoId}/mqdefault.jpg)` }} />
-                  <b>{lesson.title}</b>
-                  <small>{[lesson.author, `${lesson.sentences.length} câu`, minutes(lesson.seconds)].filter(Boolean).join(" · ")}</small>
+                  <span className="library-thumb" style={{ backgroundImage: `url(https://i.ytimg.com/vi/${lesson.videoId}/mqdefault.jpg)` }}>
+                    <em className="level-badge">B1</em><em className="duration-badge">◷ {minutes(lesson.seconds)}</em>
+                  </span>
+                  <span className="library-card-copy"><b>{lesson.title}</b><small>{lesson.author || "Video của tôi"}</small><strong>{lesson.sentences.length} phân đoạn</strong></span>
                 </button>
               ))}
             </div>
@@ -106,12 +122,11 @@ export default function LessonLibrary({
 
       {showBuiltIn && (
         <section className="library-block">
-          <h3>Bài có sẵn</h3>
+          <div className="library-section-title"><h2>Bài học mới</h2><span>Chọn theo chủ đề và trình độ</span></div>
           <div className="library-grid">
             <button className="library-card builtin" onClick={pickBuiltIn}>
-              <span className="library-thumb plain"><Icon name="book" size={24} /></span>
-              <b>Thư viện bài luyện sẵn</b>
-              <small>VOA, đời sống, du lịch, công việc, công nghệ · chọn theo chủ đề và trình độ</small>
+              <span className="library-thumb plain"><em className="level-badge orange">A1–C1</em><Icon name="book" size={34} /><span>LEXILO LISTENING</span></span>
+              <span className="library-card-copy"><b>Khám phá thư viện bài luyện</b><small>Đời sống · Du lịch · Công việc · Công nghệ</small><strong>Chọn bài theo cấp độ →</strong></span>
             </button>
           </div>
         </section>

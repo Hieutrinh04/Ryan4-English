@@ -1038,3 +1038,167 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 .library-empty b{display:block;font-size:13px;margin-bottom:5px}
 .library-empty p{margin:0;color:var(--muted);font-size:12px;line-height:1.65}
 .library-empty code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:11px}
+
+/* Thư viện nghe: bố cục video-first, lấy cảm hứng từ các nền tảng luyện nghe hiện đại. */
+.lesson-library-v2{max-width:none;min-height:100vh;padding:0 32px 70px;background:#0b0812;color:#f7f3ff}
+.library-hero{min-height:70px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #282132;padding:12px 0}
+.library-title-row{display:flex;align-items:center;gap:11px}.library-title-row h1{font-size:18px;margin:0 0 3px;letter-spacing:-.2px}.library-title-row p{font-size:11px;color:#8f879b;margin:0}
+.library-back{width:32px;height:32px;border:1px solid #2f273b;border-radius:9px;background:#15101e;color:#b9afc6}.library-mode-icon{width:34px;height:34px;border-radius:9px;background:#f4f0f8;color:#1d1627;display:grid;place-items:center}
+.library-summary{display:flex;align-items:center;gap:10px;color:#8f879b;font-size:11px}.library-summary b{color:#e8e1ef}.library-summary i{width:1px;height:14px;background:#332b3d}.library-summary .complete{color:#a69cae}.library-summary .complete:first-letter{color:#27d89b}
+.library-filter-panel{padding:11px 0 16px;border-bottom:1px solid #282132}.lesson-library-v2 .library-filters{margin:0 0 6px;gap:7px}.lesson-library-v2 .library-filters button,.library-chip-row button{border:0;background:transparent;color:#a69cae;border-radius:999px;padding:8px 15px;font-size:11px;font-weight:650}.lesson-library-v2 .library-filters button:hover,.library-chip-row button:hover{color:#fff;background:#171120}.lesson-library-v2 .library-filters button.active,.library-chip-row button.active{background:#9747ff;color:#fff}.lesson-library-v2 .library-filters em{background:#2b2137;color:#d7cce2}
+.library-chip-row{display:flex;align-items:center;flex-wrap:wrap;gap:3px}.library-chip-row.levels{margin-top:4px}.library-chip-row.levels button{padding:8px 16px}.library-chip-row.levels button:first-child{margin-right:2px}
+.lesson-library-v2 .library-block{margin-top:30px}.library-section-title{display:flex;align-items:baseline;gap:12px;margin-bottom:13px}.library-section-title h2{font-size:16px;margin:0}.library-section-title span{font-size:10px;color:#766d81}
+.lesson-library-v2 .library-grid{grid-template-columns:repeat(auto-fill,minmax(240px,288px));gap:13px}.lesson-library-v2 .library-card{padding:0 0 13px;border:1px solid #2c2437;background:#120c1d;color:#fff;border-radius:12px;overflow:hidden;box-shadow:none;gap:0}.lesson-library-v2 .library-card:hover{border-color:#8246cb;background:#171022;transform:translateY(-2px);box-shadow:0 12px 28px #0005}.lesson-library-v2 .library-thumb{position:relative;aspect-ratio:16/9;margin:0;border-radius:0}.lesson-library-v2 .library-card-copy{display:grid;gap:5px;padding:11px 12px 0;text-align:left}.lesson-library-v2 .library-card b{padding:0;font-size:12px;color:#fff;min-height:34px}.lesson-library-v2 .library-card small{padding:0;color:#958a9f;font-size:10px}.lesson-library-v2 .library-card strong{color:#a34fff;font-size:10px;font-weight:650;margin-top:3px}
+.level-badge,.duration-badge{position:absolute!important;z-index:1;font-style:normal!important;border-radius:5px;padding:4px 6px!important;color:#fff!important;font-size:9px!important;font-weight:800!important}.level-badge{left:8px;top:8px;background:#16b883}.level-badge.orange{background:#ff7417}.duration-badge{right:8px;bottom:8px;background:#17121dcc;backdrop-filter:blur(5px)}
+.lesson-library-v2 .library-thumb.plain{position:relative;display:grid;place-items:center;gap:4px;background:radial-gradient(circle at 70% 30%,#294d78 0,#102942 35%,#091927 75%);color:#dceeff}.lesson-library-v2 .library-thumb.plain>span{font-size:13px;font-weight:900;letter-spacing:1px}.lesson-library-v2 .library-empty{border-color:#342a40;background:#120c1d;color:#e7dfef}.lesson-library-v2 .library-empty p{color:#94899f}
+@media(max-width:720px){.lesson-library-v2{padding:0 16px 90px}.library-hero{align-items:flex-start}.library-summary{display:none}.library-chip-row{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px}.library-chip-row button{white-space:nowrap}.lesson-library-v2 .library-grid{grid-template-columns:1fr 1fr}.library-title-row h1{font-size:16px}}
+@media(max-width:480px){.lesson-library-v2 .library-grid{grid-template-columns:1fr}.lesson-library-v2 .library-card b{min-height:0}}
+
+/* Màn làm bài video: Dictation và Shadowing có bố cục riêng theo đúng nhiệm vụ. */
+.video-lesson-v2{max-width:none;min-height:100vh;padding:0 24px 50px;background:#0b0812;color:#f3eef8}
+.video-lesson-v2 .lesson-top{height:62px;margin:0;border-bottom:1px solid #2a2233;gap:10px}.video-lesson-v2 .drill-icon{background:transparent;border:0;color:#c7bece;font-size:20px}.lesson-level{background:#39205e;color:#bc83ff;border-radius:5px;padding:4px 7px;font-size:9px;font-weight:800}.video-lesson-v2 .lesson-title small{color:#83798d}.video-lesson-v2 .lesson-mode-tabs{display:flex;background:#211a2b;border-radius:9px;padding:3px;gap:2px}.lesson-mode-tabs span{padding:7px 12px;border-radius:7px;color:#857b91;font-size:10px;font-weight:700}.lesson-mode-tabs span.active{background:#0d0914;border:1px solid #49365f;color:#fff}.video-lesson-v2 .lesson-count{background:#18121f;border-color:#33283e;color:#b75cff}
+.video-lesson-v2 .lesson-body{display:grid;gap:0;align-items:stretch}.video-lesson-v2 .lesson-main{display:contents}.video-lesson-v2 .yt-player{grid-area:video;border-radius:0;background:#000;align-self:start}.video-lesson-v2 .lesson-controls{grid-area:controls;background:#0d0914;border-top:1px solid #292131;border-bottom:1px solid #292131;padding:10px 16px}.video-lesson-v2 .lesson-work{grid-area:work;background:#0d0914;border-color:#2b2235;border-radius:0;padding:22px}.video-lesson-v2 .lesson-list{grid-area:list;position:static;max-height:calc(100vh - 62px);border-radius:0;border-color:#2b2235;background:#110b1c;padding:18px}.video-lesson-v2 .lesson-list ol{gap:8px}.video-lesson-v2 .lesson-list li button{padding:12px;border-color:transparent;color:#8f8499}.video-lesson-v2 .lesson-list li button.active{background:#171220;border-color:#4c3b5d;color:#fff}.video-lesson-v2 .lesson-list li button.done{border-color:#174634}.video-lesson-v2 .lesson-list-bar{background:#2c2037}.video-lesson-v2 .lesson-list-bar i{background:#9b45ef}.video-lesson-v2 .lesson-work-head{color:#8b8095}.video-lesson-v2 .lesson-work-label{margin-left:auto;color:#685f72;font-size:9px;letter-spacing:.8px}.video-lesson-v2 .lesson-work-head em{margin-left:0}.video-lesson-v2 .lesson-shapes{gap:8px}.video-lesson-v2 .lesson-shapes span{background:#181221;border:1px solid #292034;border-radius:8px;padding:9px 11px;border-bottom-color:#392b47;color:#c4b8cc}.video-lesson-v2 .lesson-answer input{min-height:55px;background:#0c0812;border:2px solid #6d2aa3;border-radius:12px;color:#fff;font-size:17px}.video-lesson-v2 .lesson-answer input:focus{outline:2px solid #9c43eb;box-shadow:0 0 0 4px #6e2aa32e}.video-lesson-v2 .lesson-tools button,.video-lesson-v2 .lesson-aid-toggles button{background:#15101d;border-color:#33283f;color:#b5aabd}.video-lesson-v2 .lesson-tools .primary{background:#8f42df;color:#fff}.video-lesson-v2 .lesson-next{justify-self:end;background:#2a2235}.video-lesson-v2 .lesson-sentence{background:#120d19;border:1px solid #2e2438;border-radius:12px;padding:28px 24px;font-size:19px}.video-lesson-v2 .lesson-vi{border-left:2px solid #4b3a5c;padding-left:12px;color:#8f8499}
+.dictation-layout .lesson-body{grid-template-columns:minmax(520px,1fr) 360px;grid-template-areas:"video list" "controls list" "work list"}.dictation-layout .yt-player{max-height:50vh}.dictation-layout .lesson-work{min-height:300px}.dictation-layout .lesson-list{border-top:0}
+.shadowing-layout .lesson-body{grid-template-columns:480px minmax(520px,1fr);grid-template-areas:"video work" "controls work" "list work"}.shadowing-layout .lesson-list{max-height:52vh}.shadowing-layout .lesson-work{min-height:calc(100vh - 62px);align-content:start;padding:26px}.shadowing-layout .lesson-tools{margin-top:12px}.shadowing-layout .lesson-tools .primary{width:100%;min-height:76px;border:1px solid #57247c;border-radius:13px;background:#171020;color:#d6c9df;font-size:14px}.shadowing-layout .lesson-tools .primary.listening{background:#792b68}.shadowing-layout .lesson-aid-toggles{justify-content:flex-end}.shadowing-layout .lesson-controls{justify-content:center}.shadowing-layout .lesson-time{position:absolute;left:40px}.shadowing-layout .lesson-rates{margin-left:12px}
+@media(max-width:1180px){.dictation-layout .lesson-body,.shadowing-layout .lesson-body{grid-template-columns:minmax(0,1fr) 330px;grid-template-areas:"video list" "controls list" "work work"}.video-lesson-v2 .lesson-list{max-height:520px}.shadowing-layout .lesson-work{min-height:auto}.shadowing-layout .lesson-time{position:static}}
+@media(max-width:760px){.video-lesson-v2{padding:0 12px 90px}.video-lesson-v2 .lesson-top{height:auto;min-height:62px;flex-wrap:wrap;padding:10px 0}.video-lesson-v2 .lesson-mode-tabs{order:5;width:100%}.video-lesson-v2 .lesson-mode-tabs span{flex:1;text-align:center}.dictation-layout .lesson-body,.shadowing-layout .lesson-body{display:flex;flex-direction:column}.video-lesson-v2 .lesson-controls{order:2}.video-lesson-v2 .lesson-work{order:3}.video-lesson-v2 .lesson-list{order:4;max-height:340px}.video-lesson-v2 .lesson-work-label{display:none}}
+
+/* Shadowing: câu mẫu → micro → ghi âm → nghe lại, đúng một luồng từ trên xuống. */
+.shadowing-layout .lesson-body{grid-template-areas:"video work" "list work"}.shadowing-layout>.lesson-body .lesson-controls{display:none}.shadowing-layout .lesson-list{border-top:0;min-height:0}.shadowing-layout .lesson-work{gap:16px}.shadowing-layout .lesson-sentence{margin-top:2px}.shadowing-mic-head{display:flex;align-items:center;justify-content:space-between;color:#aaa0b3;font-size:11px;margin-top:0}.shadowing-mic-head small{background:#21192b;color:#c7bdcf;border-radius:8px;padding:10px 13px}.shadowing-record-stage{display:block}.shadowing-record{width:100%;min-height:94px;display:grid;grid-template-columns:52px 1fr;grid-template-rows:1fr 1fr;column-gap:14px;align-items:center;text-align:left;border:1px solid #5d287d;background:#140d1e;color:#fff;border-radius:13px;padding:14px 24px}.shadowing-record>span{grid-row:1/3;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:#3b1b5b;color:#b55cff;font-size:22px}.shadowing-record>b{align-self:end;font-size:14px}.shadowing-record>small{align-self:start;color:#8f849a;margin-top:4px}.shadowing-record.listening{border-color:#ba3b8e;background:#271020}.shadowing-record:disabled{opacity:.55;cursor:not-allowed}.shadowing-repeat>p{margin:0 0 12px;color:#a99eaf;font-size:11px}.shadowing-word-shapes{display:flex;flex-wrap:wrap;gap:8px}.shadowing-word-shapes span{background:#191221;border:1px solid #2c2237;color:#b7a9c1;border-radius:8px;padding:10px 12px;font-size:10px;letter-spacing:1px}.shadowing-repeat-controls{display:flex;align-items:center;justify-content:center;gap:9px;margin-top:18px}.shadowing-repeat-controls>button{border:0;background:transparent;color:#9c91a5;width:34px;height:34px;border-radius:8px}.shadowing-repeat-controls>button.play{width:48px;height:48px;background:#f8f5fb;color:#17101f;font-size:20px;border-radius:11px}.shadowing-repeat-controls>button:disabled{opacity:.3}.shadowing-inline-rates{display:flex;background:#211929;border-radius:8px;padding:3px;margin-left:2px}.shadowing-inline-rates button{border:0;background:transparent;color:#a69bac;border-radius:6px;padding:7px 9px;font-size:9px}.shadowing-inline-rates button.active{background:#f6f2f8;color:#1c1424}.shadowing-layout .lesson-next{margin-top:0;padding:12px 24px}
+@media(max-width:1180px){.shadowing-layout .lesson-body{grid-template-areas:"video list" "work work"}.shadowing-layout .lesson-list{border-top:1px solid #2b2235}}
+@media(max-width:760px){.shadowing-layout>.lesson-body .lesson-controls{display:none}.shadowing-mic-head{align-items:flex-start;gap:8px}.shadowing-inline-rates{overflow-x:auto}.shadowing-repeat-controls{flex-wrap:wrap}}
+.video-ai-coach{display:grid;gap:10px;margin-top:2px}.video-ai-coach>button{width:100%;border:1px solid #542778;background:#171129;color:#6f8fff;border-radius:10px;padding:13px;font-size:11px;font-weight:800}.video-ai-coach>button:hover{background:#1d1533;border-color:#7540a4}.video-ai-coach>button:disabled{opacity:.55}.video-ai-comment{margin:0;border:1px solid #34305d;background:#121329;color:#c9c9ef;border-radius:10px;padding:13px 15px;font-size:11px;line-height:1.6}.video-ai-coach>ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}.video-ai-coach li{display:grid;grid-template-columns:auto auto 1fr;align-items:start;gap:8px;border:1px solid #30263b;background:#110c19;border-radius:9px;padding:11px 13px;font-size:11px}.video-ai-coach li b{color:#c37aff}.video-ai-coach li code{color:#8d82a0}.video-ai-coach li span{color:#b4a9bc;line-height:1.55}
+
+/* Cụm từ + IPA phải sát nhau, không bị kéo giãn như các cột của biểu mẫu. */
+.video-lesson-v2 .lesson-sentence.with-ipa{display:flex;align-items:flex-start;align-content:flex-start;justify-content:flex-start;column-gap:10px;row-gap:13px;font-family:Inter,"Segoe UI",Arial,sans-serif;letter-spacing:normal;word-spacing:normal}
+.video-lesson-v2 .lesson-word{display:inline-flex;flex:0 0 auto;flex-direction:column;align-items:flex-start;justify-content:flex-start;width:auto;min-width:0;margin:0;padding:2px 1px;font-family:Inter,"Segoe UI",Arial,sans-serif;letter-spacing:normal;word-spacing:normal}
+.video-lesson-v2 .lesson-word span{font-size:18px;line-height:1.25;white-space:nowrap;letter-spacing:-.1px}.video-lesson-v2 .lesson-word em{font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:10px;line-height:1.25;white-space:nowrap;color:#8e5cff}
+.shadowing-mic-head>span{display:flex;align-items:center;gap:7px}.shadowing-repeat-controls>button{display:grid;place-items:center}.shadowing-repeat-controls>button.play svg{margin-left:2px}.shadowing-record>span svg{display:block}.video-ai-coach>button{display:flex;align-items:center;justify-content:center;gap:8px}
+
+/* Trên màn hình siêu rộng, giữ vùng thao tác ở cỡ đọc thoải mái thay vì kéo dãn. */
+.shadowing-layout .lesson-work{min-height:min(760px,calc(100vh - 62px));padding:26px clamp(24px,3vw,54px)}
+.shadowing-layout .lesson-work>*{width:min(100%,1020px);margin-left:auto;margin-right:auto}
+.shadowing-layout .lesson-sentence{width:min(100%,1020px)}
+.shadowing-layout .lesson-next{display:flex;align-items:center;justify-content:center;gap:9px;margin-left:auto;margin-right:max(0px,calc((100% - 1020px)/2))}
+.shadowing-layout .shadowing-repeat-controls{margin-top:18px}.shadowing-layout .shadowing-repeat:has(+.shadowing-warn) .shadowing-repeat-controls{margin-top:12px}
+@media(max-width:1180px){.shadowing-layout .lesson-work{min-height:auto;padding:24px}.shadowing-layout .lesson-next{margin-right:0}}
+
+/* Hoàn thiện tỷ lệ toàn màn Shadowing. */
+.video-lesson-v2 .lesson-top{padding:0 8px;min-width:0}.video-lesson-v2 .lesson-title{max-width:min(520px,42vw)}.video-lesson-v2 .lesson-title b{font-size:14px;line-height:1.3}.video-lesson-v2 .lesson-mode-tabs{margin-left:auto}.video-lesson-v2 .lesson-count{flex:none}
+.shadowing-layout .lesson-work{border-top:0;border-right:1px solid #2b2235;border-bottom:1px solid #2b2235}.shadowing-layout .lesson-work-head{min-height:28px}.shadowing-layout .lesson-work-label{font-size:8px;letter-spacing:1.1px}
+.shadowing-layout .lesson-aid-toggles{min-height:34px}.shadowing-layout .lesson-aid-toggles button{padding:7px 13px;border-radius:18px}.shadowing-layout .lesson-aid-toggles button.active{background:#2c1740;border-color:#714094;color:#d7b0ff}
+.shadowing-layout .lesson-sentence{padding:24px;border-radius:12px;line-height:1.45}.shadowing-layout .lesson-vi{font-size:12px;line-height:1.6;padding:2px 0 2px 13px;max-width:920px}
+.shadowing-layout .shadowing-record{min-height:86px;padding:13px 20px}.shadowing-layout .shadowing-record>span{width:48px;height:48px}.shadowing-layout .shadowing-mic-head{min-height:38px}.shadowing-layout .shadowing-mic-head small{padding:8px 11px}
+.shadowing-layout .shadowing-word-shapes{max-width:940px}.shadowing-layout .shadowing-word-shapes span{min-width:44px;text-align:center;padding:9px 10px}.shadowing-layout .shadowing-repeat-controls{min-height:54px}
+.shadowing-layout .lesson-next{width:auto!important;min-width:154px;justify-self:end;padding:12px 20px!important;border:1px solid #3c3049;background:#2a2235!important;box-shadow:none}.shadowing-layout .lesson-next:hover{border-color:#704598;background:#342742!important}
+.resume-bar .primary{display:flex;align-items:center;gap:8px}
+@media(max-width:900px){.video-lesson-v2 .lesson-title{max-width:55vw}.video-lesson-v2 .lesson-mode-tabs{order:5;width:100%;margin-left:0}.video-lesson-v2 .lesson-top{height:auto;min-height:64px;flex-wrap:wrap;padding:10px 8px}.shadowing-layout .lesson-work{border-left:1px solid #2b2235}}
+
+.shadowing-groups{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:-6px;color:#7e7488}.shadowing-groups>span{font-size:9px;text-transform:uppercase;letter-spacing:.8px;margin-right:2px}.shadowing-groups b{font-size:10px;font-weight:600;color:#b8adbf;background:#17111f;border:1px solid #2d2337;border-radius:7px;padding:6px 9px}.shadowing-groups b:not(:last-child)::after{content:" /";color:#8053a0;margin-left:6px}
+.shadowing-own-recording{display:grid;gap:10px;border:1px solid #33273e;background:#120d19;border-radius:11px;padding:13px}.shadowing-own-recording>div{display:flex;align-items:center;gap:9px;color:#a865de}.shadowing-own-recording>div>span{display:grid;gap:2px}.shadowing-own-recording b{font-size:11px;color:#e0d8e6}.shadowing-own-recording small{font-size:9px;color:#8f8499}.shadowing-own-recording audio{width:100%;height:36px;filter:invert(.88) hue-rotate(210deg) saturate(.65)}
+
+/* ── Bài video: sắp lại theo đúng bố cục màn luyện nghe ────────────────────── */
+.lesson-mode-tabs{display:flex;gap:3px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:10px;padding:3px;flex-shrink:0}
+.lesson-mode-tabs button{display:flex;align-items:center;gap:6px;border:0;background:none;
+  color:var(--muted);border-radius:8px;padding:7px 13px;font-size:11.5px;font-weight:700}
+.lesson-mode-tabs button:hover{color:var(--text-2)}
+.lesson-mode-tabs button.active{background:var(--surface);color:var(--purple-dark);box-shadow:0 1px 3px #0003}
+.lesson-level{background:var(--soft);color:var(--purple-dark);border-radius:6px;
+  padding:3px 8px;font-size:10px;font-weight:800;flex-shrink:0}
+
+/* Thanh chạy: vạch đã phát, và khúc của câu đang làm. */
+.lesson-scrub{position:relative;height:4px;border-radius:2px;background:var(--surface-2);overflow:hidden}
+.lesson-scrub i{position:absolute;top:0;height:100%;display:block}
+.lesson-scrub .played{left:0;background:var(--line-accent)}
+.lesson-scrub .current{background:var(--purple);border-radius:2px}
+
+.lesson-work-head{flex-wrap:wrap}
+.lesson-keys{display:flex;align-items:center;gap:5px;color:var(--text-3);font-size:10px}
+.lesson-keys kbd{background:var(--surface-2);border:1px solid var(--line);border-radius:4px;
+  padding:1px 5px;font-size:9.5px;color:var(--text-2)}
+.lesson-head-switches{margin-left:auto;display:flex;flex-wrap:wrap;gap:6px}
+.lesson-head-switches button{display:flex;align-items:center;gap:6px;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--muted);border-radius:20px;padding:5px 11px;font-size:10px;font-weight:700}
+.lesson-head-switches button i{width:22px;height:12px;border-radius:7px;background:var(--line);
+  position:relative;transition:background .15s}
+.lesson-head-switches button i::after{content:"";position:absolute;top:2px;left:2px;width:8px;height:8px;
+  border-radius:50%;background:var(--surface);transition:transform .15s}
+.lesson-head-switches button.on{border-color:var(--purple);color:var(--purple-dark)}
+.lesson-head-switches button.on i{background:var(--purple)}
+.lesson-head-switches button.on i::after{transform:translateX(10px)}
+
+.lesson-reveal-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.lesson-reveal-row span{color:var(--text-3);font-size:11px}
+.lesson-reveal-row button{border:0;background:none;color:var(--purple);font-size:11px;font-weight:700}
+.lesson-reveal-row button:disabled{opacity:.45;cursor:not-allowed}
+.lesson-tools kbd{background:var(--surface-2);border:1px solid var(--line);border-radius:4px;
+  padding:1px 5px;font-size:9px;margin-left:6px;color:var(--text-3)}
+.lesson-next-inline{margin-left:auto}
+.lesson-next-inline kbd{background:#ffffff2e;border-color:#ffffff40;color:inherit}
+
+/* Bảng phụ đề bên phải */
+.lesson-list-tabs{display:flex;gap:14px;border-bottom:1px solid var(--line);margin:-4px -4px 12px;padding:0 4px 10px}
+.lesson-list-tabs b{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+.lesson-list-tabs b.active{color:var(--purple-dark)}
+.lesson-list-head{align-items:center}
+.lesson-list-toggle{border:1px solid var(--line);background:var(--surface-2);color:var(--muted);
+  border-radius:16px;padding:4px 10px;font-size:10px;font-weight:700}
+.lesson-list-progress{display:flex;justify-content:space-between;align-items:baseline;margin-top:10px;font-size:11px;color:var(--muted)}
+.lesson-list-progress b{color:var(--purple);font-size:12px}
+.lesson-list li button{grid-template-columns:auto 1fr;gap:10px;align-items:start;padding:10px 11px}
+.lesson-list-tick{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line-accent);
+  display:grid;place-items:center;font-size:10px;color:transparent;margin-top:1px;flex-shrink:0}
+.lesson-list li button.done .lesson-list-tick{border-color:var(--green-line);background:var(--tint-green);color:var(--mark-ok)}
+.lesson-list-body{display:grid;gap:4px;min-width:0}
+.lesson-list-meta{display:flex;align-items:center;gap:7px}
+.lesson-list-meta em{font-style:normal;font-size:10px;font-weight:800;color:var(--text-3)}
+.lesson-list-meta em.at{margin-left:auto;font-weight:600}
+.lesson-list-meta .now{font-style:normal;background:var(--soft);color:var(--purple-dark);
+  border-radius:4px;padding:1px 6px;font-size:8.5px;font-weight:800;letter-spacing:.03em}
+
+/* ── Tỷ lệ bố cục bài video, theo đúng cách màn luyện nghe mẫu chia ────────── */
+/* Điểm mấu chốt: CHẶN CHIỀU CAO video thay vì để nó chiếm nguyên khung 16:9.
+   Để 16:9 thì trên màn 1400px video cao gần 560px, đẩy ô nhập và ô trống xuống
+   dưới tầm nhìn — người học phải cuộn qua lại giữa nghe và gõ. Chặn chiều cao
+   thì YouTube tự thêm viền đen hai bên, và cả bài nằm gọn trong một màn hình. */
+.video-lesson{max-width:1440px}
+.lesson-body{grid-template-columns:minmax(0,1fr) 380px;gap:20px}
+.yt-player{padding-top:0;height:clamp(190px,34vh,330px)}
+.lesson-main{gap:12px}
+.lesson-work{padding:16px 18px;gap:12px}
+
+@media(max-width:1240px){.lesson-body{grid-template-columns:minmax(0,1fr) 320px}}
+@media(max-width:1080px){
+  .lesson-body{grid-template-columns:1fr}
+  .yt-player{height:clamp(180px,30vh,280px)}
+}
+
+/* ── Bố cục bài video: khai báo VÙNG cho lưới ─────────────────────────────── */
+/* Khối .video-lesson-v2 ở trên đặt display:contents cho .lesson-main rồi gán
+   grid-area cho từng phần, nhưng chưa bao giờ khai báo grid-template-areas. Tên
+   vùng không tồn tại thì trình duyệt xếp tự động, cột trái đo ra 0px và phần
+   làm bài rơi sai ô. Khai báo đủ vùng ở đây. */
+.video-lesson-v2 .lesson-body{
+  grid-template-areas:
+    "video    list"
+    "scrub    list"
+    "controls list"
+    "work     list";
+  grid-template-columns:minmax(0,1fr) 380px;
+  grid-template-rows:auto auto auto 1fr;
+  column-gap:16px;
+}
+.video-lesson-v2 .lesson-scrub{grid-area:scrub}
+.video-lesson-v2 .lesson-work{border-radius:0 0 14px 14px}
+
+@media(max-width:1240px){.video-lesson-v2 .lesson-body{grid-template-columns:minmax(0,1fr) 330px}}
+@media(max-width:1080px){
+  .video-lesson-v2 .lesson-body{
+    grid-template-areas:"video" "scrub" "controls" "work" "list";
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:auto;
+    row-gap:12px;
+  }
+  .video-lesson-v2 .lesson-list{max-height:340px}
+}

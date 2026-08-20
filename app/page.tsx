@@ -1139,9 +1139,9 @@ export default function Home() {
             <button onClick={() => setShowAdd(true)} aria-label="Thêm từ">＋</button>
           </div>
         </header>
-        {pendingSession && (
+        {pendingSession && tab === "home" && (
           <div className="resume-bar">
-            <span>◷</span>
+            <span><Icon name="clock" size={18} /></span>
             <div>
               <b>Phiên học đang dở</b>
               <small>
@@ -1149,7 +1149,7 @@ export default function Home() {
               </small>
             </div>
             <button className="primary" onClick={resumeSession}>
-              Học tiếp →
+              Học tiếp <Icon name="arrow" size={16} />
             </button>
             <button
               aria-label="Bỏ phiên đang dở"
@@ -3092,7 +3092,17 @@ function Practice({ words, intent, lessons, onStudied }: { words: WordCard[]; in
   // Dictation và Shadowing dùng chung một thư viện: bài từ video và bài có sẵn.
   if (mode === "dictation" || mode === "shadow") {
     const listening = mode === "shadow" ? "shadowing" : "dictation";
-    if (lesson) return <VideoLesson lesson={lesson} mode={listening} close={() => setLesson(null)} onStudied={onStudied} />;
+    if (lesson)
+      return (
+        <VideoLesson
+          lesson={lesson}
+          mode={listening}
+          close={() => setLesson(null)}
+          onStudied={onStudied}
+          // Đổi chế độ ngay trong bài: giữ nguyên bài, chỉ đổi cách luyện.
+          onMode={(next) => setMode(next === "shadowing" ? "shadow" : "dictation")}
+        />
+      );
     if (builtIn)
       return mode === "dictation"
         ? <DictationPractice words={words} close={() => setBuiltIn(false)} />

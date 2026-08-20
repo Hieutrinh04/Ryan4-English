@@ -78,18 +78,18 @@ test("cuesFromJson3: đổi mili giây sang giây và bỏ đoạn rỗng", () =
   assert.equal(cues[1].start, 2);
 });
 
-test("sentencesFrom: gom các dòng bị xé thành một câu trọn vẹn", () => {
+test("sentencesFrom: gom các dòng và hai câu ngắn thành một đoạn luyện", () => {
   // Phụ đề cắt theo dòng hiển thị, một câu hay bị xé làm đôi.
   const sentences = sentencesFrom([
     { start: 0, end: 2, text: "I usually get up" },
     { start: 2, end: 4, text: "at quarter past six." },
     { start: 4, end: 6, text: "I often have porridge." },
   ]);
-  assert.equal(sentences.length, 2);
-  assert.equal(sentences[0].text, "I usually get up at quarter past six.");
+  assert.equal(sentences.length, 1);
+  assert.equal(sentences[0].text, "I usually get up at quarter past six. I often have porridge.");
   assert.equal(sentences[0].start, 0);
-  assert.equal(sentences[0].end, 4);
-  assert.equal(sentences[1].index, 2);
+  assert.equal(sentences[0].end, 6);
+  assert.equal(sentences[0].index, 1);
 });
 
 test("sentencesFrom: đoạn không có dấu chấm vẫn bị cắt, không thành câu dài vô tận", () => {
