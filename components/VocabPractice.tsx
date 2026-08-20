@@ -14,6 +14,12 @@ import { DRILL_MODES, choicesFor, clozeOf, deckSupports, hasIpa, isCorrect, reso
 type Mode = "card" | "type" | "listen" | "reverse" | "cloze" | "mixed";
 type Result = { id: string; mode: string; correct: boolean; graded: boolean };
 
+const OTHER_MODES = [
+  { value: "learn", icon: "✎", label: "Học tới khi thuộc", hint: "Lặp riêng những từ còn sai cho tới khi thuộc hết bộ" },
+  { value: "test", icon: "◉", label: "Kiểm tra chấm điểm", hint: "Làm một mạch không xem đáp án, chấm điểm ở cuối bài" },
+  { value: "match", icon: "⌘", label: "Nối cặp", hint: "Ghép từ với nghĩa nhanh nhất" },
+];
+
 const MODE_HINT: Record<string, string> = {
   type: "Đọc nghĩa tiếng Việt rồi gõ lại từ tiếng Anh.",
   listen: "Nghe phát âm rồi gõ lại từ. Bấm loa để nghe lại.",
@@ -39,8 +45,11 @@ function speak(text: string, region: "US" | "UK" = "US", rate = 1) {
   window.speechSynthesis?.speak(utterance);
 }
 
-export default function VocabPractice({ words, close, onStudied }: { words: WordCard[]; close: () => void; onStudied?: () => void }) {
+export default function VocabPractice({ words, close, onStudied, onPickOther }: { words: WordCard[]; close: () => void; onStudied?: () => void; onPickOther?: (mode: string) => void }) {
   const [mode, setMode] = useState<Mode>("card");
+  // Chọn cách luyện trước rồi mới vào buổi học, thay vì đổ thẳng người học vào một
+  // chế độ mặc định rồi để họ tự tìm thanh tab.
+  const [started, setStarted] = useState(false);
   const [seed, setSeed] = useState(1);
   const [shuffled, setShuffled] = useState(false);
   // Chỉ luyện lại những thẻ vừa sai; null nghĩa là cả bộ.
@@ -168,6 +177,57 @@ export default function VocabPractice({ words, close, onStudied }: { words: Word
     else void element.requestFullscreen?.();
   }
 
+  if (!started)
+    return (
+      <div className="page vocab-drill">
+        <button className="back" onClick={close}>← Chọn chức năng khác</button>
+        <div className="mode-picker">
+          <h1>Chọn chế độ luyện tập</h1>
+          <p className="page-sub">Chọn cách bạn muốn luyện {deck.length} từ trong bộ này</p>
+
+          <div className="mode-options" role="radiogroup" aria-label="Chế độ luyện tập">
+            {DRILL_MODES.map((item: { value: string; label: string; icon: string; hint: string }) => (
+              <button
+                key={item.value}
+                role="radio"
+                aria-checked={mode === item.value}
+                className={mode === item.value ? "mode-option active" : "mode-option"}
+                onClick={() => setMode(item.value as Mode)}
+                disabled={!deckSupports(deck, item.value)}
+              >
+                <span className="mode-option-icon">{item.icon}</span>
+                <span className="mode-option-text">
+                  <b>{item.label}</b>
+                  <small>{deckSupports(deck, item.value) ? item.hint : "Bộ từ này chưa đủ dữ liệu cho cách luyện đó"}</small>
+                </span>
+                <i className="mode-option-dot" />
+              </button>
+            ))}
+          </div>
+
+          <button className="primary mode-start" onClick={() => setStarted(true)} disabled={!deck.length}>
+            Bắt đầu luyện tập
+          </button>
+
+          {onPickOther && (
+            <div className="mode-more">
+              <span className="mode-more-title">Hoặc luyện cả bộ theo cách khác</span>
+              {OTHER_MODES.map((item) => (
+                <button key={item.value} className="mode-option" onClick={() => onPickOther(item.value)}>
+                  <span className="mode-option-icon">{item.icon}</span>
+                  <span className="mode-option-text">
+                    <b>{item.label}</b>
+                    <small>{item.hint}</small>
+                  </span>
+                  <i className="mode-option-arrow">→</i>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+
   if (!deck.length)
     return (
       <div className="page vocab-drill">
@@ -179,7 +239,7 @@ export default function VocabPractice({ words, close, onStudied }: { words: Word
   if (done)
     return (
       <div className="page vocab-drill">
-        <button className="back" onClick={close}>← Chọn chức năng khác</button>
+        <button className="back" onClick={() => setStarted(false)}>← Đổi chế độ luyện</button>
         <div className="panel drill-summary">
           <span className="summary-mark">✓</span>
           <h2>Xong {deck.length} thẻ{focusIds ? " · phần làm sai" : ""}</h2>
@@ -204,7 +264,7 @@ export default function VocabPractice({ words, close, onStudied }: { words: Word
   return (
     <div className="page vocab-drill" ref={stageRef}>
       <div className="drill-top">
-        <button className="drill-icon" onClick={close} aria-label="Quay lại">←</button>
+        <button className="drill-icon" onClick={() => setStarted(false)} aria-label="Đổi chế độ luyện">←</button>
         <b>{index + 1} / {deck.length}</b>
         <button className="drill-icon" onClick={fullscreen} aria-label="Toàn màn hình">⤢</button>
       </div>

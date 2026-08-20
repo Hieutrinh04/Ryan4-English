@@ -6,6 +6,7 @@ import { dictationLessons, dictationLevels, dictationTopics, type DictationLesso
 import ieltsAreaData from "../lib/ielts-areas.json";
 import ShadowingPractice from "../components/Shadowing";
 import VocabPractice from "../components/VocabPractice";
+import Dictionary, { type NewWord } from "../components/Dictionary";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
 // mẫu vẫn được công nhận đúng.
 type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { type: string; wrong: string; right: string; why: string }[] };
@@ -23,7 +24,7 @@ import { advice, byDay, entriesSince, summarise, weakest } from "../lib/review-l
 import { daysUntil, isDueForReview, localDateString, scheduleFor, streakFrom, weekdayIndex, wordState } from "../lib/srs.mjs";
 import { clozeFor } from "../lib/cloze.mjs";
 // Kiểu dùng chung và tầng lưu trữ đã tách khỏi file này.
-import { detailsFrom, exampleFor, fallbackExample, isPdfVocabulary, isSeedWord, withMeanings,
+import { detailsFrom, exampleFor, fallbackExample, fallbackExampleVi, isPdfVocabulary, isSeedWord, withMeanings,
   type EnrichmentMap, type ExamGoal, type ExampleMap, type ImportedVocabulary, type Rating, type ReviewMode,
   type UsageDetail, type UsageMap, type WeeklyVocabulary, type WordCard } from "../lib/types";
 import { activeTabKey, composeVietnamese, logReview, markDeleted, markStudiedToday, mergeStoredWords, readDeletedIds,
@@ -299,7 +300,7 @@ const heat = [0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 4, 2, 0, 1, 1, 2, 4, 3, 1, 2, 0, 3, 
 
 export default function Home() {
   // Luôn khởi tạo "home" để HTML dựng sẵn khớp với client; trang đã lưu được khôi phục sau khi hydrate.
-  const [tab, setTab] = useState<"home" | "words" | "practice" | "stats">("home");
+  const [tab, setTab] = useState<"home" | "words" | "practice" | "stats" | "dictionary">("home");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [reviewing, setReviewing] = useState(false);
   const [reviewQueue, setReviewQueue] = useState<WordCard[]>([]);
@@ -1070,6 +1071,9 @@ export default function Home() {
             <span>▤</span> Danh sách từ
             <em className="nav-count">{words.length}</em>
           </button>
+          <button className={tab === "dictionary" ? "nav-item active" : "nav-item"} onClick={() => goTab("dictionary")}>
+            <span>⌕</span> Từ điển AI
+          </button>
           <button className={tab === "practice" && !practiceIntent ? "nav-item active" : "nav-item"} onClick={() => { setPracticeIntent(null); setTab("practice"); }}>
             <span>◇</span> Công cụ ngoài
           </button>
@@ -1169,6 +1173,34 @@ export default function Home() {
         {tab === "practice" && <Practice key={practiceIntent ?? "menu"} words={words} intent={practiceIntent} />}
         {/* Thống kê tính trên toàn bộ thư viện, cùng phạm vi với các ô ở trang chủ. */}
         {tab === "stats" && <Stats words={words} scopeLabel="toàn bộ thư viện" streak={streakFrom(studyDays)} />}
+        {tab === "dictionary" && (
+          <Dictionary
+            has={(term) => words.some((word) => word.term.trim().toLowerCase() === term.trim().toLowerCase())}
+            onSave={(found: NewWord) => {
+              // Dùng đúng đường thêm từ như mọi chỗ khác, để từ tra được cũng vào
+              // lịch ôn Leitner ngay chứ không nằm ngoài hệ thống.
+              const created: WordCard = {
+                id: crypto.randomUUID(),
+                term: found.term,
+                ipa: found.ipa,
+                meaning: found.meaning,
+                partOfSpeech: found.partOfSpeech,
+                definition: found.definition,
+                example: fallbackExample(found.term),
+                exampleVi: fallbackExampleVi(found.term),
+                cloze: clozeFor(found.term, fallbackExample(found.term)),
+                topic: "Từ điển",
+                box: 1,
+                lapses: 0,
+                status: "new",
+                reviewCount: 0,
+                addedDate: localDateString(),
+              };
+              setWords((current) => [created, ...current]);
+              void persistWord(created);
+            }}
+          />
+        )}
       </section>
 
       <nav className="mobile-nav" aria-label="Điều hướng di động">
@@ -2854,7 +2886,15 @@ function Practice({ words, intent }: { words: WordCard[]; intent?: Exclude<Pract
   if (mode === "match") return <MatchGame words={activeWords} close={returnToModes} />;
   if (mode === "dictation") return <DictationPractice words={activeWords} close={returnToModes} />;
   if (mode === "shadow") return <ShadowingPractice close={returnToModes} onPractised={() => markStudiedToday()} />;
-  if (mode === "vocab") return <VocabPractice words={activeWords} close={returnToModes} onStudied={markStudiedToday} />;
+  if (mode === "vocab")
+    return (
+      <VocabPractice
+        words={activeWords}
+        close={returnToModes}
+        onStudied={markStudiedToday}
+        onPickOther={(next) => setMode(next as PracticeMode)}
+      />
+    );
   if (mode === "learn") return <LearnMode words={activeWords} setMode={setMode} />;
   if (mode === "test") return <TestMode words={activeWords} setMode={setMode} />;
   return <TranslateMode words={activeWords} setMode={setMode} back={returnToModes} />;
@@ -2864,17 +2904,20 @@ function Practice({ words, intent }: { words: WordCard[]; intent?: Exclude<Pract
 // Xếp theo việc người học đang muốn làm, không theo tên chế độ. Nhóm trên là học
 // thuộc mặt chữ và nghĩa; nhóm dưới là dùng vốn từ đó vào nghe, nói, viết.
 const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: string; skill: string }[] = [
-  { value: "vocab", label: "Luyện từ vựng", icon: "▤", skill: "vocab" },
-  { value: "dictation", label: "Nghe chép chính tả", icon: "≋", skill: "dictation" },
-  { value: "shadow", label: "Luyện nói (Shadowing)", icon: "◐", skill: "shadowing" },
+  { value: "dictation", label: "Dictation", icon: "◖))", skill: "dictation" },
+  { value: "shadow", label: "Shadowing", icon: "◐", skill: "shadowing" },
   { value: "translate", label: "Luyện viết", icon: "✍", skill: "writing" },
-  { value: "learn", label: "Học tới khi thuộc", icon: "✎", skill: "vocab" },
-  { value: "test", label: "Kiểm tra chấm điểm", icon: "◉", skill: "vocab" },
-  { value: "match", label: "Nối cặp", icon: "⌘", skill: "vocab" },
+  { value: "vocab", label: "Luyện từ vựng", icon: "▤", skill: "vocab" },
 ];
 
+// Ba chế độ này cũng tính giờ vào kỹ năng từ vựng, dù không có mặt ở thanh bên.
+const hiddenVocabModes: Exclude<PracticeMode, "menu">[] = ["learn", "test", "match"];
+
 /** Chế độ nào tính giờ vào kỹ năng nào, để biểu đồ trang chủ tách được các tab. */
-export const skillOfMode = Object.fromEntries(practiceNav.map((item) => [item.value, item.skill]));
+export const skillOfMode: Record<string, string> = {
+  ...Object.fromEntries(practiceNav.map((item) => [item.value, item.skill])),
+  ...Object.fromEntries(hiddenVocabModes.map((mode) => [mode, "vocab"])),
+};
 
 const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
   vocab: "Luyện từ vựng",
@@ -2932,10 +2975,12 @@ function normalizeAnswer(value: string) {
 // "flash" và "listen" đã bị bỏ: chúng làm đúng việc mà hai tab "Thẻ flashcard"
 // và "Nghe" trong Luyện từ vựng đã làm, chỉ ít tính năng hơn.
 type PracticeMode = "menu" | "vocab" | "learn" | "test" | "match" | "dictation" | "shadow" | "translate";
+// Bốn cách luyện từ vựng, hiện ngay trong mục Luyện từ vựng để đổi qua lại nhanh.
 const practiceModeBar: { value: PracticeMode; label: string; icon: string }[] = [
-  { value: "vocab", label: "Luyện từ vựng", icon: "▤" },
+  { value: "vocab", label: "Luyện thẻ", icon: "▤" },
   { value: "learn", label: "Học tới khi thuộc", icon: "✎" },
   { value: "test", label: "Kiểm tra", icon: "◉" },
+  { value: "match", label: "Nối cặp", icon: "⌘" },
 ];
 function PracticeModeBar({ mode, setMode }: { mode: PracticeMode; setMode: (m: PracticeMode) => void }) {
   return (

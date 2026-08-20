@@ -708,3 +708,59 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 
 @media(max-width:900px){.home-stats{grid-template-columns:1fr 1fr}.home-row{grid-template-columns:1fr}}
 @media(max-width:520px){.home-stats{grid-template-columns:1fr}}
+
+/* ── Màn hình chọn chế độ luyện tập ────────────────────────────────────────── */
+.mode-picker{max-width:600px;margin:0 auto;padding:8px 0 24px;text-align:center}
+.mode-picker h1{margin:6px 0 4px;font-size:26px}
+.mode-picker .page-sub{margin:0 0 22px}
+.mode-options{display:grid;gap:10px;text-align:left}
+.mode-option{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:14px;width:100%;
+  border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:14px;padding:14px 16px}
+.mode-option:hover:not(:disabled){border-color:var(--line-accent);background:var(--surface-2)}
+.mode-option:disabled{opacity:.45;cursor:not-allowed}
+.mode-option.active{border-color:var(--purple);background:var(--soft)}
+.mode-option-icon{width:42px;height:42px;border-radius:11px;background:var(--surface-2);display:grid;place-items:center;font-size:16px;color:var(--text-2)}
+.mode-option.active .mode-option-icon{background:var(--purple);color:var(--on-accent)}
+.mode-option-text{display:grid;gap:3px;min-width:0}
+.mode-option-text b{font-size:14px}
+.mode-option-text small{color:var(--muted);font-size:11px;line-height:1.5}
+.mode-option-dot{width:17px;height:17px;border:2px solid var(--line-accent);border-radius:50%;display:block}
+.mode-option.active .mode-option-dot{border-color:var(--purple);background:radial-gradient(circle,var(--purple) 0 46%,transparent 47%)}
+.mode-option-arrow{font-style:normal;color:var(--muted);font-size:14px}
+.mode-start{width:100%;margin-top:18px;padding:14px;font-size:14px}
+.mode-more{margin-top:26px;display:grid;gap:10px;text-align:left}
+.mode-more-title{color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.04em}
+@media(max-width:520px){.mode-picker h1{font-size:21px}.mode-option{gap:11px;padding:12px}}
+
+/* ── Từ điển AI ────────────────────────────────────────────────────────────── */
+.dictionary-page{max-width:680px;margin:0 auto}
+.dictionary-page h1{margin:6px 0 4px}
+.dictionary-search{display:flex;flex-wrap:wrap;gap:9px;margin:20px 0 16px}
+.dictionary-search input{flex:1 1 240px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:11px;padding:13px 15px;font-size:15px}
+.dictionary-search input:focus{outline:2px solid var(--purple);outline-offset:-1px}
+.dictionary-search .primary{padding:13px 22px}
+.dictionary-search .primary:disabled{opacity:.5;cursor:not-allowed}
+.dictionary-error{margin:0 0 14px;color:var(--pink);font-size:12px}
+.dictionary-card{display:grid;gap:14px}
+.dictionary-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.dictionary-head h2{margin:0;font-size:28px}
+.dictionary-head em{font-style:normal;color:var(--muted);font-size:14px}
+.dictionary-voices{display:flex;gap:7px}
+.dictionary-voices button{border:1px solid var(--line);background:var(--surface-2);color:var(--text-2);border-radius:8px;padding:7px 12px;font-size:10px;font-weight:700}
+.dictionary-voices button:hover{border-color:var(--purple);color:var(--purple)}
+.dictionary-meaning{margin:0;font-size:19px;font-weight:600;color:var(--purple-dark)}
+:root .dictionary-meaning{color:var(--purple)}
+:root[data-theme="light"] .dictionary-meaning{color:var(--purple-dark)}
+.dictionary-senses{margin:0;padding:0;list-style:none;display:grid;gap:11px}
+.dictionary-senses li{display:grid;gap:4px;border-left:3px solid var(--line-accent);padding-left:12px}
+.dictionary-senses b{color:var(--purple);font-size:11px;font-style:italic}
+.dictionary-senses span{font-size:13px;line-height:1.6}
+.dictionary-senses small{color:var(--muted);font-size:11px}
+.dictionary-note{margin:0;color:var(--muted);font-size:12px}
+.dictionary-note.done{color:var(--mark-ok)}
+.dictionary-save{justify-self:start;padding:11px 18px}
+.dictionary-history{margin-top:24px}
+.dictionary-history h3{font-size:12px;color:var(--muted);margin:0 0 10px}
+.dictionary-history div{display:flex;flex-wrap:wrap;gap:7px}
+.dictionary-history button{border:1px solid var(--line);background:var(--surface);color:var(--text-2);border-radius:20px;padding:7px 13px;font-size:11px}
+.dictionary-history button:hover{border-color:var(--purple);color:var(--purple)}
