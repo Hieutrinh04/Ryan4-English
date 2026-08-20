@@ -801,3 +801,35 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 .section-actions .add-menu{position:relative}
 .add-menu-trigger{display:inline-flex;align-items:center;gap:9px}
 .section-actions .add-menu-list{top:calc(100% + 8px);bottom:auto;left:auto;right:0;width:270px}
+
+/* ── Biểu tượng nét và cỡ chữ ─────────────────────────────────────────────── */
+/* Biểu tượng SVG thừa hưởng màu chữ, nên chỉ cần chỉnh màu của mục là biểu tượng
+   đổi theo — không phải tô màu riêng cho từng cái. */
+/* Biểu tượng KHÔNG tô màu riêng: nó ăn theo màu chữ của chính mục đó. Trước đây
+   tô bằng var(--muted) thì ở giao diện sáng icon vẫn lấy giá trị của giao diện
+   tối, đo được 1.96 — nhạt tới mức gần như không thấy. */
+.nav-item svg{flex-shrink:0}
+
+
+.nav-item{font-size:13.5px;padding:11px 13px;gap:12px;line-height:1.35}
+.nav-item span:not([class]){display:none}
+.nav-group{font-size:9.5px;letter-spacing:.11em;color:var(--text-3);font-weight:800;padding:0 13px;margin:20px 0 4px}
+.sidebar nav{gap:2px;margin-top:34px}
+.nav-count{margin-left:auto;font-style:normal;background:var(--surface-2);color:var(--muted);border-radius:20px;padding:2px 8px;font-size:10px;font-weight:700}
+.theme-toggle svg{flex-shrink:0}
+.theme-toggle{display:flex;align-items:center;gap:12px;padding:11px 13px}
+.theme-toggle b{font-size:13px;font-weight:600}
+
+/* Bốn thẻ số liệu trang chủ: số to rõ, nhãn đủ sáng để đọc được. */
+.home-stat b{font-size:23px;letter-spacing:-.5px}
+.home-stat small{font-size:11px;color:var(--text-2)}
+.home-stat-icon{color:var(--muted)}
+.home-stat-icon.flame{background:var(--tint-orange);color:var(--orange)}
+.home-stat.as-button .home-stat-icon{background:var(--soft);color:var(--purple)}
+
+/* Nút thêm từ ở đầu trang: biểu tượng cộng đi liền chữ, mũi tên xoay khi mở. */
+.add-menu-trigger{gap:7px;padding:11px 16px;font-size:13.5px}
+.add-menu-trigger .add-menu-caret{opacity:.75}
+.greeting .add-menu{flex-shrink:0}
+.greeting .add-menu-list{top:calc(100% + 8px);bottom:auto;left:auto;right:0;width:270px}
+@media(max-width:640px){.greeting{flex-direction:column;align-items:flex-start;gap:14px}}

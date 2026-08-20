@@ -1,12 +1,13 @@
 "use client";
 
-import { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
+import { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, type ReactNode, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { aiFetch, supabase } from "../lib/supabase";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLesson, type DictationLevel } from "../lib/dictation-lessons";
 import ieltsAreaData from "../lib/ielts-areas.json";
 import ShadowingPractice from "../components/Shadowing";
 import VocabPractice from "../components/VocabPractice";
 import Dictionary, { type NewWord } from "../components/Dictionary";
+import Icon, { type IconName } from "../components/Icon";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
 // mẫu vẫn được công nhận đúng.
 type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { type: string; wrong: string; right: string; why: string }[] };
@@ -1046,10 +1047,10 @@ export default function Home() {
         <nav aria-label="Điều hướng chính">
           <span className="nav-group">TỔNG QUAN</span>
           <button className={tab === "home" ? "nav-item active" : "nav-item"} onClick={() => goTab("home")}>
-            <span>⌂</span> Trang chủ
+            <Icon name="home" /> Trang chủ
           </button>
           <button className={tab === "stats" ? "nav-item active" : "nav-item"} onClick={() => goTab("stats")}>
-            <span>⌁</span> Tiến độ
+            <Icon name="chart" /> Tiến độ
           </button>
 
           <span className="nav-group">LUYỆN TẬP</span>
@@ -1062,25 +1063,25 @@ export default function Home() {
                 setTab("practice");
               }}
             >
-              <span>{item.icon}</span> {item.label}
+              <Icon name={item.icon} /> {item.label}
             </button>
           ))}
 
           <span className="nav-group">THƯ VIỆN</span>
           <button className={tab === "words" ? "nav-item active" : "nav-item"} onClick={() => goTab("words")}>
-            <span>▤</span> Danh sách từ
+            <Icon name="list" /> Danh sách từ
             <em className="nav-count">{words.length}</em>
           </button>
           <button className={tab === "dictionary" ? "nav-item active" : "nav-item"} onClick={() => goTab("dictionary")}>
-            <span>⌕</span> Từ điển AI
+            <Icon name="search" /> Từ điển AI
           </button>
           <button className={tab === "practice" && !practiceIntent ? "nav-item active" : "nav-item"} onClick={() => { setPracticeIntent(null); setTab("practice"); }}>
-            <span>◇</span> Công cụ ngoài
+            <Icon name="compass" /> Công cụ ngoài
           </button>
         </nav>
         <div className="sidebar-bottom">
           <button className="theme-toggle" onClick={toggleTheme} aria-label={`Chuyển sang chế độ ${theme === "dark" ? "sáng" : "tối"}`}>
-            <span>{theme === "dark" ? "☀" : "☾"}</span>
+            <Icon name={theme === "dark" ? "sun" : "moon"} />
             <b>{theme === "dark" ? "Chế độ sáng" : "Chế độ tối"}</b>
           </button>
           <button className="profile" onClick={() => setShowAuth(true)}>
@@ -1128,7 +1129,7 @@ export default function Home() {
             </button>
           </div>
         )}
-        {tab === "home" && <Dashboard words={words} startReview={startReview} startTopicReview={startTopicReview} openWords={() => setTab("words")} openPractice={() => setTab("practice")} startWordReview={(id) => launchReview(words.filter((word) => word.id === id))} startDueReview={() => launchReview(words.filter(isDueAgain))} exam={exam} setExam={(goal) => { setExam(goal); writeExam(goal); }} streak={streakFrom(studyDays)} />}
+        {tab === "home" && <Dashboard addMenu={<AddMenu onManual={() => setShowAdd(true)} onPaste={() => setShowBulkAdd(true)} onDictionary={() => goTab("dictionary")} />} words={words} startReview={startReview} startTopicReview={startTopicReview} openWords={() => setTab("words")} openPractice={() => setTab("practice")} startWordReview={(id) => launchReview(words.filter((word) => word.id === id))} startDueReview={() => launchReview(words.filter(isDueAgain))} exam={exam} setExam={(goal) => { setExam(goal); writeExam(goal); }} streak={streakFrom(studyDays)} />}
         {tab === "words" && (
           <Words
             words={filtered}
@@ -1252,7 +1253,7 @@ export default function Home() {
   );
 }
 
-function Dashboard({ words, startReview, startTopicReview, openWords, openPractice, startWordReview, startDueReview, exam, setExam, streak }: { words: WordCard[]; startReview: (dayIndex?: number | "pdf") => void; startTopicReview: (topic: string) => void; openWords: () => void; openPractice: () => void; startWordReview: (id: string) => void; startDueReview: () => void; exam: ExamGoal | null; setExam: (goal: ExamGoal | null) => void; streak: { current: number; best: number; studiedToday: boolean } }) {
+function Dashboard({ words, startReview, startTopicReview, openWords, openPractice, startWordReview, startDueReview, exam, setExam, streak, addMenu }: { words: WordCard[]; addMenu?: ReactNode; startReview: (dayIndex?: number | "pdf") => void; startTopicReview: (topic: string) => void; openWords: () => void; openPractice: () => void; startWordReview: (id: string) => void; startDueReview: () => void; exam: ExamGoal | null; setExam: (goal: ExamGoal | null) => void; streak: { current: number; best: number; studiedToday: boolean } }) {
   const personal = words.filter((word) => !isPdfVocabulary(word));
   // Chưa có từ cá nhân thì phiên học hôm nay lấy từ bộ PDF, thay vì trống trơn.
   const onlyPdf = !personal.length && words.length > 0;
@@ -1344,22 +1345,23 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
           </h1>
           <p>Một phiên ôn ngắn hôm nay sẽ giúp trí nhớ đi xa hơn.</p>
         </div>
+        {addMenu}
       </div>
       <div className="home-stats">
         <div className="home-stat">
-          <span className="home-stat-icon">🔥</span>
+          <span className="home-stat-icon flame"><Icon name="flame" /></span>
           <div><b>{streak.current}</b><small>ngày · chuỗi hiện tại</small></div>
         </div>
         <div className="home-stat">
-          <span className="home-stat-icon">◷</span>
+          <span className="home-stat-icon"><Icon name="clock" /></span>
           <div><b>{time.hours}h {time.rest}m</b><small>thời gian luyện tập</small></div>
         </div>
         <div className="home-stat">
-          <span className="home-stat-icon">▤</span>
+          <span className="home-stat-icon"><Icon name="list" /></span>
           <div><b>{words.length}</b><small>từ đã lưu</small></div>
         </div>
         <button className="home-stat as-button" onClick={() => setShowXp((value) => !value)} aria-expanded={showXp}>
-          <span className="home-stat-icon">◎</span>
+          <span className="home-stat-icon"><Icon name="target" /></span>
           <div>
             <b>{level.xp} XP</b>
             <small>Lv.{level.level} · {level.name}</small>
@@ -2772,17 +2774,18 @@ function AddMenu({ onManual, onPaste, onDictionary }: { onManual: () => void; on
     };
   }, [open]);
 
-  const items = [
-    { icon: "✎", label: "Thêm thủ công", hint: "Nhập từng từ bằng tay", key: "⌘ K", run: onManual },
-    { icon: "☷", label: "Dán danh sách", hint: "Dán nhiều từ cùng lúc", key: "", run: onPaste },
-    { icon: "⌕", label: "Tra từ điển AI", hint: "Tra nghĩa rồi lưu vào danh sách", key: "", run: onDictionary },
+  const items: { icon: IconName; label: string; hint: string; key: string; run: () => void }[] = [
+    { icon: "pen", label: "Thêm thủ công", hint: "Nhập từng từ bằng tay", key: "⌘ K", run: onManual },
+    { icon: "list", label: "Dán danh sách", hint: "Dán nhiều từ cùng lúc", key: "", run: onPaste },
+    { icon: "search", label: "Tra từ điển AI", hint: "Tra nghĩa rồi lưu vào danh sách", key: "", run: onDictionary },
   ];
 
   return (
     <div className="add-menu" ref={holder}>
       <button className="primary add-menu-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="menu">
-        <span>＋ Thêm từ</span>
-        <i className={open ? "add-menu-caret open" : "add-menu-caret"}>⌄</i>
+        <Icon name="plus" size={17} />
+        <span>Thêm từ</span>
+        <Icon name="chevron" size={15} className={open ? "add-menu-caret open" : "add-menu-caret"} />
       </button>
       {open && (
         <div className="add-menu-list" role="menu">
@@ -2795,7 +2798,7 @@ function AddMenu({ onManual, onPaste, onDictionary }: { onManual: () => void; on
                 item.run();
               }}
             >
-              <span className="add-menu-icon">{item.icon}</span>
+              <span className="add-menu-icon"><Icon name={item.icon} size={17} /></span>
               <span>
                 <b>{item.label}</b>
                 <small>{item.hint}</small>
@@ -2963,11 +2966,11 @@ function Practice({ words, intent }: { words: WordCard[]; intent?: Exclude<Pract
 // Thứ tự và nhãn của các chế độ khi hiện ở thanh bên trái.
 // Xếp theo việc người học đang muốn làm, không theo tên chế độ. Nhóm trên là học
 // thuộc mặt chữ và nghĩa; nhóm dưới là dùng vốn từ đó vào nghe, nói, viết.
-const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: string; skill: string }[] = [
-  { value: "dictation", label: "Dictation", icon: "◖))", skill: "dictation" },
-  { value: "shadow", label: "Shadowing", icon: "◐", skill: "shadowing" },
-  { value: "translate", label: "Luyện viết", icon: "✍", skill: "writing" },
-  { value: "vocab", label: "Luyện từ vựng", icon: "▤", skill: "vocab" },
+const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: IconName; skill: string }[] = [
+  { value: "dictation", label: "Dictation", icon: "headphones", skill: "dictation" },
+  { value: "shadow", label: "Shadowing", icon: "mic", skill: "shadowing" },
+  { value: "translate", label: "Luyện viết", icon: "pen", skill: "writing" },
+  { value: "vocab", label: "Luyện từ vựng", icon: "book", skill: "vocab" },
 ];
 
 // Ba chế độ này cũng tính giờ vào kỹ năng từ vựng, dù không có mặt ở thanh bên.
