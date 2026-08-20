@@ -764,3 +764,21 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 .dictionary-history div{display:flex;flex-wrap:wrap;gap:7px}
 .dictionary-history button{border:1px solid var(--line);background:var(--surface);color:var(--text-2);border-radius:20px;padding:7px 13px;font-size:11px}
 .dictionary-history button:hover{border-color:var(--purple);color:var(--purple)}
+
+/* ── Nút thêm từ kèm menu ──────────────────────────────────────────────────── */
+.add-menu{position:relative}
+.add-menu>.quick-add{width:100%;display:flex;align-items:center;justify-content:center;gap:8px}
+.add-menu-caret{font-style:normal;font-size:13px;line-height:1;transition:transform .16s}
+.add-menu-caret.open{transform:rotate(180deg)}
+/* Nút nằm sát đáy thanh bên nên menu phải bung LÊN, nếu không sẽ tràn khỏi màn hình. */
+.add-menu-list{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:20;
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:6px;
+  box-shadow:0 18px 42px #0000004d;display:grid;gap:2px}
+.add-menu-list button{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:11px;
+  width:100%;border:0;background:none;color:var(--ink);border-radius:9px;padding:10px 11px;text-align:left}
+.add-menu-list button:hover{background:var(--surface-2)}
+.add-menu-icon{width:32px;height:32px;border-radius:9px;background:var(--surface-2);color:var(--text-2);display:grid;place-items:center;font-size:14px}
+.add-menu-list button:hover .add-menu-icon{background:var(--soft);color:var(--purple-dark)}
+.add-menu-list b{display:block;font-size:12.5px;font-weight:700}
+.add-menu-list small{display:block;color:var(--muted);font-size:10px;margin-top:2px;line-height:1.4}
+.add-menu-list kbd{border:1px solid var(--line);background:var(--surface-2);color:var(--text-3);border-radius:5px;padding:2px 5px;font-size:9px}

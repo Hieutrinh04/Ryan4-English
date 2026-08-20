@@ -308,6 +308,24 @@ export default function Home() {
   const [index, setIndex] = useState(0);
   const [words, setWords] = useState(initialWords);
   const [showAdd, setShowAdd] = useState(false);
+  // Menu thêm từ: gộp ba lối thêm vào một nút thay vì xếp chồng từng nút một.
+  const [addMenu, setAddMenu] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!addMenu) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!addMenuRef.current?.contains(event.target as Node)) setAddMenu(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAddMenu(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [addMenu]);
   const [showBulkAdd, setShowBulkAdd] = useState(false);
   // Chế độ luyện tập chọn thẳng từ thanh bên; null nghĩa là trang công cụ ngoài.
   const [practiceIntent, setPracticeIntent] = useState<Exclude<PracticeMode, "menu"> | null>(null);
@@ -1083,10 +1101,29 @@ export default function Home() {
             <span>{theme === "dark" ? "☀" : "☾"}</span>
             <b>{theme === "dark" ? "Chế độ sáng" : "Chế độ tối"}</b>
           </button>
-          <button className="quick-add" onClick={() => setShowAdd(true)}>
-            ＋ Thêm từ mới <kbd>⌘ K</kbd>
-          </button>
-          <button className="quick-add bulk-add-trigger" onClick={() => setShowBulkAdd(true)}>☷ Dán danh sách</button>
+          <div className="add-menu" ref={addMenuRef}>
+            <button className="quick-add" onClick={() => setAddMenu((open) => !open)} aria-expanded={addMenu} aria-haspopup="menu">
+              <span>＋ Thêm từ</span>
+              <i className={addMenu ? "add-menu-caret open" : "add-menu-caret"}>⌄</i>
+            </button>
+            {addMenu && (
+              <div className="add-menu-list" role="menu">
+                <button role="menuitem" onClick={() => { setAddMenu(false); setShowAdd(true); }}>
+                  <span className="add-menu-icon">✎</span>
+                  <span><b>Thêm thủ công</b><small>Nhập từng từ bằng tay</small></span>
+                  <kbd>⌘ K</kbd>
+                </button>
+                <button role="menuitem" onClick={() => { setAddMenu(false); setShowBulkAdd(true); }}>
+                  <span className="add-menu-icon">☷</span>
+                  <span><b>Dán danh sách</b><small>Dán nhiều từ cùng lúc</small></span>
+                </button>
+                <button role="menuitem" onClick={() => { setAddMenu(false); goTab("dictionary"); }}>
+                  <span className="add-menu-icon">⌕</span>
+                  <span><b>Tra từ điển AI</b><small>Tra nghĩa rồi lưu vào danh sách</small></span>
+                </button>
+              </div>
+            )}
+          </div>
           <button className="profile" onClick={() => setShowAuth(true)}>
             <span className="avatar">RY</span>
             <span>
