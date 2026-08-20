@@ -36,6 +36,14 @@ const eslintConfig = defineConfig([
       },
     },
   },
+  {
+    // Tiện ích Chrome chạy trong môi trường riêng: nó có biến toàn cục "chrome"
+    // mà app không có. Khai báo ở đây thay vì rải chú thích eslint khắp các tệp.
+    files: ["extension/**/*.js"],
+    languageOptions: {
+      globals: { chrome: "readonly" },
+    },
+  },
 ]);
 
 export default eslintConfig;

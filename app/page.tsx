@@ -9,6 +9,7 @@ import VocabPractice from "../components/VocabPractice";
 import Dictionary, { type NewWord } from "../components/Dictionary";
 import Icon, { type IconName } from "../components/Icon";
 import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
+import { lessonFromHash, readLessons, removeLesson, saveLesson } from "../lib/lessons.mjs";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
 // mẫu vẫn được công nhận đúng.
 type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { type: string; wrong: string; right: string; why: string }[] };
@@ -303,6 +304,9 @@ const heat = [0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 4, 2, 0, 1, 1, 2, 4, 3, 1, 2, 0, 3, 
 export default function Home() {
   // Luôn khởi tạo "home" để HTML dựng sẵn khớp với client; trang đã lưu được khôi phục sau khi hydrate.
   const [tab, setTab] = useState<"home" | "words" | "practice" | "stats" | "dictionary">("home");
+  // Bài nghe lấy từ video. Tiện ích trình duyệt mở app kèm bài trong phần neo địa chỉ.
+  const [lessons, setLessons] = useState<VideoLesson[]>([]);
+  const [imported, setImported] = useState("");
   const [theme, setTheme] = useState<string>(DEFAULT_THEME);
   const [reviewing, setReviewing] = useState(false);
   const [reviewQueue, setReviewQueue] = useState<WordCard[]>([]);
@@ -356,6 +360,27 @@ export default function Home() {
 
   // Chủ đề chỉ đọc được sau khi hydrate: nếu đọc localStorage lúc khởi tạo state thì HTML
   // dựng sẵn (luôn "dark") sẽ khác client và React báo lỗi hydration.
+  // Nhận bài do tiện ích gửi sang. Dữ liệu đến từ địa chỉ nên lessonFromHash phải
+  // kiểm từng trường trước khi lưu; ở đây chỉ lo phần đọc neo và dọn neo đi.
+  useEffect(() => {
+    const decode = (value: string) => new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
+    const take = () => {
+      const lesson = lessonFromHash(window.location.hash, decode) as { title: string; sentences: unknown[] } | null;
+      if (!lesson) return;
+      setLessons(saveLesson(lesson));
+      setImported(`Đã thêm bài "${lesson.title}" · ${lesson.sentences.length} câu`);
+      // Dọn neo đi để tải lại trang không thêm bài lần nữa.
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    };
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
+    setLessons(readLessons());
+    take();
+    // Tiện ích mở thẻ mới thì nhánh trên đủ. Nhưng nếu nó rơi vào thẻ Lexilo đang
+    // mở sẵn, chỉ neo đổi chứ trang không dựng lại — thiếu nhánh này là bài rơi mất.
+    window.addEventListener("hashchange", take);
+    return () => window.removeEventListener("hashchange", take);
+  }, []);
+
   useEffect(() => {
     const saved = readTheme();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đồng bộ một lần với localStorage, không tạo vòng lặp render
@@ -1086,6 +1111,13 @@ export default function Home() {
       </aside>
 
       <section className="content">
+        {imported && (
+          <div className="import-banner">
+            <Icon name="check" size={17} />
+            <span>{imported}</span>
+            <button onClick={() => setImported("")} aria-label="Đóng thông báo">×</button>
+          </div>
+        )}
         <header className="mobile-head">
           <div className="brand">
             <span className="brand-mark">L</span>
@@ -1128,6 +1160,7 @@ export default function Home() {
             </button>
           </div>
         )}
+        {tab === "home" && <VideoLessons lessons={lessons} remove={(id) => setLessons(removeLesson(id))} />}
         {tab === "home" && <Dashboard addMenu={<AddMenu onManual={() => setShowAdd(true)} onPaste={() => setShowBulkAdd(true)} onDictionary={() => goTab("dictionary")} />} words={words} startReview={startReview} startTopicReview={startTopicReview} openWords={() => setTab("words")} openPractice={() => setTab("practice")} startWordReview={(id) => launchReview(words.filter((word) => word.id === id))} startDueReview={() => launchReview(words.filter(isDueAgain))} exam={exam} setExam={(goal) => { setExam(goal); writeExam(goal); }} streak={streakFrom(studyDays)} />}
         {tab === "words" && (
           <Words
@@ -2871,6 +2904,44 @@ function AddMenu({ onManual, onPaste, onDictionary }: { onManual: () => void; on
         </div>
       )}
     </div>
+  );
+}
+
+/** Một bài nghe lấy từ video. Kho bài nằm ở lib/lessons.mjs. */
+type VideoLesson = { id: string; videoId: string; title: string; author: string; seconds: number; source: string; sentences: { text: string }[] };
+
+/**
+ * Kho bài lấy từ video.
+ *
+ * Để ở Trang chủ vì màn hình học trên video chưa dựng xong: bài nhập vào phải nhìn
+ * thấy và xoá được ngay, chứ không nằm im trong bộ nhớ máy mà người dùng không biết.
+ */
+function VideoLessons({ lessons, remove }: { lessons: VideoLesson[]; remove: (id: string) => void }) {
+  if (!lessons.length) return null;
+  return (
+    <section className="panel video-lessons">
+      <div className="panel-title">
+        <div>
+          <h3>Bài từ video</h3>
+          <p>{lessons.length} bài đã lấy về. Màn hình luyện nghe trên video đang được dựng.</p>
+        </div>
+      </div>
+      <ul>
+        {lessons.map((lesson) => (
+          <li key={lesson.id}>
+            <a href={`https://www.youtube.com/watch?v=${lesson.videoId}`} target="_blank" rel="noreferrer">
+              <b>{lesson.title}</b>
+              <small>
+                {[lesson.author, `${lesson.sentences.length} câu`, lesson.source === "extension" ? "qua tiện ích" : "dán tay"]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </small>
+            </a>
+            <button onClick={() => remove(lesson.id)} aria-label={`Xoá bài ${lesson.title}`}>×</button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

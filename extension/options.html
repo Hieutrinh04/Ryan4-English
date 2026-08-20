@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Cài đặt Lexilo</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { max-width: 520px; margin: 40px auto; padding: 0 20px; background: #0f0e23; color: #f2f2f8;
+             font: 14px/1.6 "Segoe UI", system-ui, sans-serif; }
+      h1 { font-size: 19px; margin: 0 0 6px; }
+      p { color: #a09cbb; font-size: 12.5px; margin: 0 0 20px; }
+      label { display: block; font-size: 12px; color: #a09cbb; margin-bottom: 6px; }
+      input { width: 100%; background: #1c1b3a; color: #f2f2f8; border: 1px solid #33325c;
+              border-radius: 8px; padding: 11px; font: inherit; }
+      button { margin-top: 14px; border: 0; border-radius: 8px; padding: 11px 20px;
+               background: #5b4fc4; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+      .saved { margin-left: 12px; color: #5fc98f; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Địa chỉ Lexilo</h1>
+    <p>Nơi tiện ích mở bài sau khi lấy phụ đề. Chạy trên máy thì để nguyên; đã đưa lên mạng thì điền địa chỉ thật.</p>
+    <label for="url">Địa chỉ</label>
+    <input id="url" type="url" placeholder="http://localhost:3000" />
+    <div><button id="save">Lưu</button><span class="saved" id="saved" hidden>Đã lưu</span></div>
+    <script src="options.js"></script>
+  </body>
+</html>

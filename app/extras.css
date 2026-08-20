@@ -880,3 +880,24 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
    để đỡ chữ trắng — ở tông xanh chỉ còn 1.89. */
 .primary{background:var(--accent-solid)}
 .hero-card .primary{background:var(--surface);color:var(--purple-dark)}
+
+/* ── Thông báo đã nhận bài từ tiện ích ─────────────────────────────────────── */
+.import-banner{display:flex;align-items:center;gap:10px;margin:0 auto;max-width:1210px;
+  padding:12px 18px;background:var(--tint-green);color:var(--mark-ok);
+  border-bottom:1px solid var(--green-line);font-size:12.5px;font-weight:600}
+.import-banner svg{flex-shrink:0}
+.import-banner span{flex:1}
+.import-banner button{border:0;background:none;color:inherit;font-size:18px;line-height:1;padding:0 4px}
+
+/* ── Kho bài lấy từ video ──────────────────────────────────────────────────── */
+.video-lessons{margin-bottom:18px}
+.video-lessons ul{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:8px}
+.video-lessons li{display:flex;align-items:center;gap:10px;border:1px solid var(--line);
+  background:var(--surface-2);border-radius:10px;padding:11px 13px}
+.video-lessons a{flex:1;display:grid;gap:3px;min-width:0;color:var(--ink);text-decoration:none}
+.video-lessons a:hover b{color:var(--purple)}
+.video-lessons b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.video-lessons small{color:var(--muted);font-size:10.5px}
+.video-lessons li>button{border:1px solid var(--line);background:var(--surface);color:var(--muted);
+  border-radius:7px;width:28px;height:28px;font-size:15px;line-height:1;flex-shrink:0}
+.video-lessons li>button:hover{border-color:var(--pink-line);color:var(--pink)}

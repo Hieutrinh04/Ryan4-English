@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Lexilo — Lấy bài từ YouTube",
+  "version": "0.1.0",
+  "description": "Lấy phụ đề của video YouTube đang xem và tạo bài nghe chép chính tả, nói nhại trong Lexilo.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://www.youtube.com/*", "https://m.youtube.com/*"],
+  "action": {
+    "default_title": "Gửi video này sang Lexilo",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "icons": { "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}

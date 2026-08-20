@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Lexilo</title>
+    <style>
+      :root { color-scheme: dark; --bg:#0f0e23; --surface:#1c1b3a; --line:#33325c; --ink:#f2f2f8; --muted:#a09cbb; --accent:#5b4fc4; }
+      body { width: 320px; margin: 0; padding: 16px; background: var(--bg); color: var(--ink);
+             font: 13px/1.5 "Segoe UI", system-ui, sans-serif; }
+      h1 { margin: 0 0 4px; font-size: 15px; }
+      p { margin: 0; color: var(--muted); font-size: 11.5px; }
+      .card { margin-top: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+      .card b { display: block; font-size: 12.5px; line-height: 1.4; }
+      .card small { color: var(--muted); font-size: 11px; }
+      label { display: block; margin-top: 12px; color: var(--muted); font-size: 11px; }
+      select { width: 100%; margin-top: 5px; background: var(--surface); color: var(--ink);
+               border: 1px solid var(--line); border-radius: 7px; padding: 8px; font: inherit; }
+      button { width: 100%; margin-top: 14px; border: 0; border-radius: 8px; padding: 11px;
+               background: var(--accent); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+      button:disabled { opacity: .5; cursor: not-allowed; }
+      .note { margin-top: 10px; font-size: 11px; line-height: 1.5; }
+      .note.bad { color: #f28b95; }
+      .note.good { color: #5fc98f; }
+      a { color: #a99bff; }
+    </style>
+  </head>
+  <body>
+    <h1>Lấy bài từ video này</h1>
+    <p>Tiện ích đọc phụ đề ngay trong trang YouTube rồi tạo bài trong Lexilo.</p>
+
+    <div class="card" id="video" hidden><b id="title"></b><small id="meta"></small></div>
+
+    <label for="track">Bản phụ đề</label>
+    <select id="track" disabled><option>Đang đọc trang…</option></select>
+
+    <button id="send" disabled>Tạo bài trong Lexilo</button>
+    <p class="note" id="note"></p>
+    <p class="note"><a href="#" id="settings">Đổi địa chỉ Lexilo</a></p>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
