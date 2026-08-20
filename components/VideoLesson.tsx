@@ -6,6 +6,7 @@ import Icon from "./Icon";
 import { createRecogniser, hasRecognition, micError, type Recognition } from "../lib/speech";
 import { doneSentences, markSentence, readLessonProgress } from "../lib/lessons.mjs";
 import { properNouns, scoreDictation, wordShapes } from "../lib/youtube.mjs";
+import { missingWords, readIpaCache, readTranslationCache, saveIpa, saveTranslation, withIpa } from "../lib/sentence-aids.mjs";
 import { scoreShadowing, shadowingAdvice, paceOf } from "../lib/shadowing.mjs";
 
 // Học trên chính video: nghe chép chính tả và nói nhại theo TỪNG CÂU.
@@ -43,6 +44,14 @@ export default function VideoLesson({ lesson, mode, close, onStudied }: { lesson
   const [spokenFor, setSpokenFor] = useState(0);
   const [micNote, setMicNote] = useState("");
 
+  // Ba thứ đỡ khi nghe, bật tắt riêng vì mỗi người cần mức đỡ khác nhau.
+  const [showText, setShowText] = useState(true);
+  const [showIpa, setShowIpa] = useState(false);
+  const [showVi, setShowVi] = useState(false);
+  const [ipaCache, setIpaCache] = useState<Record<string, string>>({});
+  const [viCache, setViCache] = useState<Record<string, string>>({});
+  const [lookup, setLookup] = useState<{ word: string; ipa: string; meaning: string } | null>(null);
+
   const player = useRef<PlayerHandle | null>(null);
   const engine = useRef<Recognition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -54,7 +63,51 @@ export default function VideoLesson({ lesson, mode, close, onStudied }: { lesson
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
     setProgress(readLessonProgress());
+    setIpaCache(readIpaCache());
+    setViCache(readTranslationCache());
   }, []);
+
+  // Chỉ tra những gì CHƯA có và chỉ khi người học bật lên. Một video mười phút có
+  // hàng trăm câu; tra sẵn tất cả là một trận gọi mạng vô nghĩa.
+  useEffect(() => {
+    if (!sentence) return;
+    let alive = true;
+    const jobs: Promise<void>[] = [];
+
+    if (showIpa) {
+      const need = missingWords(sentence.text, ipaCache) as string[];
+      if (need.length) {
+        jobs.push(
+          fetch("/api/ipa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ words: need }) })
+            .then((response) => response.json())
+            .then((data: { ipa?: Record<string, string> }) => {
+              if (alive && data.ipa) setIpaCache(saveIpa(data.ipa));
+            })
+            .catch(() => {}),
+        );
+      }
+    }
+
+    if (showVi && !viCache[sentence.text]) {
+      jobs.push(
+        fetch("/api/translate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texts: [sentence.text] }) })
+          .then((response) => response.json())
+          .then((data: { translations?: string[] }) => {
+            const vietnamese = data.translations?.[0];
+            if (alive && vietnamese) setViCache(saveTranslation(sentence.text, vietnamese));
+          })
+          .catch(() => {}),
+      );
+    }
+
+    if (!jobs.length) return;
+    return () => {
+      alive = false;
+    };
+    // ipaCache và viCache cố tình không nằm trong danh sách: chúng thay đổi CHÍNH
+    // VÌ hiệu ứng này chạy, đưa vào là thành vòng lặp.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sentence?.text, showIpa, showVi]);
 
   useEffect(() => {
     if (mode === "dictation" && !checked) inputRef.current?.focus();
@@ -70,6 +123,20 @@ export default function VideoLesson({ lesson, mode, close, onStudied }: { lesson
     player.current.play();
   }
 
+  async function lookUp(token: string) {
+    const word = token.toLowerCase().replace(/[^a-z'-]/g, "");
+    if (!word) return;
+    setLookup({ word, ipa: ipaCache[word] ?? "", meaning: "Đang tra…" });
+    try {
+      const response = await fetch(`/api/ai/glance?q=${encodeURIComponent(word)}`);
+      const data = (await response.json()) as { ipa?: string; meaningVi?: string; senses?: { definition?: string }[]; error?: string };
+      if (!response.ok || data.error) throw new Error(data.error ?? "không tra được");
+      setLookup({ word, ipa: data.ipa || ipaCache[word] || "", meaning: data.meaningVi || data.senses?.[0]?.definition || "Không tra được nghĩa." });
+    } catch {
+      setLookup({ word, ipa: ipaCache[word] ?? "", meaning: "Không tra được từ này." });
+    }
+  }
+
   function go(step: number) {
     const next = Math.min(lesson.sentences.length - 1, Math.max(0, index + step));
     setIndex(next);
@@ -79,6 +146,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied }: { lesson
     setRevealed(false);
     setHeard("");
     setMicNote("");
+    setLookup(null);
     player.current?.pause();
   }
 
@@ -94,6 +162,11 @@ export default function VideoLesson({ lesson, mode, close, onStudied }: { lesson
     [checked, sentence, typed],
   );
   const shapes = useMemo(() => (sentence ? (wordShapes(sentence.text) as { word: string; letters: number }[]) : []), [sentence]);
+  // Còn thiếu thứ đang bật thì tức là đang tra. Suy ra thay vì giữ state riêng:
+  // state riêng sẽ kẹt ở "đang tra" mãi nếu lượt gọi mạng hỏng giữa chừng.
+  const aidBusy =
+    Boolean(sentence) &&
+    ((showIpa && (missingWords(sentence.text, ipaCache) as string[]).length > 0) || (showVi && !viCache[sentence.text]));
   const names = useMemo(() => (sentence ? (properNouns(sentence.text) as string[]) : []), [sentence]);
 
   function check() {
@@ -247,11 +320,48 @@ export default function VideoLesson({ lesson, mode, close, onStudied }: { lesson
                   <button onClick={() => { setRevealed(true); setChecked(true); finish(); }} disabled={revealed}>Xem đáp án</button>
                 </div>
 
+                {/* Bản dịch ở đây là GỢI Ý, không phải đáp án: nó cho biết câu nói
+                    về chuyện gì mà không lộ chữ nào. Mặc định tắt. */}
+                <div className="lesson-aid-toggles" role="group" aria-label="Hiện thêm">
+                  <button className={showVi ? "active" : ""} onClick={() => setShowVi((value) => !value)} aria-pressed={showVi}>Dịch nghĩa</button>
+                  {aidBusy && <span className="lesson-aid-busy">đang dịch…</span>}
+                </div>
+                {showVi && <p className="lesson-vi">{viCache[sentence.text] || "Đang dịch…"}</p>}
+
                 {checked && <p className="lesson-answer-text">{sentence.text}</p>}
               </>
             ) : (
               <>
-                <p className="lesson-sentence">{sentence.text}</p>
+                <div className="lesson-aid-toggles" role="group" aria-label="Hiện thêm">
+                  <button className={showText ? "active" : ""} onClick={() => setShowText((value) => !value)} aria-pressed={showText}>Câu mẫu</button>
+                  <button className={showIpa ? "active" : ""} onClick={() => setShowIpa((value) => !value)} aria-pressed={showIpa}>IPA</button>
+                  <button className={showVi ? "active" : ""} onClick={() => setShowVi((value) => !value)} aria-pressed={showVi}>Dịch nghĩa</button>
+                  {aidBusy && <span className="lesson-aid-busy">đang tra…</span>}
+                </div>
+
+                {showText ? (
+                  <p className={showIpa ? "lesson-sentence with-ipa" : "lesson-sentence"}>
+                    {(withIpa(sentence.text, ipaCache) as { word: string; ipa: string }[]).map((row, position) => (
+                      <button key={position} className="lesson-word" onClick={() => void lookUp(row.word)} title="Bấm để tra nghĩa">
+                        <span>{row.word}</span>
+                        {showIpa && <em>{row.ipa}</em>}
+                      </button>
+                    ))}
+                  </p>
+                ) : (
+                  <p className="lesson-hidden-note">Câu mẫu đang ẩn — nghe rồi nói theo, bật lại khi cần đối chiếu.</p>
+                )}
+
+                {showVi && <p className="lesson-vi">{viCache[sentence.text] || "Đang dịch…"}</p>}
+
+                {lookup && (
+                  <div className="lesson-lookup">
+                    <b>{lookup.word}</b>
+                    {lookup.ipa && <code>{lookup.ipa}</code>}
+                    <span>{lookup.meaning}</span>
+                    <button onClick={() => setLookup(null)} aria-label="Đóng">×</button>
+                  </div>
+                )}
 
                 <div className="lesson-tools">
                   {listening ? (
