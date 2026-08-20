@@ -9,7 +9,8 @@ export type IconName =
   | "home" | "chart" | "headphones" | "mic" | "pen" | "book" | "list" | "search"
   | "compass" | "sun" | "moon" | "plus" | "chevron" | "flame" | "clock" | "target"
   | "cards" | "keyboard" | "volume" | "swap" | "blank" | "shuffle" | "check" | "trophy"
-  | "play" | "previous" | "replay" | "sparkles" | "arrow" | "stop";
+  | "play" | "previous" | "replay" | "sparkles" | "arrow" | "stop"
+  | "hand" | "cup" | "heart" | "briefcase" | "flag";
 
 const PATHS: Record<IconName, string> = {
   home: "M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5",
@@ -36,6 +37,11 @@ const PATHS: Record<IconName, string> = {
   shuffle: "M3 6h3l4 6 4 6h4M3 18h3l4-6M17 3l3 3-3 3M17 15l3 3-3 3",
   check: "m4 12.5 5 5 11-11",
   trophy: "M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M12 14v4M8.5 20h7",
+  hand: "M8 11V5.5a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V11m0-1a1.5 1.5 0 0 1 3 0v4a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-2.7L4 14a1.6 1.6 0 0 1 2.6-1.8L8 14",
+  cup: "M4 8h13v6a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5zM17 10h1.5a2.5 2.5 0 0 1 0 5H17M6 3.5v1.5M10 3v2M14 3.5v1.5",
+  heart: "M12 20s-7-4.4-7-9.2A4 4 0 0 1 12 8a4 4 0 0 1 7 2.8C19 15.6 12 20 12 20z",
+  briefcase: "M3.5 7.5h17v12h-17zM9 7.5V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1.5M3.5 13h17",
+  flag: "M6 21V4M6 5h10l-1.6 3.2L16 11.5H6",
   play: "m8 5 11 7-11 7z",
   previous: "M6 5v14M18 6l-8 6 8 6z",
   replay: "M5 8V4m0 0h4M5 4l3 3a7 7 0 1 1-2 9",

@@ -11,6 +11,7 @@ import Icon, { type IconName } from "../components/Icon";
 import VideoLesson from "../components/VideoLesson";
 import LessonLibrary from "../components/LessonLibrary";
 import WritingPractice from "../components/WritingPractice";
+import SpeakingPractice from "../components/SpeakingPractice";
 import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
 import { lessonFromHash, readLessons, removeLesson, saveLesson } from "../lib/lessons.mjs";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
@@ -2970,7 +2971,7 @@ function Practice({ words, intent, lessons, onStudied }: { words: WordCard[]; in
   // Luyện viết mở thẳng thư viện đề; phần Dịch Việt → Anh bên trong đã có bước
   // chọn từ riêng nên cũng không cần hỏi folder ở ngoài này.
   const skipsFolder = (value: PracticeMode | null | undefined) =>
-    value === "shadow" || value === "dictation" || value === "vocab" || value === "translate";
+    value === "shadow" || value === "dictation" || value === "vocab" || value === "translate" || value === "speak";
   const [mode, setMode] = useState<PracticeMode>(skipsFolder(intent) ? (intent as PracticeMode) : "menu");
   const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(skipsFolder(intent) ? null : intent ?? null);
   // Đang mở thư viện bài có sẵn (VOA…) thay vì một bài video.
@@ -3095,6 +3096,7 @@ function Practice({ words, intent, lessons, onStudied }: { words: WordCard[]; in
       </div>
     );
   if (mode === "match") return <MatchGame words={activeWords} close={returnToModes} />;
+  if (mode === "speak") return <SpeakingPractice close={returnToModes} onStudied={onStudied} />;
   // Dictation và Shadowing dùng chung một thư viện: bài từ video và bài có sẵn.
   if (mode === "dictation" || mode === "shadow") {
     const listening = mode === "shadow" ? "shadowing" : "dictation";
@@ -3145,6 +3147,7 @@ function Practice({ words, intent, lessons, onStudied }: { words: WordCard[]; in
 const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: IconName; skill: string }[] = [
   { value: "dictation", label: "Dictation", icon: "headphones", skill: "dictation" },
   { value: "shadow", label: "Shadowing", icon: "mic", skill: "shadowing" },
+  { value: "speak", label: "Luyện nói", icon: "volume", skill: "shadowing" },
   { value: "translate", label: "Luyện viết", icon: "pen", skill: "writing" },
   { value: "vocab", label: "Luyện từ vựng", icon: "book", skill: "vocab" },
 ];
@@ -3164,6 +3167,7 @@ const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
   test: "Kiểm tra chấm điểm",
   dictation: "Nghe chép chính tả",
   shadow: "Luyện nói (Shadowing)",
+  speak: "Luyện nói theo tình huống",
   match: "Nối cặp",
   translate: "Luyện viết",
 };
@@ -3213,7 +3217,7 @@ function normalizeAnswer(value: string) {
 
 // "flash" và "listen" đã bị bỏ: chúng làm đúng việc mà hai tab "Thẻ flashcard"
 // và "Nghe" trong Luyện từ vựng đã làm, chỉ ít tính năng hơn.
-type PracticeMode = "menu" | "vocab" | "learn" | "test" | "match" | "dictation" | "shadow" | "translate";
+type PracticeMode = "menu" | "vocab" | "learn" | "test" | "match" | "dictation" | "shadow" | "speak" | "translate";
 // Bốn cách luyện từ vựng, hiện ngay trong mục Luyện từ vựng để đổi qua lại nhanh.
 const practiceModeBar: { value: PracticeMode; label: string; icon: string }[] = [
   { value: "vocab", label: "Luyện thẻ", icon: "▤" },

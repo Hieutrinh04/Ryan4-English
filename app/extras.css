@@ -1317,3 +1317,92 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 
 @media(max-width:1000px){.writing-layout{grid-template-columns:1fr}.writing-side{position:static}}
 @media(max-width:600px){.writing-criteria div{grid-template-columns:1fr auto}.writing-criteria i{grid-column:1/-1}}
+
+/* ── Luyện nói theo tình huống ─────────────────────────────────────────────── */
+.speaking-summary{margin-left:auto;color:var(--muted);font-size:11.5px}
+.speaking-levels{display:flex;flex-wrap:wrap;gap:7px;margin:18px 0}
+.speaking-levels button{border:1px solid var(--line);background:var(--surface);color:var(--text-2);
+  border-radius:20px;padding:7px 15px;font-size:11.5px;font-weight:700}
+.speaking-levels button.active{border-color:var(--purple);background:var(--soft);color:var(--purple-dark)}
+
+.speaking-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.speaking-card{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:14px;
+  padding:15px;display:grid;gap:6px;text-align:left;align-content:start}
+.speaking-card:hover{border-color:var(--purple);transform:translateY(-2px)}
+.speaking-card-top{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.speaking-icon{width:40px;height:40px;border-radius:12px;background:var(--soft);color:var(--purple);
+  display:grid;place-items:center;flex-shrink:0}
+.speaking-level{font-style:normal;background:var(--surface-2);color:var(--muted);border-radius:6px;
+  padding:3px 8px;font-size:9.5px;font-weight:800}
+.speaking-tick{font-style:normal;margin-left:auto;color:var(--mark-ok);font-size:9.5px;font-weight:700}
+.speaking-card b{font-size:13.5px;line-height:1.4}
+.speaking-card small{color:var(--purple-dark);font-size:11px}
+.speaking-card-setting{color:var(--muted);font-size:11px;line-height:1.55;
+  display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.speaking-card-goals{font-style:normal;color:var(--text-3);font-size:10px;font-weight:700;margin-top:2px}
+
+/* Màn hội thoại */
+.speaking-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}
+.speaking-main{display:grid;gap:12px;min-width:0}
+.speaking-head{display:flex;align-items:center;gap:13px}
+.speaking-head h1{margin:0;font-size:19px}
+.speaking-head p{margin:2px 0 0;color:var(--muted);font-size:11.5px}
+.speaking-progress{margin-left:auto;background:var(--soft);color:var(--purple-dark);border-radius:20px;
+  padding:6px 14px;font-size:12px;font-weight:800}
+
+.speaking-feed{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;
+  display:grid;gap:12px;min-height:300px;max-height:52vh;overflow-y:auto;align-content:start}
+.speaking-setting{margin:0;color:var(--muted);font-size:11.5px;line-height:1.65;
+  border-left:3px solid var(--line-accent);padding-left:11px}
+.speaking-turn{display:grid;gap:4px;max-width:82%;border-radius:12px;padding:11px 13px;position:relative}
+.speaking-turn b{font-size:9.5px;font-weight:800;letter-spacing:.03em;opacity:.7}
+.speaking-turn p{margin:0;font-size:14px;line-height:1.6}
+.speaking-turn.partner{background:var(--surface-2);justify-self:start}
+.speaking-turn.you{background:var(--soft);color:var(--purple-dark);justify-self:end;text-align:right}
+.speaking-turn.thinking p{color:var(--muted);font-style:italic}
+.speaking-turn button{position:absolute;right:7px;bottom:5px;border:0;background:none;
+  color:var(--text-3);display:grid;place-items:center;padding:3px}
+.speaking-turn button:hover{color:var(--purple)}
+
+.speaking-input{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.speaking-input .primary{display:inline-flex;align-items:center;gap:8px;padding:12px 20px}
+.speaking-input .primary.listening{background:var(--pink)}
+.speaking-input form{flex:1;min-width:220px;display:flex;gap:8px}
+.speaking-input input{flex:1;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);
+  border-radius:10px;padding:11px 13px;font-size:14px}
+.speaking-input input:focus{outline:2px solid var(--purple);outline-offset:-1px}
+.speaking-input form button{border:1px solid var(--line);background:var(--surface);color:var(--text-2);
+  border-radius:10px;padding:11px 16px;font-size:12px;font-weight:700}
+.speaking-input form button:disabled{opacity:.45;cursor:not-allowed}
+.speaking-stop{border:1px solid var(--line);background:none;color:var(--muted);
+  border-radius:10px;padding:11px 16px;font-size:12px;font-weight:700}
+.speaking-stop:hover{border-color:var(--pink);color:var(--pink)}
+.speaking-stop:disabled{opacity:.45;cursor:not-allowed}
+.speaking-warn{margin:0;color:var(--pink);font-size:11.5px;line-height:1.6}
+
+.speaking-done{background:var(--tint-green);border:1px solid var(--green-line);border-radius:12px;padding:16px;display:grid;gap:8px}
+.speaking-done b{color:var(--mark-ok);font-size:14px}
+.speaking-done p{margin:0;font-size:12.5px;line-height:1.6}
+.speaking-done-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:4px}
+.speaking-done-actions button{border:1px solid var(--line);background:var(--surface);color:var(--text-2);
+  border-radius:9px;padding:10px 17px;font-size:12px;font-weight:700}
+.speaking-done-actions .primary{border:0;color:var(--on-accent)}
+
+.speaking-side{display:grid;gap:14px;position:sticky;top:20px}
+.speaking-side h3{margin:0 0 12px;font-size:13px}
+.speaking-goals{margin:0;padding:0;list-style:none;display:grid;gap:9px}
+.speaking-goals li{display:flex;align-items:flex-start;gap:10px;font-size:12.5px;line-height:1.55;color:var(--text-2)}
+.speaking-goals i{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line-accent);
+  display:grid;place-items:center;font-size:10px;font-style:normal;flex-shrink:0;margin-top:1px}
+.speaking-goals li.done{color:var(--mark-ok)}
+.speaking-goals li.done i{border-color:var(--green-line);background:var(--tint-green);color:var(--mark-ok)}
+.speaking-role{margin:14px 0 0;border-top:1px solid var(--line);padding-top:11px;
+  color:var(--muted);font-size:11px;line-height:1.65}
+.speaking-role b{color:var(--text-2)}
+.speaking-fixes{margin:0;padding:0;list-style:none;display:grid;gap:11px}
+.speaking-fixes li{display:grid;gap:3px;font-size:12px;line-height:1.55}
+.speaking-fixes s{color:var(--mark-missed)}
+.speaking-fixes strong{color:var(--mark-ok)}
+.speaking-fixes span{color:var(--muted);font-size:11px}
+
+@media(max-width:1000px){.speaking-layout{grid-template-columns:1fr}.speaking-side{position:static}}
