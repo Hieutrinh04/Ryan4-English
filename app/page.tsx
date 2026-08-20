@@ -1,6 +1,6 @@
 "use client";
 
-import { Dispatch, FormEvent, Fragment, PointerEvent as ReactPointerEvent, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
+import { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { aiFetch, supabase } from "../lib/supabase";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLesson, type DictationLevel } from "../lib/dictation-lessons";
 import ieltsAreaData from "../lib/ielts-areas.json";
@@ -10,6 +10,8 @@ import VocabPractice from "../components/VocabPractice";
 // mẫu vẫn được công nhận đúng.
 type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { type: string; wrong: string; right: string; why: string }[] };
 import { PASSAGE_SIZE, buildPassages, gradeTranslation } from "../lib/translation-check.mjs";
+import { SKILLS, logPractice, minutesInRange, minutesPerDay, readPractice, totalTime } from "../lib/practice-log.mjs";
+import { levelFor, xpBreakdown, xpFrom } from "../lib/level.mjs";
 import { attemptAdvice, attemptsSince, logAttempt, makeAttempt, readAttempts, summariseAttempts,
   typesFromIssues, typesFromNotes } from "../lib/error-log.mjs";
 import { pushTranslationAttempt } from "../lib/cloud-sync";
@@ -24,7 +26,7 @@ import { clozeFor } from "../lib/cloze.mjs";
 import { detailsFrom, exampleFor, fallbackExample, isPdfVocabulary, isSeedWord, withMeanings,
   type EnrichmentMap, type ExamGoal, type ExampleMap, type ImportedVocabulary, type Rating, type ReviewMode,
   type UsageDetail, type UsageMap, type WeeklyVocabulary, type WordCard } from "../lib/types";
-import { activeTabKey, composeVietnamese, logReview, logSpeaking, markDeleted, markStudiedToday, mergeStoredWords, readDeletedIds,
+import { activeTabKey, composeVietnamese, logReview, markDeleted, markStudiedToday, mergeStoredWords, readDeletedIds,
   readExam, readLocalWords, readReviewLog, readSession, readSpeaking, readStudyDays, speakingMinutes, weeklyImportKey, writeExam, writeLocalWords,
   writeProgress, writeSession, type ReviewEntry, type StoredSession } from "../lib/storage";
 
@@ -1043,31 +1045,29 @@ export default function Home() {
         <nav aria-label="Điều hướng chính">
           <span className="nav-group">TỔNG QUAN</span>
           <button className={tab === "home" ? "nav-item active" : "nav-item"} onClick={() => goTab("home")}>
-            <span>⌂</span> Hôm nay
+            <span>⌂</span> Trang chủ
           </button>
           <button className={tab === "stats" ? "nav-item active" : "nav-item"} onClick={() => goTab("stats")}>
-            <span>⌁</span> Thống kê
+            <span>⌁</span> Tiến độ
           </button>
 
-          {practiceNav.map((item, position) => (
-            <Fragment key={item.value}>
-              {/* Tiêu đề nhóm chỉ in ra ở mục đầu tiên của nhóm đó. */}
-              {practiceNav[position - 1]?.group !== item.group && <span className="nav-group">{item.group}</span>}
-              <button
-                className={tab === "practice" && practiceIntent === item.value ? "nav-item active" : "nav-item"}
-                onClick={() => {
-                  setPracticeIntent(item.value);
-                  setTab("practice");
-                }}
-              >
-                <span>{item.icon}</span> {item.label}
-              </button>
-            </Fragment>
+          <span className="nav-group">LUYỆN TẬP</span>
+          {practiceNav.map((item) => (
+            <button
+              key={item.value}
+              className={tab === "practice" && practiceIntent === item.value ? "nav-item active" : "nav-item"}
+              onClick={() => {
+                setPracticeIntent(item.value);
+                setTab("practice");
+              }}
+            >
+              <span>{item.icon}</span> {item.label}
+            </button>
           ))}
 
           <span className="nav-group">THƯ VIỆN</span>
           <button className={tab === "words" ? "nav-item active" : "nav-item"} onClick={() => goTab("words")}>
-            <span>▤</span> Từ vựng
+            <span>▤</span> Danh sách từ
             <em className="nav-count">{words.length}</em>
           </button>
           <button className={tab === "practice" && !practiceIntent ? "nav-item active" : "nav-item"} onClick={() => { setPracticeIntent(null); setTab("practice"); }}>
@@ -1252,6 +1252,48 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
     if (greetingRef.current) greetingRef.current.textContent = now.getHours() < 12 ? "Chào buổi sáng" : now.getHours() < 18 ? "Chào buổi chiều" : "Chào buổi tối";
   }, []);
   const activityHeat = heat.map((_, index) => index < heat.length - 7 ? 0 : Math.min(4, Math.ceil(scheduledWords.filter((word) => addedDayIndex(word) === index - (heat.length - 7)).reduce((total, word) => total + (word.reviewCount ?? 0), 0) / 5)));
+  // Giờ luyện và bài dịch chỉ đọc được trên máy, nên phải chờ hydrate xong.
+  const [practice, setPractice] = useState<Record<string, Record<string, number>>>({});
+  const [attemptCount, setAttemptCount] = useState(0);
+  const [studiedDays, setStudiedDays] = useState<string[]>([]);
+  const [chartSkill, setChartSkill] = useState<string>("");
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
+    setPractice(readPractice());
+    setAttemptCount(readAttempts().length);
+    setStudiedDays(readStudyDays());
+  }, []);
+  const time = useMemo(() => totalTime(practice), [practice]);
+  // XP được TÍNH LẠI từ nhật ký chứ không cộng dồn riêng, nên luôn khớp dữ liệu thật.
+  const xpCounts = useMemo(
+    () => ({
+      reviews: words.reduce((total, word) => total + (word.reviewCount ?? 0), 0),
+      learned: words.filter((word) => (word.reviewCount ?? 0) > 0).length,
+      mastered: words.filter((word) => wordState(word).key === "mastered").length,
+      attempts: attemptCount,
+      minutes: time.minutes,
+    }),
+    [words, attemptCount, time.minutes],
+  );
+  const level = useMemo(() => levelFor(xpFrom(xpCounts)), [xpCounts]);
+  const [showXp, setShowXp] = useState(false);
+  const chartRows = useMemo(() => minutesPerDay(practice, 7, chartSkill || undefined), [practice, chartSkill]);
+  const chartPeak = Math.max(1, ...chartRows.map((row: { minutes: number }) => row.minutes));
+  // Dải điểm danh tuần này: Thứ Hai đến Chủ Nhật của tuần đang sống.
+  const weekCheckIn = useMemo(() => {
+    const now = new Date();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - weekdayIndex(now));
+    return Array.from({ length: 7 }, (_, step) => {
+      const date = new Date(monday);
+      date.setDate(monday.getDate() + step);
+      const day = localDateString(date);
+      // Dùng chung nguồn với chuỗi ngày học, nếu không thì cùng một màn hình có hai
+      // định nghĩa "đã học" khác nhau: một ngày ôn thẻ mà chưa đủ một phút luyện sẽ
+      // tính vào chuỗi nhưng lại hiện dấu chấm ở dải tuần.
+      return { day, label: "HBTNSBC"[step], studied: studiedDays.includes(day), today: day === localDateString() };
+    });
+  }, [studiedDays]);
   const [editingExam, setEditingExam] = useState(false);
   const [examDraft, setExamDraft] = useState<ExamGoal>({ date: exam?.date ?? "", label: exam?.label ?? "" });
   // Số từ chưa thuộc, dùng để gợi ý nhịp học mỗi ngày cho kịp ngày thi.
@@ -1274,6 +1316,86 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
           <p>Một phiên ôn ngắn hôm nay sẽ giúp trí nhớ đi xa hơn.</p>
         </div>
       </div>
+      <div className="home-stats">
+        <div className="home-stat">
+          <span className="home-stat-icon">🔥</span>
+          <div><b>{streak.current}</b><small>ngày · chuỗi hiện tại</small></div>
+        </div>
+        <div className="home-stat">
+          <span className="home-stat-icon">◷</span>
+          <div><b>{time.hours}h {time.rest}m</b><small>thời gian luyện tập</small></div>
+        </div>
+        <div className="home-stat">
+          <span className="home-stat-icon">▤</span>
+          <div><b>{words.length}</b><small>từ đã lưu</small></div>
+        </div>
+        <button className="home-stat as-button" onClick={() => setShowXp((value) => !value)} aria-expanded={showXp}>
+          <span className="home-stat-icon">◎</span>
+          <div>
+            <b>{level.xp} XP</b>
+            <small>Lv.{level.level} · {level.name}</small>
+            <i className="home-xp-bar"><em style={{ width: `${level.percent}%` }} /></i>
+          </div>
+        </button>
+      </div>
+
+      {showXp && (
+        <section className="panel home-xp-detail">
+          <h3>XP của bạn ở đâu ra</h3>
+          {/* Nói rõ từng khoản: một con số không giải thích được thì không đáng tin. */}
+          <ul>
+            {xpBreakdown(xpCounts).map((row: { key: string; label: string; count: number; xp: number }) => (
+              <li key={row.key}><b>{row.xp} XP</b><span>{row.count} × {row.label}</span></li>
+            ))}
+          </ul>
+          {level.next !== null && <p className="muted">Còn {level.next - level.xp} XP nữa là lên cấp {level.level + 1}.</p>}
+        </section>
+      )}
+
+      <div className="home-row">
+        <section className="panel home-chart">
+          <div className="home-chart-head">
+            <h3>Phút luyện tập</h3>
+            <div className="home-chart-tabs" role="group" aria-label="Kỹ năng">
+              <button className={chartSkill === "" ? "active" : ""} onClick={() => setChartSkill("")}>Tất cả</button>
+              {SKILLS.map((skill: { key: string; label: string }) => (
+                <button key={skill.key} className={chartSkill === skill.key ? "active" : ""} onClick={() => setChartSkill(skill.key)}>{skill.label}</button>
+              ))}
+            </div>
+          </div>
+          {minutesInRange(practice, 7, chartSkill || undefined) === 0 ? (
+            <p className="muted home-chart-empty">Bảy ngày qua chưa có phút luyện nào ở mục này. Vào một chế độ bên trái, app tự đếm giờ cho bạn.</p>
+          ) : (
+            <div className="home-bars" aria-label="Số phút luyện mỗi ngày, bảy ngày gần đây">
+              {chartRows.map((row: { day: string; minutes: number }) => (
+                <div key={row.day}>
+                  <span>{row.minutes || ""}</span>
+                  <i style={{ height: `${Math.max(3, (row.minutes / chartPeak) * 120)}px` }} />
+                  <b>{row.day.slice(8)}/{row.day.slice(5, 7)}</b>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="panel home-week">
+          <h3>Tuần này</h3>
+          <div className="home-week-days">
+            {weekCheckIn.map((item: { day: string; label: string; studied: boolean; today: boolean }) => (
+              <div key={item.day} className={`home-week-day${item.studied ? " done" : ""}${item.today ? " today" : ""}`}>
+                <b>{item.label}</b>
+                <span>{item.studied ? "✓" : "·"}</span>
+              </div>
+            ))}
+          </div>
+          <p className="muted">
+            {/* Đánh dấu theo việc đã luyện thật, không có nút điểm danh riêng: bấm một
+                nút mà không học thì con số chẳng nói lên điều gì. */}
+            Ngày nào có luyện là tự đánh dấu. Chuỗi dài nhất của bạn: {streak.best} ngày.
+          </p>
+        </section>
+      </div>
+
       <div className="goal-row">
         <section className={exam ? "goal-card exam" : "goal-card exam empty"}>
           {exam ? (
@@ -2611,6 +2733,30 @@ function Practice({ words, intent }: { words: WordCard[]; intent?: Exclude<Pract
   const [mode, setMode] = useState<PracticeMode>(intent === "shadow" ? "shadow" : "menu");
   const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(intent === "shadow" ? null : intent ?? null);
   const [practiceWords, setPracticeWords] = useState<WordCard[]>([]);
+  // Đếm giờ luyện tập cho biểu đồ trang chủ. Đặt ở đây nên mọi chế độ đều được
+  // tính mà không phải sửa từng chế độ. Chỉ ghi vào localStorage, không đụng state.
+  useEffect(() => {
+    const skill = mode === "menu" ? "" : skillOfMode[mode];
+    if (!skill) return;
+    let last = Date.now();
+    const flush = () => {
+      const seconds = (Date.now() - last) / 1000;
+      last = Date.now();
+      // Bỏ qua quãng nghỉ dài: mở tab rồi đi làm việc khác không phải là luyện tập.
+      if (seconds > 0 && seconds < 120) logPractice(skill, seconds);
+    };
+    const timer = setInterval(flush, 30_000);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+      else last = Date.now();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      flush();
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [mode]);
   if (!words.length)
     return (
       <div className="page">
@@ -2622,6 +2768,7 @@ function Practice({ words, intent }: { words: WordCard[]; intent?: Exclude<Pract
   const personalWords = words.filter((item) => !isPdfVocabulary(item));
   const pdfWords = words.filter(isPdfVocabulary);
   const pdfTopics = [...new Set(pdfWords.flatMap((item) => item.topic.split(" · ")))];
+
   function chooseMode(nextMode: Exclude<PracticeMode, "menu">) {
     if (nextMode === "shadow") {
       setMode(nextMode);
@@ -2706,7 +2853,7 @@ function Practice({ words, intent }: { words: WordCard[]; intent?: Exclude<Pract
     );
   if (mode === "match") return <MatchGame words={activeWords} close={returnToModes} />;
   if (mode === "dictation") return <DictationPractice words={activeWords} close={returnToModes} />;
-  if (mode === "shadow") return <ShadowingPractice close={returnToModes} onPractised={(seconds) => { logSpeaking(seconds); markStudiedToday(); }} />;
+  if (mode === "shadow") return <ShadowingPractice close={returnToModes} onPractised={() => markStudiedToday()} />;
   if (mode === "vocab") return <VocabPractice words={activeWords} close={returnToModes} onStudied={markStudiedToday} />;
   if (mode === "learn") return <LearnMode words={activeWords} setMode={setMode} />;
   if (mode === "test") return <TestMode words={activeWords} setMode={setMode} />;
@@ -2716,24 +2863,27 @@ function Practice({ words, intent }: { words: WordCard[]; intent?: Exclude<Pract
 // Thứ tự và nhãn của các chế độ khi hiện ở thanh bên trái.
 // Xếp theo việc người học đang muốn làm, không theo tên chế độ. Nhóm trên là học
 // thuộc mặt chữ và nghĩa; nhóm dưới là dùng vốn từ đó vào nghe, nói, viết.
-const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: string; group: string }[] = [
-  { value: "vocab", label: "Luyện từ vựng", icon: "▤", group: "HỌC TỪ" },
-  { value: "learn", label: "Học tới khi thuộc", icon: "✎", group: "HỌC TỪ" },
-  { value: "test", label: "Kiểm tra chấm điểm", icon: "◉", group: "HỌC TỪ" },
-  { value: "match", label: "Nối cặp", icon: "⌘", group: "HỌC TỪ" },
-  { value: "dictation", label: "Chép chính tả", icon: "≋", group: "DÙNG TỪ" },
-  { value: "shadow", label: "Nói nhại", icon: "◐", group: "DÙNG TỪ" },
-  { value: "translate", label: "Dịch Việt → Anh", icon: "⇄", group: "DÙNG TỪ" },
+const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: string; skill: string }[] = [
+  { value: "vocab", label: "Luyện từ vựng", icon: "▤", skill: "vocab" },
+  { value: "dictation", label: "Nghe chép chính tả", icon: "≋", skill: "dictation" },
+  { value: "shadow", label: "Luyện nói (Shadowing)", icon: "◐", skill: "shadowing" },
+  { value: "translate", label: "Luyện viết", icon: "✍", skill: "writing" },
+  { value: "learn", label: "Học tới khi thuộc", icon: "✎", skill: "vocab" },
+  { value: "test", label: "Kiểm tra chấm điểm", icon: "◉", skill: "vocab" },
+  { value: "match", label: "Nối cặp", icon: "⌘", skill: "vocab" },
 ];
+
+/** Chế độ nào tính giờ vào kỹ năng nào, để biểu đồ trang chủ tách được các tab. */
+export const skillOfMode = Object.fromEntries(practiceNav.map((item) => [item.value, item.skill]));
 
 const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
   vocab: "Luyện từ vựng",
   learn: "Học tới khi thuộc",
   test: "Kiểm tra chấm điểm",
-  dictation: "Chép chính tả",
-  shadow: "Nói nhại",
+  dictation: "Nghe chép chính tả",
+  shadow: "Luyện nói (Shadowing)",
   match: "Nối cặp",
-  translate: "Dịch Việt → Anh",
+  translate: "Luyện viết",
 };
 
 function FolderPicker({ mode, personalWords, pdfWords, topics, choose, close }: { mode: Exclude<PracticeMode, "menu">; personalWords: WordCard[]; pdfWords: WordCard[]; topics: string[]; choose: (words: WordCard[]) => void; close: () => void }) {
