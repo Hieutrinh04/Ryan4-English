@@ -11,7 +11,8 @@
     "start": "vinext start",
     "test": "npm run build && node --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "build:extension": "node build/sync-extension.mjs"
+    "build:extension": "node build/sync-extension.mjs",
+    "build:icons": "node build/make-icons.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.2",
