@@ -10,6 +10,7 @@ import Dictionary, { type NewWord } from "../components/Dictionary";
 import Icon, { type IconName } from "../components/Icon";
 import VideoLesson from "../components/VideoLesson";
 import LessonLibrary from "../components/LessonLibrary";
+import WritingPractice from "../components/WritingPractice";
 import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
 import { lessonFromHash, readLessons, removeLesson, saveLesson } from "../lib/lessons.mjs";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
@@ -2952,6 +2953,8 @@ function VideoLessons({ lessons, remove }: { lessons: VideoLesson[]; remove: (id
 function Practice({ words, intent, lessons, onStudied }: { words: WordCard[]; intent?: Exclude<PracticeMode, "menu"> | null; lessons: VideoLesson[]; onStudied: () => void }) {
   // Bài video đang mở; null nghĩa là đang ở màn hình chọn.
   const [lesson, setLesson] = useState<VideoLesson | null>(null);
+  // Đang mở phần dịch Việt → Anh bên trong mục Luyện viết.
+  const [translating, setTranslating] = useState(false);
   const externalTools = [
     { label: "Luyện nghe A2", short: "EL", url: "https://elllo.org/book/A2/index.html", tone: "blue" },
     { label: "Hội thoại hằng ngày", short: "BE", url: "https://basicenglishspeaking.com/daily-english-conversation-topics/", tone: "orange" },
@@ -2964,7 +2967,10 @@ function Practice({ words, intent, lessons, onStudied }: { words: WordCard[]; in
   ];
   // Nghe chép chính tả và nói nhại học theo thư viện bài, không theo folder từ
   // vựng, nên vào thẳng chứ không qua bước chọn folder.
-  const skipsFolder = (value: PracticeMode | null | undefined) => value === "shadow" || value === "dictation" || value === "vocab";
+  // Luyện viết mở thẳng thư viện đề; phần Dịch Việt → Anh bên trong đã có bước
+  // chọn từ riêng nên cũng không cần hỏi folder ở ngoài này.
+  const skipsFolder = (value: PracticeMode | null | undefined) =>
+    value === "shadow" || value === "dictation" || value === "vocab" || value === "translate";
   const [mode, setMode] = useState<PracticeMode>(skipsFolder(intent) ? (intent as PracticeMode) : "menu");
   const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(skipsFolder(intent) ? null : intent ?? null);
   // Đang mở thư viện bài có sẵn (VOA…) thay vì một bài video.
@@ -3128,7 +3134,9 @@ function Practice({ words, intent, lessons, onStudied }: { words: WordCard[]; in
     );
   if (mode === "learn") return <LearnMode words={activeWords} setMode={setMode} />;
   if (mode === "test") return <TestMode words={activeWords} setMode={setMode} />;
-  return <TranslateMode words={activeWords} setMode={setMode} back={returnToModes} />;
+  // Luyện viết: thư viện đề trước, phần dịch Việt → Anh là một lựa chọn bên trong.
+  if (translating) return <TranslateMode words={words} setMode={setMode} back={() => setTranslating(false)} />;
+  return <WritingPractice close={returnToModes} onStudied={onStudied} openTranslate={() => setTranslating(true)} />;
 }
 
 // Thứ tự và nhãn của các chế độ khi hiện ở thanh bên trái.

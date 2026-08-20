@@ -1202,3 +1202,118 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
   }
   .video-lesson-v2 .lesson-list{max-height:340px}
 }
+
+/* ── Luyện viết ────────────────────────────────────────────────────────────── */
+.writing-hero{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:6px 0 20px}
+.writing-hero-icon{width:44px;height:44px;border-radius:12px;background:var(--soft);color:var(--purple);display:grid;place-items:center;flex-shrink:0}
+.writing-hero h1{margin:0;font-size:24px}
+.writing-hero p{margin:3px 0 0;color:var(--muted);font-size:12px}
+.writing-exams{margin-left:auto;display:flex;gap:3px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:3px}
+.writing-exams button{border:0;background:none;color:var(--muted);border-radius:8px;padding:7px 15px;font-size:11.5px;font-weight:700}
+.writing-exams button.active{background:var(--accent-solid);color:var(--on-accent)}
+
+.writing-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}
+.writing-parts{display:flex;gap:7px;margin-bottom:18px}
+.writing-parts button{border:1px solid var(--line);background:var(--surface);color:var(--text-2);border-radius:20px;padding:7px 16px;font-size:11.5px;font-weight:700}
+.writing-parts button.active{border-color:var(--purple);background:var(--soft);color:var(--purple-dark)}
+
+.writing-translate-card{display:flex;align-items:center;gap:13px;width:100%;text-align:left;margin-bottom:18px;
+  border:1px solid var(--line-accent);background:var(--surface);color:var(--ink);border-radius:14px;padding:14px 16px}
+.writing-translate-card:hover{background:var(--soft)}
+.writing-translate-icon{width:38px;height:38px;border-radius:11px;background:var(--surface-2);color:var(--purple);display:grid;place-items:center;flex-shrink:0}
+.writing-translate-card b{display:block;font-size:13px}
+.writing-translate-card small{display:block;color:var(--muted);font-size:11px;margin-top:3px;line-height:1.5}
+.writing-translate-card em{margin-left:auto;font-style:normal;color:var(--purple)}
+
+.writing-block{margin-bottom:24px}
+.writing-block h3{font-size:13px;color:var(--muted);margin:0 0 12px}
+.writing-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.writing-card{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:14px;
+  padding:0 0 13px;display:grid;gap:7px;text-align:left;overflow:hidden;align-content:start}
+.writing-card:hover{border-color:var(--purple);transform:translateY(-2px)}
+.writing-card b{font-size:13px;line-height:1.4;padding:0 14px}
+.writing-card-chart{display:block;background:var(--surface-2);border-bottom:1px solid var(--line);padding:8px;pointer-events:none}
+.writing-card-chart.plain{display:grid;place-items:center;height:110px;color:var(--purple)}
+.writing-card-chart .task-chart figcaption{display:none}
+.writing-card-tags{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px}
+.writing-card-tags em{font-style:normal;background:var(--soft);color:var(--purple-dark);border-radius:6px;padding:3px 8px;font-size:9.5px;font-weight:700}
+.writing-card-tags em.muted{background:var(--surface-2);color:var(--muted)}
+
+.writing-side{display:grid;gap:14px;position:sticky;top:20px}
+.writing-side h3{margin:0 0 12px;font-size:13px}
+.writing-side-band{display:flex;align-items:baseline;gap:5px}
+.writing-side-band b{font-size:34px;color:var(--purple);line-height:1}
+.writing-side-band span{color:var(--muted);font-size:14px}
+.writing-side-band small{margin-left:auto;color:var(--muted);font-size:10px}
+.writing-side-bar{height:6px;border-radius:3px;background:var(--surface-2);margin:10px 0;overflow:hidden}
+.writing-side-bar i{display:block;height:100%;background:var(--purple);border-radius:3px}
+.writing-side-note{margin:0;color:var(--muted);font-size:11px;line-height:1.6}
+.writing-side-empty{margin:0;color:var(--muted);font-size:12px;line-height:1.65}
+.writing-side-criteria{margin-top:14px;display:grid;gap:7px;border-top:1px solid var(--line);padding-top:12px}
+.writing-side-criteria div{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-2)}
+.writing-side-criteria b{color:var(--purple)}
+.writing-recent{margin:0;padding:0;list-style:none;display:grid;gap:8px}
+.writing-recent li{display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:var(--surface-2);border-radius:10px;padding:9px 11px}
+.writing-recent b{display:block;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.writing-recent small{color:var(--muted);font-size:10px}
+.writing-recent span{flex:1;min-width:0}
+.writing-recent em{font-style:normal;font-weight:800;color:var(--purple);font-size:14px}
+
+/* Màn viết bài */
+.writing-task-body{display:grid;gap:16px;max-width:900px}
+.writing-prompt-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
+.writing-part{background:var(--accent-solid);color:var(--on-accent);border-radius:6px;padding:3px 9px;font-size:10px;font-weight:800}
+.writing-kind{background:var(--soft);color:var(--purple-dark);border-radius:6px;padding:3px 9px;font-size:10px;font-weight:700}
+.writing-minutes{margin-left:auto;color:var(--muted);font-size:11px}
+.writing-prompt h1{margin:4px 0 10px;font-size:20px}
+.writing-prompt-text{margin:0 0 14px;font-size:14px;line-height:1.7;color:var(--text-2)}
+.writing-editor{display:grid;gap:10px}
+.writing-editor-head{display:flex;justify-content:space-between;align-items:baseline;font-size:12px}
+.writing-editor-head span{color:var(--pink);font-size:11px;font-weight:700}
+.writing-editor-head span.enough{color:var(--mark-ok)}
+.writing-editor textarea{width:100%;min-height:280px;resize:vertical;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--ink);border-radius:11px;padding:14px;font:inherit;font-size:14.5px;line-height:1.7}
+.writing-editor textarea:focus{outline:2px solid var(--purple);outline-offset:-1px}
+.writing-editor .primary{justify-self:start;padding:12px 22px}
+.writing-warn{margin:0;color:var(--muted);font-size:11.5px;line-height:1.6}
+.writing-warn.bad{color:var(--pink)}
+
+.writing-result{display:grid;gap:16px}
+.writing-band{display:flex;flex-wrap:wrap;align-items:center;gap:16px;background:var(--surface-2);border-radius:12px;padding:16px}
+.writing-band b{font-size:40px;color:var(--purple);line-height:1}
+.writing-band small{display:block;color:var(--muted);font-size:10px;margin-top:3px}
+.writing-band p{margin:0;flex:1;min-width:200px;color:var(--muted);font-size:11.5px;line-height:1.6}
+.writing-criteria{display:grid;gap:9px}
+.writing-criteria div{display:grid;grid-template-columns:180px 1fr auto;align-items:center;gap:11px}
+.writing-criteria span{font-size:12px}
+.writing-criteria i{height:8px;border-radius:4px;background:var(--surface-2);overflow:hidden;display:block}
+.writing-criteria em{display:block;height:100%;background:var(--purple);border-radius:4px}
+.writing-criteria b{color:var(--purple);font-size:13px;min-width:26px;text-align:right}
+.writing-comment{margin:0;font-size:13px;line-height:1.7}
+.writing-points b,.writing-fixes b{display:block;font-size:11px;color:var(--muted);margin-bottom:7px}
+.writing-points ul{margin:0;padding-left:18px;display:grid;gap:5px}
+.writing-points li{font-size:12.5px;line-height:1.6}
+.writing-points.good li{color:var(--mark-ok)}
+.writing-fixes ul{margin:0;padding-left:0;display:grid;gap:9px}
+.writing-fixes li{font-size:12.5px;line-height:1.6;list-style:none}
+.writing-fixes s{color:var(--mark-missed);margin-right:8px}
+.writing-fixes strong{color:var(--mark-ok);margin-right:8px}
+.writing-fixes span{color:var(--muted);display:block;font-size:11.5px}
+.writing-result-actions{display:flex;flex-wrap:wrap;gap:9px}
+.writing-result-actions button{border:1px solid var(--line);background:var(--surface);color:var(--text-2);border-radius:9px;padding:11px 18px;font-size:12px;font-weight:700}
+.writing-result-actions .primary{border:0;color:var(--on-accent)}
+
+/* Biểu đồ đề Task 1 */
+.task-chart{margin:0}
+.task-chart svg{width:100%;height:auto;background:var(--surface-2);border:1px solid var(--line);border-radius:10px}
+.task-chart .grid{stroke:var(--line);stroke-width:1}
+.task-chart .axis-line{stroke:var(--line-accent);stroke-width:1.5}
+.task-chart .axis{fill:var(--muted);font-size:10px}
+.task-chart figcaption{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:9px}
+.task-chart-unit{color:var(--muted);font-size:10.5px}
+.task-chart-legend{display:flex;flex-wrap:wrap;gap:11px}
+.task-chart-legend i{display:flex;align-items:center;gap:5px;font-style:normal;font-size:10.5px;color:var(--text-2)}
+.task-chart-legend b{width:10px;height:10px;border-radius:3px;display:block}
+
+@media(max-width:1000px){.writing-layout{grid-template-columns:1fr}.writing-side{position:static}}
+@media(max-width:600px){.writing-criteria div{grid-template-columns:1fr auto}.writing-criteria i{grid-column:1/-1}}
