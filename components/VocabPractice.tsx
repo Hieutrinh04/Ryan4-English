@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { WordCard } from "../lib/types";
 import { DRILL_MODES, choicesFor, clozeOf, deckSupports, hasIpa, isCorrect, resolveMode, seededOrder, summarise } from "../lib/vocab-drill.mjs";
+import { COLLECTIONS, deckStats, progressOf, searchSets, setsFor, splitLabel } from "../lib/word-sets.mjs";
+import Icon from "./Icon";
 
 // Buổi luyện từ vựng: một bộ thẻ, sáu cách luyện, đổi qua lại bằng thanh tab mà
 // không mất chỗ đang đứng.
@@ -13,6 +15,7 @@ import { DRILL_MODES, choicesFor, clozeOf, deckSupports, hasIpa, isCorrect, reso
 
 type Mode = "card" | "type" | "listen" | "reverse" | "cloze" | "mixed";
 type Result = { id: string; mode: string; correct: boolean; graded: boolean };
+type WordSet = { id: string; label: string; words: WordCard[]; total: number; learned: number; due: number; fresh: number; mastered: number };
 
 const OTHER_MODES = [
   { value: "learn", icon: "✎", label: "Học tới khi thuộc", hint: "Lặp riêng những từ còn sai cho tới khi thuộc hết bộ" },
@@ -47,6 +50,10 @@ function speak(text: string, region: "US" | "UK" = "US", rate = 1) {
 
 export default function VocabPractice({ words, close, onStudied, onPickOther }: { words: WordCard[]; close: () => void; onStudied?: () => void; onPickOther?: (mode: string) => void }) {
   const [mode, setMode] = useState<Mode>("card");
+  // Chọn bộ từ trước, rồi mới tới cách luyện. null nghĩa là đang ở màn thư viện.
+  const [chosen, setChosen] = useState<WordSet | null>(null);
+  const [collection, setCollection] = useState("topic");
+  const [query, setQuery] = useState("");
   // Chọn cách luyện trước rồi mới vào buổi học, thay vì đổ thẳng người học vào một
   // chế độ mặc định rồi để họ tự tìm thanh tab.
   const [started, setStarted] = useState(false);
@@ -55,10 +62,17 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
   // Chỉ luyện lại những thẻ vừa sai; null nghĩa là cả bộ.
   const [focusIds, setFocusIds] = useState<string[] | null>(null);
 
+  // Số liệu tính trên cả kho, không theo bộ đang chọn: ba thẻ đầu màn là bức
+  // tranh chung, còn tiến độ từng bộ đã nằm trên thẻ bộ rồi.
+  const allStats = useMemo(() => deckStats(words) as { total: number; learned: number; due: number; fresh: number; mastered: number }, [words]);
+  const sets = useMemo(() => setsFor(words, collection) as WordSet[], [words, collection]);
+  const visibleSets = useMemo(() => searchSets(sets, query) as WordSet[], [sets, query]);
+
+  const pool = chosen?.words ?? words;
   const deck: WordCard[] = useMemo(() => {
-    const base = focusIds ? words.filter((word) => focusIds.includes(word.id)) : words;
+    const base = focusIds ? pool.filter((word) => focusIds.includes(word.id)) : pool;
     return shuffled ? (seededOrder(base, seed) as WordCard[]) : base;
-  }, [words, focusIds, shuffled, seed]);
+  }, [pool, focusIds, shuffled, seed]);
 
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
@@ -177,12 +191,100 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
     else void element.requestFullscreen?.();
   }
 
+  // ── Thư viện bộ từ ────────────────────────────────────────────────────────
+  if (!chosen)
+    return (
+      <div className="page vocab-library">
+        <button className="back" onClick={close}>← Chọn chức năng khác</button>
+
+        <header className="writing-hero">
+          <span className="writing-hero-icon"><Icon name="book" size={20} /></span>
+          <div>
+            <h1>Luyện từ vựng</h1>
+            <p>Chọn một bộ từ để luyện. Cùng một từ có thể nằm trong nhiều bộ.</p>
+          </div>
+        </header>
+
+        <div className="vocab-stats">
+          <div className="vocab-stat">
+            <span className="vocab-stat-icon"><Icon name="book" size={18} /></span>
+            <b>{allStats.learned}</b>
+            <small>Từ đã học</small>
+          </div>
+          <div className="vocab-stat due">
+            <span className="vocab-stat-icon"><Icon name="clock" size={18} /></span>
+            <b>{allStats.due > 0 ? allStats.due : allStats.fresh}</b>
+            <small>{allStats.due > 0 ? "Cần ôn hôm nay" : "Chưa học"}</small>
+          </div>
+          <div className="vocab-stat mastered">
+            <span className="vocab-stat-icon"><Icon name="check" size={18} /></span>
+            <b>{allStats.mastered}</b>
+            <small>Đã thuộc</small>
+          </div>
+        </div>
+
+        <div className="vocab-filter">
+          <div className="vocab-tabs" role="tablist" aria-label="Cách gom bộ từ">
+            {(COLLECTIONS as { id: string; label: string }[]).map((item) => (
+              <button
+                key={item.id}
+                role="tab"
+                aria-selected={collection === item.id}
+                className={collection === item.id ? "active" : ""}
+                onClick={() => { setCollection(item.id); setQuery(""); }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <input
+            className="vocab-search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Tìm bộ từ…"
+            aria-label="Tìm bộ từ"
+          />
+        </div>
+
+        {visibleSets.length === 0 ? (
+          <p className="empty">
+            {query ? `Không có bộ nào khớp "${query}".` : "Chưa có bộ từ nào ở cách gom này."}
+          </p>
+        ) : (
+          <div className="vocab-set-grid">
+            {visibleSets.map((set) => {
+              const name = splitLabel(set.label) as { main: string; sub: string };
+              const percent = progressOf(set) as number;
+              return (
+                <button key={set.id} className="vocab-set" onClick={() => setChosen(set)}>
+                  <span className="vocab-set-cover" aria-hidden="true">
+                    <b>{set.total}</b>
+                    <small>từ</small>
+                  </span>
+                  <span className="vocab-set-body">
+                    <b>{name.main}</b>
+                    {name.sub && <small>{name.sub}</small>}
+                    <span className="vocab-set-bar"><i style={{ width: `${percent}%` }} /></span>
+                    <em>
+                      {percent}% đã học
+                      {set.due > 0 && <span className="vocab-set-due"> · {set.due} cần ôn</span>}
+                      {set.due === 0 && set.fresh > 0 && <span> · {set.fresh} chưa học</span>}
+                    </em>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+
   if (!started)
     return (
       <div className="page vocab-drill">
-        <button className="back" onClick={close}>← Chọn chức năng khác</button>
+        <button className="back" onClick={() => setChosen(null)}>← Chọn bộ từ khác</button>
         <div className="mode-picker">
-          <h1>Chọn chế độ luyện tập</h1>
+          <h1>{chosen.label}</h1>
           <p className="page-sub">Chọn cách bạn muốn luyện {deck.length} từ trong bộ này</p>
 
           <div className="mode-options" role="radiogroup" aria-label="Chế độ luyện tập">
