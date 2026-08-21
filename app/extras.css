@@ -1484,3 +1484,56 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 .saved-group li small{display:block;color:var(--muted);font-size:11.5px;line-height:1.5;margin-top:3px}
 .saved-group li button{border:0;background:none;color:var(--text-3);font-size:16px;line-height:1;padding:2px 5px}
 .saved-group li button:hover{color:var(--pink)}
+
+/* ── Shadowing: thẻ câu mẫu và bảng kết quả ────────────────────────────────── */
+/* Màn bài học CỐ TÌNH luôn tối ở cả hai chế độ màu — .video-lesson-v2 đặt nền
+   tối không kèm điều kiện nào. Nên phần này dùng đúng bảng màu tối của chính nó,
+   KHÔNG dùng biến đổi theo chủ đề: biến sáng đặt lên nền tối thì ở chế độ sáng
+   ra chữ trắng trên nền trắng. */
+.video-lesson-v2 .lesson-clarity{display:inline-flex;align-items:center;gap:5px;font-style:normal;
+  border-radius:20px;padding:4px 11px;font-size:11px;font-weight:800}
+.video-lesson-v2 .lesson-clarity.good{background:#10261b;color:#6ee7a8}
+.video-lesson-v2 .lesson-clarity.fair{background:#2b2010;color:#f0b45c}
+.video-lesson-v2 .lesson-clarity.low{background:#2c1218;color:#f28b95}
+.video-lesson-v2 .lesson-head-tools{display:flex;gap:7px;align-items:center;margin-left:auto}
+.video-lesson-v2 .lesson-report{display:inline-flex;align-items:center;gap:6px;border:1px solid #33283f;
+  background:#15101d;color:#b5aabd;border-radius:20px;padding:5px 11px;font-size:11px;font-weight:700}
+.video-lesson-v2 .lesson-report:hover{border-color:#7a3f4a;color:#f28b95}
+.video-lesson-v2 .lesson-report.on{border-color:#7a3f4a;background:#2c1218;color:#f28b95}
+.video-lesson-v2 .lesson-chain,.video-lesson-v2 .lesson-save{border-color:#33283f;background:#15101d;color:#b5aabd}
+.video-lesson-v2 .lesson-chain:hover,.video-lesson-v2 .lesson-save:hover{border-color:#7b46a8;color:#d9c4ee}
+.video-lesson-v2 .lesson-save.on{border-color:#1e5c3c;background:#10261b;color:#6ee7a8}
+
+.shadowing-card{position:relative;background:#120d19;border:1px solid #2e2438;
+  border-radius:14px;padding:18px 20px;display:grid;gap:9px}
+.shadowing-card .lesson-aid-toggles{justify-content:flex-end;margin:0 0 2px}
+/* Câu đọc liền thành một câu; mỗi từ vẫn bấm được để tra nghĩa. */
+.shadowing-sentence{margin:0;font-size:22px;line-height:1.5;font-weight:600;color:#f4f0f8}
+.shadowing-token{border:0;background:none;color:inherit;font:inherit;padding:1px 3px;border-radius:5px}
+.shadowing-token:hover{background:#33205a;color:#e3d3f6}
+.shadowing-ipa{margin:0;color:#a69cae;font-size:13.5px;line-height:1.6}
+.shadowing-tap{display:flex;align-items:center;gap:6px;margin:2px 0 0;color:#8f8499;font-size:11px}
+.shadowing-vi{margin:6px 0 0;border-left:3px solid #4b3a5c;padding-left:12px;
+  color:#c4b8cc;font-size:13px;line-height:1.6}
+
+.shadowing-result{display:grid;gap:12px}
+.shadowing-hit{display:flex;align-items:center;gap:7px;margin:0;color:#c4b8cc;font-size:12px;font-weight:700}
+.shadowing-said{background:#120d19;border:1px solid #2e2438;border-radius:11px;padding:12px 14px}
+.shadowing-said span{display:block;color:#8f8499;font-size:11px;margin-bottom:3px}
+.shadowing-said q{color:#f4f0f8;font-size:14.5px;line-height:1.55;font-style:italic}
+.shadowing-audio{width:100%;height:36px}
+
+/* Từng từ một thẻ, bốn trạng thái: đúng, gần đúng, thiếu, thừa. */
+.shadowing-chips{display:flex;flex-wrap:wrap;gap:8px}
+.shadowing-chips .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #2c2237;
+  border-radius:9px;padding:7px 11px;font-size:12.5px;font-weight:600}
+.shadowing-chips .chip i{font-style:normal;font-size:10px;opacity:.9}
+.shadowing-chips .chip.ok{border-color:#1e5c3c;background:#10261b;color:#6ee7a8}
+.shadowing-chips .chip.swallow{border-color:#6d4a17;background:#2b2010;color:#f0b45c}
+.shadowing-chips .chip.missed{border-color:#7a3f4a;background:#2c1218;color:#f28b95}
+.shadowing-chips .chip.extra{border-style:dashed;border-color:#3a2f47;background:transparent;color:#9c91a5}
+
+.lesson-list-reset{display:inline-flex;align-items:center;gap:5px;margin-left:10px;border:0;background:none;
+  color:#a69cae;font-size:11px;font-weight:700}
+.lesson-list-reset:hover:not(:disabled){color:#d9c4ee}
+.lesson-list-reset:disabled{opacity:.4;cursor:not-allowed}

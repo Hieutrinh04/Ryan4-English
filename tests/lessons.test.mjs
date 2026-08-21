@@ -10,8 +10,21 @@ globalThis.localStorage = {
   removeItem: (key) => store.delete(key),
 };
 
-const { MAX_SENTENCES, lessonFromHash, lessonsKey, readLessonProgress, readLessons, removeLesson, sanitiseLesson, saveLesson, sentenceAt } =
-  await import("../lib/lessons.mjs");
+const {
+  MAX_SENTENCES,
+  lessonFromHash,
+  lessonsKey,
+  readLessonProgress,
+  readLessons,
+  readReports,
+  removeLesson,
+  reportedSentences,
+  reportsKey,
+  sanitiseLesson,
+  saveLesson,
+  sentenceAt,
+  toggleReport,
+} = await import("../lib/lessons.mjs");
 
 const good = () => ({
   videoId: "arj7oStGLkU",
@@ -201,4 +214,37 @@ test("xoá tiến độ của một bài không đụng bài khác", async () =>
   const after = clearLessonProgress("yt-abc");
   assert.deepEqual(doneSentences(after, "yt-abc", "dictation"), []);
   assert.deepEqual(doneSentences(after, "yt-xyz", "dictation"), [1]);
+});
+
+test("báo phụ đề sai: bật tắt được, bấm lần nữa là gỡ báo", () => {
+  localStorage.removeItem(reportsKey);
+  toggleReport("yt-a", 3);
+  assert.deepEqual(reportedSentences(readReports(), "yt-a"), [3]);
+  toggleReport("yt-a", 1);
+  assert.deepEqual(reportedSentences(readReports(), "yt-a"), [1, 3]);
+  toggleReport("yt-a", 3);
+  assert.deepEqual(reportedSentences(readReports(), "yt-a"), [1]);
+});
+
+test("báo phụ đề sai: gỡ hết thì xoá luôn mục của bài, không để mảng rỗng", () => {
+  localStorage.removeItem(reportsKey);
+  toggleReport("yt-a", 1);
+  toggleReport("yt-a", 1);
+  assert.deepEqual(readReports(), {});
+});
+
+test("báo phụ đề sai: số câu vô lý không được ghi", () => {
+  localStorage.removeItem(reportsKey);
+  for (const bad of [0, -2, 1.5, "abc", undefined]) toggleReport("yt-a", bad);
+  assert.deepEqual(readReports(), {});
+  toggleReport("", 1);
+  assert.deepEqual(readReports(), {});
+});
+
+test("báo phụ đề sai: dữ liệu hỏng không làm sập phần đọc", () => {
+  localStorage.setItem(reportsKey, "[1,2,3]");
+  assert.deepEqual(readReports(), {});
+  localStorage.setItem(reportsKey, "{hỏng");
+  assert.deepEqual(readReports(), {});
+  assert.deepEqual(reportedSentences(null, "yt-a"), []);
 });

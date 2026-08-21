@@ -85,3 +85,20 @@ test("minutesOf: một lượt ngắn vẫn được ghi nhận là một phút"
   assert.equal(minutesOf(90), 2);
   assert.equal(minutesOf(0), 1);
 });
+
+test("marks: giữ nguyên thứ tự nói, từ thừa nằm đúng chỗ nó chen vào", () => {
+  // Người học nói thừa "feature" giữa câu — phải thấy nó nằm ngay chỗ đó, chứ
+  // dồn xuống cuối thì không hiểu vì sao câu bị sai.
+  const result = scoreShadowing("episode is all about films", "episode feature is about films");
+  assert.deepEqual(
+    result.marks.map((mark) => `${mark.word}:${mark.status}`),
+    ["episode:ok", "feature:extra", "is:ok", "all:missed", "about:ok", "films:ok"],
+  );
+  // words chỉ chứa từ của câu mẫu, không lẫn từ thừa vào phép chấm.
+  assert.equal(result.words.length, 5);
+  assert.deepEqual(result.extra, ["feature"]);
+});
+
+test("marks: câu mẫu rỗng trả về danh sách rỗng chứ không phải undefined", () => {
+  assert.deepEqual(scoreShadowing("", "gì đó").marks, []);
+});

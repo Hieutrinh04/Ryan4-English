@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
 import Icon from "./Icon";
 import { createRecogniser, hasRecognition, micError, type Recognition } from "../lib/speech";
-import { doneSentences, markSentence, readLessonProgress } from "../lib/lessons.mjs";
+import { clearLessonProgress, doneSentences, markSentence, readLessonProgress, readReports, reportedSentences, toggleReport } from "../lib/lessons.mjs";
 import { properNouns, scoreDictation, wordShapes } from "../lib/youtube.mjs";
 import { missingWords, readIpaCache, readTranslationCache, saveIpa, saveTranslation, withIpa } from "../lib/sentence-aids.mjs";
 import { scoreShadowing, shadowingAdvice, paceOf } from "../lib/shadowing.mjs";
@@ -73,6 +73,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   // Ghép thêm mấy câu phía sau vào đoạn đang luyện. 0 nghĩa là một câu như cũ.
   const [chain, setChain] = useState(0);
   const [saved, setSaved] = useState<{ key: string }[]>([]);
+  const [reports, setReports] = useState<Record<string, number[]>>({});
   const [recordUrl, setRecordUrl] = useState("");
   const [coaching, setCoaching] = useState(false);
   const [coachComment, setCoachComment] = useState("");
@@ -106,12 +107,14 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   // Chữ và mốc thời gian của đoạn đang luyện; chưa ghép thì y hệt câu đơn.
   const target = span ?? { text: sentence?.text ?? "", start: sentence?.start ?? 0, end: sentence?.end ?? 0, count: 1, words: 0 };
   const done = useMemo(() => new Set(doneSentences(progress, lesson.id, mode) as number[]), [progress, lesson.id, mode]);
+  const reported = useMemo(() => new Set(reportedSentences(reports, lesson.id) as number[]), [reports, lesson.id]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
     setProgress(readLessonProgress());
     setIpaCache(readIpaCache());
     setSaved(readSaved());
+    setReports(readReports());
     setViCache(readTranslationCache());
   }, []);
 
@@ -316,7 +319,14 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   const spoken = useMemo(
     () =>
       heard && target.text
-        ? (scoreShadowing(target.text, heard) as { clarity: number; words: { word: string; status: string }[]; missed: string[]; swallowed: string[]; spokenCount: number })
+        ? (scoreShadowing(target.text, heard) as {
+            clarity: number;
+            words: { word: string; status: string }[];
+            marks: { word: string; status: string }[];
+            missed: string[];
+            swallowed: string[];
+            spokenCount: number;
+          })
         : null,
     [heard, target.text],
   );
@@ -339,6 +349,17 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
         }),
       ) as { key: string }[],
     );
+  }
+
+  function reportThis() {
+    if (!sentence) return;
+    setReports(toggleReport(lesson.id, sentence.index) as Record<string, number[]>);
+  }
+
+  function resetProgress() {
+    setProgress(clearLessonProgress(lesson.id) as Record<string, unknown>);
+    setIndex(0);
+    setChain(0);
   }
 
   function toggleFullscreen() {
@@ -546,13 +567,13 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                   <Icon name="swap" size={13} /> Ghép câu kế tiếp ({chain}/{MAX_CHAIN})
                 </button>
               )}
-              <button
-                className={`lesson-save${isSaved(saved, lesson.id, sentence.index) ? " on" : ""}`}
-                onClick={saveThis}
-                aria-pressed={isSaved(saved, lesson.id, sentence.index) as boolean}
-              >
-                <Icon name="check" size={13} /> {isSaved(saved, lesson.id, sentence.index) ? "Đã lưu" : "Lưu câu"}
-              </button>
+              {mode === "shadowing" && spoken && (
+                // Gọi là "độ rõ lời" chứ không phải "độ chính xác": trình duyệt chỉ
+                // cho biết máy NGHE RA chữ gì, không chấm được giọng bạn chuẩn hay chưa.
+                <em className={`lesson-clarity${spoken.clarity >= 80 ? " good" : spoken.clarity >= 50 ? " fair" : " low"}`}>
+                  <Icon name="chart" size={12} /> Độ rõ lời {spoken.clarity}%
+                </em>
+              )}
               {mode === "dictation" && <em className={result?.percent === 100 ? "good" : ""}>Khớp: {result?.percent ?? 0}%</em>}
               {mode === "dictation" && (
                 <span className="lesson-keys">
@@ -565,8 +586,27 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                     <i /> Tự động tiếp
                   </button>
                 )}
-                <button className={!showVi ? "on" : ""} onClick={() => setShowVi((value) => !value)} aria-pressed={!showVi}>
-                  <i /> Ẩn dịch
+                {mode === "dictation" && (
+                  <button className={!showVi ? "on" : ""} onClick={() => setShowVi((value) => !value)} aria-pressed={!showVi}>
+                    <i /> Ẩn dịch
+                  </button>
+                )}
+              </span>
+              <span className="lesson-head-tools">
+                <button
+                  className={`lesson-save${isSaved(saved, lesson.id, sentence.index) ? " on" : ""}`}
+                  onClick={saveThis}
+                  aria-pressed={isSaved(saved, lesson.id, sentence.index) as boolean}
+                >
+                  <Icon name="check" size={13} /> {isSaved(saved, lesson.id, sentence.index) ? "Đã lưu" : "Lưu câu"}
+                </button>
+                <button
+                  className={`lesson-report${reported.has(sentence.index) ? " on" : ""}`}
+                  onClick={reportThis}
+                  aria-pressed={reported.has(sentence.index)}
+                  title="Đánh dấu câu có phụ đề sai hoặc lệch giờ"
+                >
+                  <Icon name="flag" size={13} /> {reported.has(sentence.index) ? "Đã báo" : "Báo cáo"}
                 </button>
               </span>
             </div>
@@ -641,33 +681,51 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
               </>
             ) : (
               <>
-                <div className="lesson-aid-toggles" role="group" aria-label="Hiện thêm">
-                  <button className={showText ? "active" : ""} onClick={() => setShowText((value) => !value)} aria-pressed={showText}>Câu mẫu</button>
-                  <button className={showIpa ? "active" : ""} onClick={() => setShowIpa((value) => !value)} aria-pressed={showIpa}>IPA</button>
-                  <button className={showVi ? "active" : ""} onClick={() => setShowVi((value) => !value)} aria-pressed={showVi}>Dịch nghĩa</button>
-                  {aidBusy && <span className="lesson-aid-busy">đang tra…</span>}
+                {/* Thẻ câu mẫu. Chữ đọc liền thành một câu, IPA thành một dòng
+                    riêng bên dưới — trước đây mỗi từ là một ô có IPA xếp chồng
+                    nên nhìn ra một dãy thẻ chứ không còn ra một câu. */}
+                <div className="shadowing-card">
+                  <div className="lesson-aid-toggles" role="group" aria-label="Hiện thêm">
+                    <button className={showText ? "active" : ""} onClick={() => setShowText((value) => !value)} aria-pressed={showText}>Câu mẫu</button>
+                    <button className={showIpa ? "active" : ""} onClick={() => setShowIpa((value) => !value)} aria-pressed={showIpa}>IPA</button>
+                    <button className={showVi ? "active" : ""} onClick={() => setShowVi((value) => !value)} aria-pressed={showVi}>Dịch nghĩa</button>
+                    {aidBusy && <span className="lesson-aid-busy">đang tra…</span>}
+                  </div>
+
+                  {showText ? (
+                    <>
+                      <p className="shadowing-sentence">
+                        {(withIpa(target.text, ipaCache) as { word: string; ipa: string }[]).map((row, position) => (
+                          <Fragment key={position}>
+                            <button className="shadowing-token" onClick={() => void lookUp(row.word)} title="Bấm để tra nghĩa">
+                              {row.word}
+                            </button>{" "}
+                          </Fragment>
+                        ))}
+                      </p>
+                      {showIpa && (
+                        <p className="shadowing-ipa">
+                          {(withIpa(target.text, ipaCache) as { word: string; ipa: string }[])
+                            .map((row) => row.ipa)
+                            .filter(Boolean)
+                            .join(" ")}
+                        </p>
+                      )}
+                      <p className="shadowing-tap"><Icon name="book" size={13} /> Nhấn vào từ để tra nghĩa</p>
+                    </>
+                  ) : (
+                    <p className="lesson-hidden-note">Câu mẫu đang ẩn — nghe rồi nói theo, bật lại khi cần đối chiếu.</p>
+                  )}
+
+                  {showVi && <p className="shadowing-vi">{viCache[target.text] || "Đang dịch…"}</p>}
                 </div>
 
-                {showText ? (
-                  <>
-                    <p className={showIpa ? "lesson-sentence with-ipa" : "lesson-sentence"}>
-                      {(withIpa(target.text, ipaCache) as { word: string; ipa: string }[]).map((row, position) => (
-                        <button key={position} className="lesson-word" onClick={() => void lookUp(row.word)} title="Bấm để tra nghĩa">
-                          <span>{row.word}</span>
-                          {showIpa && <em>{row.ipa}</em>}
-                        </button>
-                      ))}
-                    </p>
-                    <div className="shadowing-groups">
-                      <span>Chia nhịp</span>
-                      {senseGroups(target.text).map((group, position) => <b key={position}>{group}</b>)}
-                    </div>
-                  </>
-                ) : (
-                  <p className="lesson-hidden-note">Câu mẫu đang ẩn — nghe rồi nói theo, bật lại khi cần đối chiếu.</p>
+                {showText && (
+                  <div className="shadowing-groups">
+                    <span>Chia nhịp</span>
+                    {senseGroups(target.text).map((group, position) => <b key={position}>{group}</b>)}
+                  </div>
                 )}
-
-                {showVi && <p className="lesson-vi">{viCache[target.text] || "Đang dịch…"}</p>}
 
                 {lookup && (
                   <div className="lesson-lookup">
@@ -691,6 +749,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                     ))}
                   </select>
                 </div>
+
                 <div className="shadowing-record-stage">
                   {listening ? (
                     <button className="shadowing-record listening" onClick={() => engine.current?.stop()}>
@@ -705,27 +764,6 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                   )}
                 </div>
 
-                <div className="shadowing-repeat">
-                  {!spoken && (
-                    <>
-                      <p>Nghe và lặp lại câu trên</p>
-                      <div className="shadowing-word-shapes">
-                        {shapes.map((shape, position) => <span key={position}>{"•".repeat(Math.max(2, shape.letters))}</span>)}
-                      </div>
-                    </>
-                  )}
-                  <div className="shadowing-repeat-controls">
-                    <button onClick={() => go(-1)} disabled={index === 0} aria-label="Câu trước"><Icon name="previous" size={17} /></button>
-                    <button onClick={playSentence} aria-label="Nghe lại"><Icon name="replay" size={17} /></button>
-                    <button className="play" onClick={playSentence} aria-label="Phát câu mẫu"><Icon name="play" size={21} /></button>
-                    <div className="shadowing-inline-rates">
-                      {RATES.map((value) => (
-                        <button key={value} className={value === rate ? "active" : ""} onClick={() => { setRate(value); player.current?.rate(value); }}>{value}x</button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
                 {!hasRecognition() && (
                   <p className="shadowing-warn">
                     Trình duyệt này không có sẵn phần nhận dạng giọng nói. Chrome hoặc Edge trên máy tính chạy đủ tính năng.
@@ -733,33 +771,34 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                 )}
                 {micNote && <p className="shadowing-warn">{micNote}</p>}
 
-                {spoken && (
-                  <>
-                    {recordUrl && (
-                      <div className="shadowing-own-recording">
-                        <div><Icon name="volume" size={17} /><span><b>Bản ghi của bạn</b><small>Nghe lại rồi so sánh với câu mẫu</small></span></div>
-                        {/* Đây là bản ghi của chính người học; phần chữ máy nghe
-                            được và đối chiếu từng từ nằm ngay bên dưới. */}
-                        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                        <audio controls src={recordUrl} preload="metadata" />
-                      </div>
-                    )}
-                    <div className="shadowing-score">
-                      <div>
-                        <b>{spoken.clarity}%</b>
-                        <small>độ rõ lời</small>
-                      </div>
-                    </div>
-                    <p className="shadowing-marks">
-                      {spoken.words.map((mark, position) => (
-                        <span key={position} className={`mark ${mark.status}`}>{mark.word}</span>
-                      ))}
+                {spoken ? (
+                  <div className="shadowing-result">
+                    <p className="shadowing-hit">
+                      <Icon name="chart" size={14} /> {spoken.words.filter((mark) => mark.status === "ok").length}/{spoken.words.length} từ đúng
                     </p>
-                    <ul className="shadowing-notes">
-                      {advice.map((note, position) => (
-                        <li key={position} className={note.kind}>{note.text}</li>
+
+                    <div className="shadowing-said">
+                      <span>Bạn đã nói:</span>
+                      <q>{heard}</q>
+                    </div>
+
+                    {recordUrl && (
+                      // Bản ghi của chính người học; nghe lại cạnh câu mẫu là cách
+                      // đối chiếu đáng tin nhất, vì máy không chấm được giọng.
+                      // eslint-disable-next-line jsx-a11y/media-has-caption
+                      <audio className="shadowing-audio" controls src={recordUrl} preload="metadata" />
+                    )}
+
+                    {/* Từ thừa nằm đúng chỗ nó chen vào, không dồn xuống cuối. */}
+                    <div className="shadowing-chips">
+                      {spoken.marks.map((mark, position) => (
+                        <span key={position} className={`chip ${mark.status}`}>
+                          {mark.word}
+                          <i>{mark.status === "ok" ? "✓" : mark.status === "swallow" ? "⚠" : mark.status === "extra" ? "+" : "✕"}</i>
+                        </span>
                       ))}
-                    </ul>
+                    </div>
+
                     <div className="video-ai-coach">
                       <button onClick={() => void askCoach()} disabled={coaching}>
                         <Icon name="sparkles" size={16} /> {coaching ? "Đang nhờ AI phân tích…" : "Nhờ AI nhận xét phát âm"}
@@ -774,8 +813,34 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                         </ul>
                       )}
                     </div>
-                  </>
+
+                    <ul className="shadowing-notes">
+                      {advice.map((note, position) => (
+                        <li key={position} className={note.kind}>{note.text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <div className="shadowing-repeat">
+                    <p>Nghe và lặp lại câu trên</p>
+                    <div className="shadowing-word-shapes">
+                      {shapes.map((shape, position) => <span key={position}>{"•".repeat(Math.max(2, shape.letters))}</span>)}
+                    </div>
+                  </div>
                 )}
+
+                {/* Thanh phát nằm dưới cùng, sau phần kết quả — nghe lại câu mẫu là
+                    việc làm SAU khi xem mình sai chỗ nào. */}
+                <div className="shadowing-repeat-controls">
+                  <button onClick={() => go(-1)} disabled={index === 0} aria-label="Câu trước"><Icon name="previous" size={17} /></button>
+                  <button onClick={playSentence} aria-label="Nghe lại"><Icon name="replay" size={17} /></button>
+                  <button className="play" onClick={playSentence} aria-label="Phát câu mẫu"><Icon name="play" size={21} /></button>
+                  <div className="shadowing-inline-rates">
+                    {RATES.map((value) => (
+                      <button key={value} className={value === rate ? "active" : ""} onClick={() => { setRate(value); player.current?.rate(value); }}>{value}x</button>
+                    ))}
+                  </div>
+                </div>
               </>
             )}
 
@@ -799,6 +864,9 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
 
           <div className="lesson-list-progress">
             <span>Tiến độ</span>
+            <button className="lesson-list-reset" onClick={resetProgress} disabled={done.size === 0}>
+              <Icon name="replay" size={12} /> Đặt lại tiến độ
+            </button>
             <b>{Math.round((done.size / lesson.sentences.length) * 100)}%</b>
           </div>
           <div className="lesson-list-bar">
