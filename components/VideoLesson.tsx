@@ -8,6 +8,9 @@ import { doneSentences, markSentence, readLessonProgress } from "../lib/lessons.
 import { properNouns, scoreDictation, wordShapes } from "../lib/youtube.mjs";
 import { missingWords, readIpaCache, readTranslationCache, saveIpa, saveTranslation, withIpa } from "../lib/sentence-aids.mjs";
 import { scoreShadowing, shadowingAdvice, paceOf } from "../lib/shadowing.mjs";
+import { audioConstraint, micOptions, pickMic, readMic, saveMic } from "../lib/mic.mjs";
+import { MAX_CHAIN, canChain, chainOf, clampChain } from "../lib/sentence-chain.mjs";
+import { isSaved, makeSaved, readSaved, toggleSentence } from "../lib/saved-sentences.mjs";
 import { aiFetch } from "../lib/supabase";
 
 // Học trên chính video: nghe chép chính tả và nói nhại theo TỪNG CÂU.
@@ -61,6 +64,15 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   const [heard, setHeard] = useState("");
   const [spokenFor, setSpokenFor] = useState(0);
   const [micNote, setMicNote] = useState("");
+  const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
+  const [micId, setMicId] = useState("");
+  // Chế độ chỉ nghe: giấu khung hình đi để buộc tai làm việc, nhưng KHÔNG gỡ
+  // trình phát khỏi trang — gỡ là mất luôn tiếng và phải nạp lại video từ đầu.
+  const [audioOnly, setAudioOnly] = useState(false);
+  const [full, setFull] = useState(false);
+  // Ghép thêm mấy câu phía sau vào đoạn đang luyện. 0 nghĩa là một câu như cũ.
+  const [chain, setChain] = useState(0);
+  const [saved, setSaved] = useState<{ key: string }[]>([]);
   const [recordUrl, setRecordUrl] = useState("");
   const [coaching, setCoaching] = useState(false);
   const [coachComment, setCoachComment] = useState("");
@@ -79,6 +91,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   // Chấm xong tự sang câu kế tiếp. Tắt mặc định vì người mới cần đọc lại chỗ sai.
   const [autoNext, setAutoNext] = useState(false);
 
+  const stage = useRef<HTMLDivElement>(null);
   const player = useRef<PlayerHandle | null>(null);
   const engine = useRef<Recognition | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -86,12 +99,19 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   const startedAt = useRef(0);
 
   const sentence = lesson.sentences[index];
+  const span = useMemo(
+    () => chainOf(lesson.sentences, index, mode === "shadowing" ? chain : 0) as { text: string; start: number; end: number; count: number; words: number } | null,
+    [lesson.sentences, index, chain, mode],
+  );
+  // Chữ và mốc thời gian của đoạn đang luyện; chưa ghép thì y hệt câu đơn.
+  const target = span ?? { text: sentence?.text ?? "", start: sentence?.start ?? 0, end: sentence?.end ?? 0, count: 1, words: 0 };
   const done = useMemo(() => new Set(doneSentences(progress, lesson.id, mode) as number[]), [progress, lesson.id, mode]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
     setProgress(readLessonProgress());
     setIpaCache(readIpaCache());
+    setSaved(readSaved());
     setViCache(readTranslationCache());
   }, []);
 
@@ -103,7 +123,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     const jobs: Promise<void>[] = [];
 
     if (showIpa) {
-      const need = missingWords(sentence.text, ipaCache) as string[];
+      const need = missingWords(target.text, ipaCache) as string[];
       if (need.length) {
         jobs.push(
           fetch("/api/ipa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ words: need }) })
@@ -116,13 +136,13 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
       }
     }
 
-    if (showVi && !viCache[sentence.text]) {
+    if (showVi && !viCache[target.text]) {
       jobs.push(
-        fetch("/api/translate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texts: [sentence.text] }) })
+        fetch("/api/translate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texts: [target.text] }) })
           .then((response) => response.json())
           .then((data: { translations?: string[] }) => {
             const vietnamese = data.translations?.[0];
-            if (alive && vietnamese) setViCache(saveTranslation(sentence.text, vietnamese));
+            if (alive && vietnamese) setViCache(saveTranslation(target.text, vietnamese));
           })
           .catch(() => {}),
       );
@@ -135,7 +155,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     // ipaCache và viCache cố tình không nằm trong danh sách: chúng thay đổi CHÍNH
     // VÌ hiệu ứng này chạy, đưa vào là thành vòng lặp.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sentence?.text, showIpa, showVi]);
+  }, [target.text, showIpa, showVi]);
 
   useEffect(() => {
     if (mode === "dictation" && !checked) inputRef.current?.focus();
@@ -178,20 +198,52 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     if (recordUrl) URL.revokeObjectURL(recordUrl);
   }, [recordUrl]);
 
+  // Bấm Esc để thoát toàn màn hình thì trình duyệt không báo cho nút của mình,
+  // nên phải nghe sự kiện của trình duyệt chứ đừng tự giữ trạng thái.
+  useEffect(() => {
+    const onChange = () => setFull(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  // Danh sách thiết bị thu âm. Đọc lại khi cắm hoặc rút tai nghe, nếu không thì
+  // người học vừa cắm tai nghe vào vẫn chỉ thấy micro cũ trong ô chọn.
+  useEffect(() => {
+    const media = navigator.mediaDevices;
+    if (!media?.enumerateDevices) return;
+    let alive = true;
+    const load = () => {
+      void media
+        .enumerateDevices()
+        .then((devices) => {
+          if (alive) setMics(devices);
+        })
+        .catch(() => {});
+    };
+    load();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
+    setMicId(readMic());
+    media.addEventListener?.("devicechange", load);
+    return () => {
+      alive = false;
+      media.removeEventListener?.("devicechange", load);
+    };
+  }, []);
+
   // YouTube mặc định phát liên tục hết video. Shadowing/Dictation cần một đơn vị
   // là CÂU, nên dừng player ngay khi chạm mốc cuối của câu đang chọn. Khoảng đệm
   // nhỏ tránh bỏ mất phụ âm cuối do ticker chỉ cập nhật bốn lần mỗi giây.
   useEffect(() => {
     if (!sentence || !player.current?.playing()) return;
-    const stopAt = Math.max(sentence.start + 0.15, sentence.end);
+    const stopAt = Math.max(target.start + 0.15, target.end);
     if (at >= stopAt - 0.06) player.current.pause();
-  }, [at, sentence]);
+  }, [at, sentence, target.start, target.end]);
 
   /** Phát đúng câu đang làm, từ đầu câu. */
   function playSentence() {
     if (!sentence || !player.current) return;
     player.current.rate(rate);
-    player.current.seek(sentence.start);
+    player.current.seek(target.start);
     player.current.play();
   }
 
@@ -212,6 +264,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   function go(step: number) {
     const next = Math.min(lesson.sentences.length - 1, Math.max(0, index + step));
     setIndex(next);
+    setChain((value) => clampChain(lesson.sentences, next, value) as number);
     setTyped("");
     setChecked(false);
     setHints(0);
@@ -245,7 +298,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   // state riêng sẽ kẹt ở "đang tra" mãi nếu lượt gọi mạng hỏng giữa chừng.
   const aidBusy =
     Boolean(sentence) &&
-    ((showIpa && (missingWords(sentence.text, ipaCache) as string[]).length > 0) || (showVi && !viCache[sentence.text]));
+    ((showIpa && (missingWords(target.text, ipaCache) as string[]).length > 0) || (showVi && !viCache[target.text]));
   const names = useMemo(() => (sentence ? (properNouns(sentence.text) as string[]) : []), [sentence]);
 
   function check() {
@@ -262,20 +315,44 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   // ── Nói nhại ──────────────────────────────────────────────────────────────
   const spoken = useMemo(
     () =>
-      heard && sentence
-        ? (scoreShadowing(sentence.text, heard) as { clarity: number; words: { word: string; status: string }[]; missed: string[]; swallowed: string[]; spokenCount: number })
+      heard && target.text
+        ? (scoreShadowing(target.text, heard) as { clarity: number; words: { word: string; status: string }[]; missed: string[]; swallowed: string[]; spokenCount: number })
         : null,
-    [heard, sentence],
+    [heard, target.text],
   );
   const advice = useMemo(
     () => (spoken ? (shadowingAdvice(spoken, paceOf(spoken.words.length, spokenFor)) as { kind: string; text: string }[]) : []),
     [spoken, spokenFor],
   );
 
+  function saveThis() {
+    if (!sentence) return;
+    setSaved(
+      toggleSentence(
+        makeSaved({
+          lessonId: lesson.id,
+          lessonTitle: lesson.title,
+          index: sentence.index,
+          start: target.start,
+          text: target.text,
+          translation: viCache[target.text] ?? "",
+        }),
+      ) as { key: string }[],
+    );
+  }
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void stage.current?.requestFullscreen?.();
+  }
+
   async function startRecording() {
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint(pickMic(mics, micId)) });
+      // Tên thiết bị chỉ hiện ra sau lần đầu được cấp quyền, nên đọc lại danh sách
+      // ngay sau khi mở micro thành công.
+      void navigator.mediaDevices.enumerateDevices().then(setMics).catch(() => {});
       const chunks: Blob[] = [];
       const next = new MediaRecorder(stream);
       next.ondataavailable = (event) => {
@@ -332,7 +409,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     try {
       const response = await aiFetch("/api/ai/pronounce", {
         method: "POST",
-        body: JSON.stringify({ sentence: sentence.text, heard, missed: spoken.missed, swallowed: spoken.swallowed }),
+        body: JSON.stringify({ sentence: target.text, heard, missed: spoken.missed, swallowed: spoken.swallowed }),
       });
       const data = (await response.json()) as { comment?: string; tips?: CoachTip[]; error?: string };
       if (!response.ok || data.error) throw new Error(data.error ?? "Chưa lấy được nhận xét phát âm.");
@@ -358,7 +435,10 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     );
 
   return (
-    <div className={`page video-lesson video-lesson-v2 ${mode === "shadowing" ? "shadowing-layout" : "dictation-layout"}`}>
+    <div
+      ref={stage}
+      className={`page video-lesson video-lesson-v2 ${mode === "shadowing" ? "shadowing-layout" : "dictation-layout"}${audioOnly ? " audio-only" : ""}${full ? " full" : ""}`}
+    >
       <div className="lesson-top">
         <button className="drill-icon" onClick={close} aria-label="Quay lại">←</button>
         <span className="lesson-level">B1</span>
@@ -374,6 +454,22 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
           </button>
           <button className={mode === "dictation" ? "active" : ""} onClick={() => onMode?.("dictation")}>
             <Icon name="headphones" size={15} /> Dictation
+          </button>
+        </div>
+        <div className="lesson-view-tools">
+          {/* Chỉ nghe: giấu hình để tai phải tự làm việc. Người học nào quen nhìn
+              khẩu hình sẽ hụt lúc nghe thật, nên cần tắt hình được. */}
+          <button
+            className={audioOnly ? "active" : ""}
+            onClick={() => setAudioOnly((value) => !value)}
+            aria-pressed={audioOnly}
+            title={audioOnly ? "Đang chỉ nghe tiếng" : "Đang xem cả hình"}
+          >
+            <Icon name={audioOnly ? "headphones" : "play"} size={15} />
+            {audioOnly ? "Âm thanh" : "Video"}
+          </button>
+          <button onClick={toggleFullscreen} aria-label={full ? "Thoát toàn màn hình" : "Toàn màn hình"}>
+            <Icon name={full ? "stop" : "target"} size={15} />
           </button>
         </div>
         <span className="lesson-count">
@@ -404,34 +500,59 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
             />
           </div>
 
-          <div className="lesson-controls">
-            <span className="lesson-time">{clock(at)} / {clock(lesson.seconds)}</span>
-            <div className="lesson-transport">
-              <button onClick={() => go(-1)} disabled={index === 0} aria-label="Câu trước">⏮</button>
-              <button onClick={playSentence} aria-label="Nghe lại câu này">↺</button>
-              <button className="primary" onClick={playSentence} aria-label="Phát">▶</button>
-              <button onClick={() => go(1)} disabled={index >= lesson.sentences.length - 1} aria-label="Câu sau">⏭</button>
+          {mode === "dictation" && (
+            <div className="lesson-controls">
+              <span className="lesson-time">{clock(at)} / {clock(lesson.seconds)}</span>
+              <div className="lesson-transport">
+                <button onClick={() => go(-1)} disabled={index === 0} aria-label="Câu trước">⏮</button>
+                <button onClick={playSentence} aria-label="Nghe lại câu này">↺</button>
+                <button className="primary" onClick={playSentence} aria-label="Phát">▶</button>
+                <button onClick={() => go(1)} disabled={index >= lesson.sentences.length - 1} aria-label="Câu sau">⏭</button>
+              </div>
+              <div className="lesson-rates">
+                {RATES.map((value) => (
+                  <button
+                    key={value}
+                    className={value === rate ? "active" : ""}
+                    onClick={() => {
+                      setRate(value);
+                      player.current?.rate(value);
+                    }}
+                  >
+                    {value}x
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="lesson-rates">
-              {RATES.map((value) => (
-                <button
-                  key={value}
-                  className={value === rate ? "active" : ""}
-                  onClick={() => {
-                    setRate(value);
-                    player.current?.rate(value);
-                  }}
-                >
-                  {value}x
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
 
           <div className="panel lesson-work">
             <div className="lesson-work-head">
-              <b>#{sentence.index}</b>
-              <span>{result ? `${result.matched}/${result.total}` : `0/${shapes.length}`} từ</span>
+              <b>#{sentence.index}{mode === "shadowing" && target.count > 1 ? "–" + (sentence.index + target.count - 1) : ""}</b>
+              <span>
+                {mode === "shadowing"
+                  ? `${target.words} từ`
+                  : `${result ? result.matched + "/" + result.total : "0/" + shapes.length} từ`}
+              </span>
+              {mode === "shadowing" && (
+                // Nói được từng câu rời không có nghĩa là nói được cả đoạn: chỗ khó
+                // nằm ở mối nối, nơi phải giữ hơi và giữ nhịp.
+                <button
+                  className="lesson-chain"
+                  onClick={() => setChain((value) => (value + 1) % (MAX_CHAIN + 1))}
+                  disabled={!canChain(lesson.sentences, index, 0) && chain === 0}
+                  title="Ghép thêm câu phía sau để nói liền một mạch"
+                >
+                  <Icon name="swap" size={13} /> Ghép câu kế tiếp ({chain}/{MAX_CHAIN})
+                </button>
+              )}
+              <button
+                className={`lesson-save${isSaved(saved, lesson.id, sentence.index) ? " on" : ""}`}
+                onClick={saveThis}
+                aria-pressed={isSaved(saved, lesson.id, sentence.index) as boolean}
+              >
+                <Icon name="check" size={13} /> {isSaved(saved, lesson.id, sentence.index) ? "Đã lưu" : "Lưu câu"}
+              </button>
               {mode === "dictation" && <em className={result?.percent === 100 ? "good" : ""}>Khớp: {result?.percent ?? 0}%</em>}
               {mode === "dictation" && (
                 <span className="lesson-keys">
@@ -530,7 +651,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                 {showText ? (
                   <>
                     <p className={showIpa ? "lesson-sentence with-ipa" : "lesson-sentence"}>
-                      {(withIpa(sentence.text, ipaCache) as { word: string; ipa: string }[]).map((row, position) => (
+                      {(withIpa(target.text, ipaCache) as { word: string; ipa: string }[]).map((row, position) => (
                         <button key={position} className="lesson-word" onClick={() => void lookUp(row.word)} title="Bấm để tra nghĩa">
                           <span>{row.word}</span>
                           {showIpa && <em>{row.ipa}</em>}
@@ -539,14 +660,14 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                     </p>
                     <div className="shadowing-groups">
                       <span>Chia nhịp</span>
-                      {senseGroups(sentence.text).map((group, position) => <b key={position}>{group}</b>)}
+                      {senseGroups(target.text).map((group, position) => <b key={position}>{group}</b>)}
                     </div>
                   </>
                 ) : (
                   <p className="lesson-hidden-note">Câu mẫu đang ẩn — nghe rồi nói theo, bật lại khi cần đối chiếu.</p>
                 )}
 
-                {showVi && <p className="lesson-vi">{viCache[sentence.text] || "Đang dịch…"}</p>}
+                {showVi && <p className="lesson-vi">{viCache[target.text] || "Đang dịch…"}</p>}
 
                 {lookup && (
                   <div className="lesson-lookup">
@@ -559,7 +680,16 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
 
                 <div className="shadowing-mic-head">
                   <span><Icon name="mic" size={14} /> Micro</span>
-                  <small>Microphone mặc định</small>
+                  <select
+                    className="shadowing-mic-pick"
+                    value={pickMic(mics, micId) as string}
+                    onChange={(event) => setMicId(saveMic(event.target.value) as string)}
+                    aria-label="Chọn micro"
+                  >
+                    {(micOptions(mics) as { id: string; label: string }[]).map((option) => (
+                      <option key={option.id || "default"} value={option.id}>{option.label}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="shadowing-record-stage">
                   {listening ? (

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Icon from "./Icon";
+import { groupByLesson, readSaved, removeSentence } from "../lib/saved-sentences.mjs";
 
 // Màn hình vào của Dictation và Shadowing.
 //
@@ -23,12 +24,15 @@ export type VideoLessonCard = {
   sentences: { index: number; start: number; end: number; text: string }[];
 };
 
-type Filter = "all" | "video" | "builtin";
+type Filter = "all" | "video" | "builtin" | "saved";
+type Saved = { key: string; lessonId: string; lessonTitle: string; index: number; text: string; translation: string };
+type SavedGroup = { lessonId: string; title: string; items: Saved[] };
 
 const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "Tất cả" },
   { value: "video", label: "Video của tôi" },
   { value: "builtin", label: "Thư viện Lexilo" },
+  { value: "saved", label: "Câu đã lưu" },
 ];
 
 const TOPICS = ["BBC Learning English", "Hội thoại", "Công việc", "Du lịch", "Công nghệ", "IELTS", "TOEIC"];
@@ -55,8 +59,17 @@ export default function LessonLibrary({
   const [filter, setFilter] = useState<Filter>("all");
   const [topic, setTopic] = useState("Tất cả");
   const [level, setLevel] = useState("Tất cả cấp độ");
-  const showVideo = filter !== "builtin";
-  const showBuiltIn = filter !== "video";
+  const [saved, setSaved] = useState<Saved[]>([]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
+    setSaved(readSaved() as Saved[]);
+  }, []);
+
+  const savedGroups = useMemo(() => groupByLesson(saved) as SavedGroup[], [saved]);
+  const showVideo = filter === "all" || filter === "video";
+  const showBuiltIn = filter === "all" || filter === "builtin";
+  const showSaved = filter === "all" || filter === "saved";
 
   return (
     <div className="page lesson-library lesson-library-v2">
@@ -76,7 +89,9 @@ export default function LessonLibrary({
         <div className="library-filters" role="group" aria-label="Lọc nguồn bài">
           {FILTERS.map((item) => (
             <button key={item.value} className={filter === item.value ? "active" : ""} onClick={() => setFilter(item.value)}>
-              {item.label}{item.value === "video" && lessons.length > 0 && <em>{lessons.length}</em>}
+              {item.label}
+              {item.value === "video" && lessons.length > 0 && <em>{lessons.length}</em>}
+              {item.value === "saved" && saved.length > 0 && <em>{saved.length}</em>}
             </button>
           ))}
         </div>
@@ -114,6 +129,44 @@ export default function LessonLibrary({
                   Cài tiện ích Lexilo cho trình duyệt (thư mục <code>extension/</code>), mở một video YouTube có phụ đề
                   rồi bấm biểu tượng Lexilo. Bài sẽ hiện ở đây.
                 </p>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {showSaved && (saved.length > 0 || filter === "saved") && (
+        <section className="library-block">
+          <div className="library-section-title">
+            <h2>Câu đã lưu</h2>
+            <span>{saved.length ? `${saved.length} câu · ${savedGroups.length} bài` : "Bấm Lưu câu trong lúc luyện để cất câu hay vào đây"}</span>
+          </div>
+          {saved.length ? (
+            <div className="saved-list">
+              {savedGroups.map((group) => (
+                <div key={group.lessonId} className="saved-group">
+                  <b>{group.title}</b>
+                  <ul>
+                    {group.items.map((item) => (
+                      <li key={item.key}>
+                        <em>#{item.index}</em>
+                        <div>
+                          <p>{item.text}</p>
+                          {item.translation && <small>{item.translation}</small>}
+                        </div>
+                        <button onClick={() => setSaved(removeSentence(item.key) as Saved[])} aria-label="Bỏ lưu câu này">×</button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="library-empty">
+              <Icon name="check" size={22} />
+              <div>
+                <b>Chưa lưu câu nào</b>
+                <p>Trong lúc luyện, bấm <b>Lưu câu</b> ở đầu khung làm bài để cất lại câu bạn muốn quay lại.</p>
               </div>
             </div>
           )}

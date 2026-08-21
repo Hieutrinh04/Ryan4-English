@@ -29,6 +29,7 @@ type TranslationAttempt = { at: string; day: string; term: string; vi: string; a
 import { advice, byDay, entriesSince, summarise, weakest } from "../lib/review-log.mjs";
 // Lịch ôn và các phép tính ngày: nguồn duy nhất ở lib/srs.mjs, giao diện chỉ gọi.
 import { daysUntil, isDueForReview, localDateString, scheduleFor, streakFrom, weekdayIndex, wordState } from "../lib/srs.mjs";
+import { deckStats } from "../lib/word-sets.mjs";
 import { clozeFor } from "../lib/cloze.mjs";
 // Kiểu dùng chung và tầng lưu trữ đã tách khỏi file này.
 import { detailsFrom, exampleFor, fallbackExample, fallbackExampleVi, isPdfVocabulary, isSeedWord, withMeanings,
@@ -4855,6 +4856,8 @@ const PERIODS = [
 ] as const;
 
 function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: string; streak: { current: number; best: number } }) {
+  // Dùng chung cách đếm với màn Luyện từ vựng, để hai chỗ không nói hai kiểu.
+  const dueCounts = deckStats(words) as { due: number; fresh: number };
   const boxes = [1, 2, 3, 4, 5, 6].map((box) => ({
     box,
     count: words.filter((w) => w.box === box).length,
@@ -5006,8 +5009,22 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
           onOpen={() => setStatList({ title: "Đã thuộc", note: "ĐÃ LÊN HỘP 6", words: words.filter((w) => wordState(w).key === "mastered") })} />
         <Stat label="Từ cứng đầu" value={String(words.filter((w) => w.lapses >= 4).length)} note="Quên từ 4 lần" icon="♨" tone="pink"
           onOpen={() => setStatList({ title: "Từ cứng đầu", note: "QUÊN TỪ 4 LẦN TRỞ LÊN", words: words.filter((w) => w.lapses >= 4).slice().sort((a, b) => b.lapses - a.lapses) })} />
-        <Stat label="Đến hạn" value={String(words.filter(isDueForReview).length)} note="Cần ôn hôm nay" icon="◔" tone="orange"
-          onOpen={() => setStatList({ title: "Đến hạn hôm nay", note: "CẦN ÔN LẠI", words: words.filter(isDueForReview) })} />
+        {/* Đếm riêng từ tới hạn và từ chưa học: gộp lại thì con số này gần bằng
+            cả kho, mà không ai ôn ngần ấy từ trong một ngày. */}
+        <Stat
+          label={dueCounts.due > 0 ? "Đến hạn" : "Chưa học"}
+          value={String(dueCounts.due > 0 ? dueCounts.due : dueCounts.fresh)}
+          note={dueCounts.due > 0 ? "Cần ôn hôm nay" : "Chưa học lần nào"}
+          icon="◔"
+          tone="orange"
+          onOpen={() =>
+            setStatList(
+              dueCounts.due > 0
+                ? { title: "Đến hạn hôm nay", note: "CẦN ÔN LẠI", words: words.filter((word) => wordState(word).key === "due") }
+                : { title: "Chưa học lần nào", note: "TỪ MỚI", words: words.filter((word) => wordState(word).key === "new") },
+            )
+          }
+        />
       </div>
       <div className="dashboard-grid">
         <section className="panel">
