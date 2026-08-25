@@ -38,7 +38,19 @@ export function hasLlm() {
 
 // 429 và 5xx là quá tải nhất thời — Gemini hay trả 503 "high demand" rồi lần sau
 // lại chạy bình thường. Mã trạng thái được nhét vào thông báo để nhận ra ở đây.
-const TRANSIENT = /Mô hình trả về (429|500|502|503|504)/;
+const TRANSIENT = /Mô hình trả về (429|500|502|503|504)|phản hồi quá lâu/;
+
+/**
+ * Lỗi tự nó hết sau vài giây: quá tải, chạm nhịp gọi, hết giờ chờ.
+ *
+ * Khác hẳn lỗi thật (khoá sai, tên model sai, hết hạn mức): loại đó thử lại bao
+ * nhiêu lần cũng hỏng, chỉ tổ bắt người học ngồi chờ.
+ */
+export function isTransient(message: string) {
+  return TRANSIENT.test(String(message ?? ""));
+}
+
+const RETRY_DELAY_MS = 700;
 
 export async function generateJson<T>(prompt: string, options: Options = {}): Promise<T> {
   const providers: Provider[] = [];
@@ -47,18 +59,31 @@ export async function generateJson<T>(prompt: string, options: Options = {}): Pr
   if (!providers.length) throw new LlmError("Chưa cấu hình OPENROUTER_API_KEY hoặc GEMINI_API_KEY.");
 
   let lastError: LlmError = new LlmError("Không gọi được mô hình ngôn ngữ.");
-  const providerErrors: string[] = [];
-  // Mỗi nhà cung cấp chỉ thử một lần rồi chuyển ngay sang dự phòng. Việc thử ba
-  // lần cùng một model từng khiến người học phải chờ hơn một phút khi model 429.
-  for (const provider of providers) {
-    try {
-      return await callOnce<T>(prompt, { ...options, timeoutMs: Math.min(options.timeoutMs ?? 25000, 25000) }, provider);
-    } catch (error) {
-      lastError = error instanceof LlmError ? error : new LlmError(String(error));
-      providerErrors.push(`${provider}: ${lastError.message}`);
-      // Lỗi khoá/quota/model ở một provider vẫn có thể được provider còn lại xử lý.
-      // Không sleep ở đây để phản hồi nhanh nhất có thể.
+  let providerErrors: string[] = [];
+
+  // Mỗi nhà cung cấp thử một lần rồi chuyển ngay sang dự phòng — thử ba lần cùng
+  // một model từng bắt người học chờ hơn một phút khi model 429.
+  //
+  // Nhưng chỉ một vòng thì chưa đủ: có lúc CẢ HAI cùng nghẽn một nhịp (Gemini
+  // 503 "high demand" trong khi OpenRouter 429), đo được cứ ba lần gọi thì hỏng
+  // một. Vậy nên khi mọi lỗi đều thuộc loại nhất thời thì chờ một nhịp ngắn rồi
+  // đi thêm đúng một vòng nữa. Lỗi thật — khoá sai, hết hạn mức — thì dừng ngay,
+  // vì thử lại cũng chẳng khác gì.
+  for (let round = 0; round < 2; round += 1) {
+    if (round > 0) await new Promise((done) => setTimeout(done, RETRY_DELAY_MS));
+    const errors: string[] = [];
+    let everyErrorTransient = true;
+    for (const provider of providers) {
+      try {
+        return await callOnce<T>(prompt, { ...options, timeoutMs: Math.min(options.timeoutMs ?? 25000, 25000) }, provider);
+      } catch (error) {
+        lastError = error instanceof LlmError ? error : new LlmError(String(error));
+        errors.push(`${provider}: ${lastError.message}`);
+        if (!isTransient(lastError.message)) everyErrorTransient = false;
+      }
     }
+    providerErrors = errors;
+    if (!everyErrorTransient) break;
   }
   throw new LlmError(providerErrors.length ? providerErrors.join(" | ") : lastError.message);
 }
