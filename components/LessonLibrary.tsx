@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Icon from "./Icon";
 import { groupByLesson, readSaved, removeSentence } from "../lib/saved-sentences.mjs";
+import { dictationLessons, dictationLevels, dictationTopics, type DictationLevel } from "../lib/dictation-lessons";
 
 // Màn hình vào của Dictation và Shadowing.
 //
@@ -35,8 +36,9 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "saved", label: "Câu đã lưu" },
 ];
 
-const TOPICS = ["BBC Learning English", "Hội thoại", "Công việc", "Du lịch", "Công nghệ", "IELTS", "TOEIC"];
-const LEVELS = ["Tất cả cấp độ", "A1", "A2", "B1", "B2", "C1"];
+const ALL_TOPICS = "Tất cả";
+const ALL_LEVELS = "Tất cả cấp độ";
+export type BuiltInLessonSelection = { topic: string; level: DictationLevel; title: string };
 
 function minutes(seconds: number) {
   if (!seconds) return "";
@@ -48,17 +50,19 @@ export default function LessonLibrary({
   lessons,
   pickVideo,
   pickBuiltIn,
+  addVideo,
   close,
 }: {
   mode: "dictation" | "shadowing";
   lessons: VideoLessonCard[];
   pickVideo: (lesson: VideoLessonCard) => void;
-  pickBuiltIn: () => void;
+  pickBuiltIn: (selection?: BuiltInLessonSelection) => void;
+  addVideo: () => void;
   close: () => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
-  const [topic, setTopic] = useState("Tất cả");
-  const [level, setLevel] = useState("Tất cả cấp độ");
+  const [topic, setTopic] = useState(ALL_TOPICS);
+  const [level, setLevel] = useState(ALL_LEVELS);
   const [saved, setSaved] = useState<Saved[]>([]);
 
   useEffect(() => {
@@ -67,8 +71,24 @@ export default function LessonLibrary({
   }, []);
 
   const savedGroups = useMemo(() => groupByLesson(saved) as SavedGroup[], [saved]);
-  const showVideo = filter === "all" || filter === "video";
-  const showBuiltIn = filter === "all" || filter === "builtin";
+  const builtInSets = useMemo(() => {
+    const groups = new Map<string, {
+      topic: string; level: DictationLevel; title: string; count: number; sample: string; sourceName?: string;
+    }>();
+    for (const item of dictationLessons) {
+      if (topic !== ALL_TOPICS && item.topic !== topic) continue;
+      if (level !== ALL_LEVELS && item.level !== level) continue;
+      const key = `${item.topic}\u0000${item.level}\u0000${item.title}`;
+      const current = groups.get(key);
+      if (current) current.count += 1;
+      else groups.set(key, { topic: item.topic, level: item.level, title: item.title, count: 1, sample: item.sentence, sourceName: item.sourceName });
+    }
+    return [...groups.values()];
+  }, [topic, level]);
+  // Shadowing luôn tách hai nguồn thành hai khu vực độc lập. Bộ lọc nguồn cũ chỉ
+  // còn dùng cho Dictation để video người dùng không bị trộn với kho hệ thống.
+  const showVideo = mode === "shadowing" || filter === "all" || filter === "video";
+  const showBuiltIn = mode === "shadowing" || filter === "all" || filter === "builtin";
   const showSaved = filter === "all" || filter === "saved";
 
   return (
@@ -82,30 +102,37 @@ export default function LessonLibrary({
             <p>{mode === "dictation" ? "Chọn chủ đề để luyện kỹ năng nghe" : "Chọn chủ đề để luyện kỹ năng nói"}</p>
           </div>
         </div>
-        <div className="library-summary"><span>▣ <b>{lessons.length}</b> đang học</span><i /> <span className="complete">✓ <b>0</b> đã hoàn thành</span></div>
+        <div className="library-summary"><span>▣ <b>{lessons.length + builtInSets.length}</b> bài khả dụng</span><i /> <span className="complete">✓ <b>0</b> đã hoàn thành</span></div>
       </header>
 
       <div className="library-filter-panel">
-        <div className="library-filters" role="group" aria-label="Lọc nguồn bài">
-          {FILTERS.map((item) => (
-            <button key={item.value} className={filter === item.value ? "active" : ""} onClick={() => setFilter(item.value)}>
-              {item.label}
-              {item.value === "video" && lessons.length > 0 && <em>{lessons.length}</em>}
-              {item.value === "saved" && saved.length > 0 && <em>{saved.length}</em>}
-            </button>
-          ))}
-        </div>
+        {mode === "dictation" ? (
+          <div className="library-filters" role="group" aria-label="Lọc nguồn bài">
+            {FILTERS.map((item) => (
+              <button key={item.value} className={filter === item.value ? "active" : ""} onClick={() => setFilter(item.value)}>
+                {item.label}
+                {item.value === "video" && lessons.length > 0 && <em>{lessons.length}</em>}
+                {item.value === "saved" && saved.length > 0 && <em>{saved.length}</em>}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="library-source-summary" aria-label="Hai nguồn video Shadowing">
+            <div><i><Icon name="book" size={17} /></i><span><b>Video hệ thống</b><small>Kho bài có sẵn của Lexilo</small></span><em>{builtInSets.length}</em></div>
+            <div><i><Icon name="play" size={17} /></i><span><b>Video của bạn</b><small>Video thêm từ YouTube</small></span><em>{lessons.length}</em></div>
+          </div>
+        )}
         <div className="library-chip-row" role="group" aria-label="Lọc chủ đề">
-          {["Tất cả", ...TOPICS].map((item) => <button key={item} className={topic === item ? "active" : ""} onClick={() => setTopic(item)}>{item}</button>)}
+          {[ALL_TOPICS, ...dictationTopics].map((item) => <button key={item} className={topic === item ? "active" : ""} onClick={() => setTopic(item)}>{item}</button>)}
         </div>
         <div className="library-chip-row levels" role="group" aria-label="Lọc cấp độ">
-          {LEVELS.map((item) => <button key={item} className={level === item ? "active" : ""} onClick={() => setLevel(item)}>{item}</button>)}
+          {[ALL_LEVELS, ...dictationLevels].map((item) => <button key={item} className={level === item ? "active" : ""} onClick={() => setLevel(item)}>{item}</button>)}
         </div>
       </div>
 
       {showVideo && (
-        <section className="library-block">
-          <div className="library-section-title"><h2>Tiếp tục học</h2><span>{lessons.length ? `${lessons.length} bài của bạn` : "Thêm video từ YouTube để bắt đầu"}</span></div>
+        <section className="library-block library-user-videos">
+          <div className="library-section-title"><div><small>THƯ VIỆN CÁ NHÂN</small><h2>{mode === "shadowing" ? "Video của bạn" : "Tiếp tục học"}</h2></div><span>{lessons.length ? `${lessons.length} video đã thêm` : "Thêm video từ YouTube để bắt đầu"}</span><button className="library-add-video" onClick={addVideo}><Icon name="plus" size={14} /> Thêm video</button></div>
           {lessons.length ? (
             <div className="library-grid">
               {lessons.map((lesson) => (
@@ -125,10 +152,8 @@ export default function LessonLibrary({
               <Icon name="headphones" size={22} />
               <div>
                 <b>Chưa có bài nào từ video</b>
-                <p>
-                  Cài tiện ích Lexilo cho trình duyệt (thư mục <code>extension/</code>), mở một video YouTube có phụ đề
-                  rồi bấm biểu tượng Lexilo. Bài sẽ hiện ở đây.
-                </p>
+                <p>Dán liên kết YouTube để Lexilo lấy thông tin và phụ đề tiếng Anh, hoặc dùng tiện ích trên trang YouTube.</p>
+                <button className="library-empty-action" onClick={addVideo}>Dán link YouTube</button>
               </div>
             </div>
           )}
@@ -174,14 +199,16 @@ export default function LessonLibrary({
       )}
 
       {showBuiltIn && (
-        <section className="library-block">
-          <div className="library-section-title"><h2>Bài học mới</h2><span>Chọn theo chủ đề và trình độ</span></div>
-          <div className="library-grid">
-            <button className="library-card builtin" onClick={pickBuiltIn}>
-              <span className="library-thumb plain"><em className="level-badge orange">A1–C1</em><Icon name="book" size={34} /><span>LEXILO LISTENING</span></span>
-              <span className="library-card-copy"><b>Khám phá thư viện bài luyện</b><small>Đời sống · Du lịch · Công việc · Công nghệ</small><strong>Chọn bài theo cấp độ →</strong></span>
-            </button>
-          </div>
+        <section className="library-block library-system-videos">
+          <div className="library-section-title"><div><small>KHO BÀI CÓ SẴN</small><h2>{mode === "shadowing" ? "Video hệ thống" : "Bài học mới"}</h2></div><span>{builtInSets.length} bài phù hợp bộ lọc</span></div>
+          {builtInSets.length ? <div className="library-grid">
+            {builtInSets.map((item) => (
+              <button className="library-card builtin" key={`${item.topic}-${item.level}-${item.title}`} onClick={() => pickBuiltIn(item)}>
+                <span className="library-thumb plain"><em className="level-badge orange">{item.level}</em><Icon name={mode === "dictation" ? "headphones" : "mic"} size={34} /><span>{item.topic.toUpperCase()}</span></span>
+                <span className="library-card-copy"><b>{item.title}</b><small>{item.sample}</small><strong>{item.count} câu{item.sourceName ? ` · ${item.sourceName}` : ""} →</strong></span>
+              </button>
+            ))}
+          </div> : <div className="library-empty"><Icon name="book" size={22} /><div><b>Chưa có bài phù hợp</b><p>Hãy đổi chủ đề hoặc cấp độ để xem các bài khác.</p></div></div>}
         </section>
       )}
     </div>

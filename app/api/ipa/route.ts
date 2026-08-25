@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { identify, spend } from "../../../lib/ai-guard";
 import { dictionary } from "cmu-pronouncing-dictionary";
 
 // Tra phiên âm quốc tế cho một lô từ.
@@ -12,7 +11,11 @@ import { dictionary } from "cmu-pronouncing-dictionary";
 
 type Entry = { phonetic?: string; phonetics?: { text?: string }[] };
 
-const MAX_WORDS = 40;
+// Một đoạn ghép ba câu dài có thể qua 40 chữ khác nhau. Cắt ở 40 là lặng lẽ bỏ
+// rơi phần đuôi, và vì client không nhớ chữ tra hụt nên nó hỏng lại y hệt ở mọi
+// lần vào bài. Phần lớn chữ nằm sẵn trong CMU nên tra cục bộ, nâng mức này gần
+// như không tốn gì.
+const MAX_WORDS = 120;
 
 const ARPA: Record<string, string> = {
   AA: "ɑ", AE: "æ", AH: "ʌ", AO: "ɔ", AW: "aʊ", AY: "aɪ", EH: "ɛ", ER: "ɝ", EY: "eɪ",
@@ -36,35 +39,67 @@ function ipaFromArpabet(value?: string) {
   return output ? `/${output}/` : "";
 }
 
-function localIpa(word: string) {
-  const key = word.toLowerCase();
-  return ipaFromArpabet(dictionary[key] ?? dictionary[key.replace(/’/g, "'")]);
+/** "café" → "cafe": CMU chỉ lưu chữ không dấu, mà phụ đề thì viết có dấu. */
+function plainLetters(word: string) {
+  return word.normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
-async function lookup(word: string) {
+function localIpa(word: string) {
+  const key = word.toLowerCase();
+  const direct = ipaFromArpabet(dictionary[key] ?? dictionary[key.replace(/’/g, "'")] ?? dictionary[plainLetters(key)]);
+  if (direct) return direct;
+  // CMU lưu phần lớn từ đơn nhưng không có mọi tổ hợp gạch nối. Ghép các phần
+  // vẫn chính xác và hữu ích hơn trả rỗng cho self-driving/American-English.
+  if (key.includes("-")) {
+    const parts = key.split("-").filter(Boolean).map((part) => ipaFromArpabet(dictionary[part]));
+    if (parts.length > 1 && parts.every(Boolean)) return `/${parts.map((part) => part.slice(1, -1)).join(" · ")}/`;
+  }
+  return "";
+}
+
+// Ba kết quả khác nhau, và client cần phân biệt được cả ba:
+//   found   → có phiên âm
+//   missing → đã tra tới nơi, chắc chắn không nguồn nào có (thường là tên riêng)
+//   error   → tra hỏng vì mạng; ĐỪNG nhớ, để lần sau còn thử lại
+type Result = { kind: "found"; ipa: string } | { kind: "missing" } | { kind: "error" };
+
+async function lookup(word: string): Promise<Result> {
+  // Phần lớn từ nằm sẵn trong CMU: trả ngay, không chờ mạng và không tiêu bất kỳ
+  // hạn mức AI nào. Nguồn trực tuyến chỉ bổ sung cho từ hiếm chưa có cục bộ.
+  const local = localIpa(word);
+  if (local) return { kind: "found", ipa: local };
   try {
     const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
-    if (!response.ok) return localIpa(word);
+    // 404 nghĩa là nguồn đã tra và không có mục từ này — đó là câu trả lời dứt
+    // khoát, khác hẳn với 5xx hay đứt mạng.
+    if (response.status === 404) return { kind: "missing" };
+    if (!response.ok) return { kind: "error" };
     const data = (await response.json()) as Entry[];
-    if (!Array.isArray(data)) return localIpa(word);
+    if (!Array.isArray(data)) return { kind: "missing" };
     const ipa = data.find((entry) => entry.phonetic)?.phonetic || data.flatMap((entry) => entry.phonetics ?? []).find((item) => item.text)?.text;
-    return String(ipa ?? "").trim() || localIpa(word);
+    const clean = String(ipa ?? "").trim();
+    return clean ? { kind: "found", ipa: clean } : { kind: "missing" };
   } catch {
-    return localIpa(word);
+    return { kind: "error" };
   }
 }
 
 export async function POST(request: Request) {
   const { words } = (await request.json()) as { words?: string[] };
+  // Nhận cả chữ có dấu (café) và có số (covid-19). Lọc theo bảng chữ a–z là loại
+  // đúng những chữ mà giao diện vẫn hiện ra, nên chúng mắc kẹt không có phiên âm.
   const list = [...new Set((words ?? []).map((item) => String(item ?? "").trim().toLowerCase()))]
-    .filter((word) => /^[a-z][a-z'-]{0,30}$/.test(word))
+    .filter((word) => /^\p{L}[\p{L}\p{N}'-]{0,30}$/u.test(word))
     .slice(0, MAX_WORDS);
   if (!list.length) return NextResponse.json({ ipa: {} });
 
-  const caller = await identify(request);
-  const denied = spend(caller);
-  if (denied) return denied;
-
   const results = await Promise.all(list.map(async (word) => [word, await lookup(word)] as const));
-  return NextResponse.json({ ipa: Object.fromEntries(results) });
+  const ipa: Record<string, string> = {};
+  const missing: string[] = [];
+  for (const [word, result] of results) {
+    if (result.kind === "found") ipa[word] = result.ipa;
+    else if (result.kind === "missing") missing.push(word);
+    // kind === "error": không nhắc tới trong câu trả lời, client sẽ hỏi lại sau.
+  }
+  return NextResponse.json({ ipa, missing });
 }

@@ -28,7 +28,7 @@ const card = (over = {}) => ({
 });
 
 test("sáu chế độ đúng thứ tự trên thanh tab", () => {
-  assert.deepEqual(DRILL_MODES.map((item) => item.value), ["card", "type", "listen", "reverse", "cloze", "mixed"]);
+  assert.deepEqual(DRILL_MODES.map((item) => item.value), ["card", "type", "listen", "reverse", "quiz", "mixed"]);
 });
 
 test("hỗn hợp không bốc chế độ thẻ vì thẻ không chấm được", () => {

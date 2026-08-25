@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Icon from "./Icon";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Icon, { type IconName } from "./Icon";
 import TaskChart, { type Chart } from "./TaskChart";
 import { aiFetch } from "../lib/supabase";
 import { CRITERIA, EXAMS, countWords, makeAttempt, readAttempts, saveAttempt, summarise } from "../lib/writing.mjs";
 import { TASKS, TASK_MINUTES, filterTasks, groupByPart, minWordsOf } from "../lib/writing-tasks.mjs";
+import { gradeTranslation } from "../lib/translation-check.mjs";
+import { PARAGRAPHS, type ParagraphTask } from "./writingParagraphs";
 
 // Luyện viết theo dạng đề thi.
 //
@@ -42,7 +44,66 @@ const PARTS = [
   { value: 2, label: "Task 2" },
 ];
 
+type ParagraphProgress = Record<string, { completed: number; best: number; updatedAt: string }>;
+type TranslationIssue = { type?: string; wrong?: string; right?: string; why?: string };
+type ParagraphAiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: TranslationIssue[]; criteria?: Record<string, number> };
+type ParagraphRewriteReview = { score: number; comment: string; issues: TranslationIssue[]; notes: { kind: string; text: string }[] };
+const PARAGRAPH_PROGRESS_KEY = "lexilo-writing-paragraph-progress-v1";
+const PARAGRAPH_SESSION_KEY = "lexilo-writing-paragraph-session-v1";
+const WRITING_DRAFT_KEY = "lexilo-writing-exam-draft-v1";
+const WRITING_FAVORITES_KEY = "lexilo-writing-favorites-v1";
+
+function formatAcceptedTranslation(value: string) {
+  const compact = value.trim().replace(/\s+/g, " ");
+  if (!compact) return "";
+  // Giữ cách diễn đạt của người học, chỉ chuẩn hóa hình thức hiển thị để các câu
+  // tiếng Anh đã hoàn thành đọc như một đoạn văn thật sự.
+  const capitalized = compact.replace(/^(["'“‘(\[]*)([a-z])/, (_, prefix: string, letter: string) => `${prefix}${letter.toUpperCase()}`);
+  return /[.!?]["'”’)]?$/.test(capitalized) ? capitalized : `${capitalized}.`;
+}
+
+function hideRewriteAnswers(issues: TranslationIssue[]) {
+  return issues.map((issue) => {
+    const answer = issue.right?.trim();
+    const why = answer && issue.why
+      ? issue.why.replace(new RegExp(answer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "cách diễn đạt phù hợp")
+      : issue.why;
+    return { ...issue, right: undefined, why };
+  });
+}
+
+const THUMBNAILS: Record<string, { icon: IconName; label: string; className: string }> = {
+  "Nhật ký": { icon: "pen", label: "MY DAY", className: "diary" },
+  Email: { icon: "heart", label: "HELLO!", className: "email" },
+  Truyện: { icon: "book", label: "STORY", className: "story" },
+  "Bài luận": { icon: "briefcase", label: "IDEAS", className: "essay" },
+  "Báo cáo": { icon: "chart", label: "REPORT", className: "report" },
+  "Bài báo": { icon: "sparkles", label: "FOCUS", className: "article" },
+};
+
 export default function WritingPractice({ close, onStudied, openTranslate }: { close: () => void; onStudied?: () => void; openTranslate?: () => void }) {
+  const [route, setRoute] = useState<"home" | "paragraphs" | "exams">("home");
+  const [paragraphLevel, setParagraphLevel] = useState("Tất cả");
+  const [paragraphKind, setParagraphKind] = useState("Tất cả");
+  const [paragraphTask, setParagraphTask] = useState<ParagraphTask | null>(null);
+  const [paragraphIndex, setParagraphIndex] = useState(0);
+  const [paragraphAnswer, setParagraphAnswer] = useState("");
+  const [paragraphChecked, setParagraphChecked] = useState(false);
+  const [paragraphScores, setParagraphScores] = useState<number[]>([]);
+  const [paragraphComplete, setParagraphComplete] = useState(false);
+  const [paragraphGrading, setParagraphGrading] = useState(false);
+  const [paragraphGradeError, setParagraphGradeError] = useState("");
+  const [paragraphAiGrade, setParagraphAiGrade] = useState<ParagraphAiGrade | null>(null);
+  const [paragraphDictionaryOpen, setParagraphDictionaryOpen] = useState(false);
+  const [paragraphDictionaryQuery, setParagraphDictionaryQuery] = useState("");
+  const [paragraphAcceptedAnswers, setParagraphAcceptedAnswers] = useState<string[]>([]);
+  const [paragraphRewriteReview, setParagraphRewriteReview] = useState<ParagraphRewriteReview | null>(null);
+  const [paragraphSessionReady, setParagraphSessionReady] = useState(false);
+  const paragraphGradeRequest = useRef(0);
+  const [paragraphProgress, setParagraphProgress] = useState<ParagraphProgress>({});
+  const [paragraphQuery, setParagraphQuery] = useState("");
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>([]);
   const [exam, setExam] = useState("ielts");
   const [part, setPart] = useState(0);
   const [task, setTask] = useState<Task | null>(null);
@@ -55,7 +116,71 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
     setAttempts(readAttempts());
+    try {
+      setParagraphProgress(JSON.parse(localStorage.getItem(PARAGRAPH_PROGRESS_KEY) || "{}") as ParagraphProgress);
+      setFavorites(JSON.parse(localStorage.getItem(WRITING_FAVORITES_KEY) || "[]") as string[]);
+      const savedSession = JSON.parse(localStorage.getItem(PARAGRAPH_SESSION_KEY) || "null") as null | {
+        taskId?: string; index?: number; answer?: string; checked?: boolean; scores?: number[];
+        complete?: boolean; aiGrade?: ParagraphAiGrade | null; gradeError?: string;
+        acceptedAnswers?: string[]; rewriteReview?: ParagraphRewriteReview | null;
+      };
+      const savedTask = PARAGRAPHS.find((item) => item.id === savedSession?.taskId);
+      if (savedTask && savedSession) {
+        const safeIndex = Math.max(0, Math.min(savedTask.sentences.length - 1, Number(savedSession.index) || 0));
+        setRoute("paragraphs");
+        setParagraphTask(savedTask);
+        setParagraphIndex(safeIndex);
+        setParagraphAnswer(savedSession.answer || "");
+        setParagraphAiGrade(savedSession.aiGrade || null);
+        setParagraphChecked(Boolean(savedSession.checked && savedSession.aiGrade));
+        setParagraphScores(Array.isArray(savedSession.scores) ? savedSession.scores : []);
+        setParagraphComplete(Boolean(savedSession.complete));
+        setParagraphGradeError(savedSession.gradeError || "");
+        setParagraphAcceptedAnswers(Array.isArray(savedSession.acceptedAnswers) ? savedSession.acceptedAnswers : []);
+        setParagraphRewriteReview(savedSession.rewriteReview || null);
+      }
+    } catch { /* dữ liệu cũ hỏng thì bắt đầu lại */ }
+    setParagraphSessionReady(true);
   }, []);
+
+  useEffect(() => {
+    if (!paragraphSessionReady) return;
+    if (!paragraphTask) {
+      localStorage.removeItem(PARAGRAPH_SESSION_KEY);
+      return;
+    }
+    localStorage.setItem(PARAGRAPH_SESSION_KEY, JSON.stringify({
+      taskId: paragraphTask.id,
+      index: paragraphIndex,
+      answer: paragraphAnswer,
+      checked: paragraphChecked && !paragraphGrading,
+      scores: paragraphScores,
+      complete: paragraphComplete,
+      aiGrade: paragraphAiGrade,
+      gradeError: paragraphGradeError,
+      acceptedAnswers: paragraphAcceptedAnswers,
+      rewriteReview: paragraphRewriteReview,
+      updatedAt: new Date().toISOString(),
+    }));
+  }, [paragraphSessionReady, paragraphTask, paragraphIndex, paragraphAnswer, paragraphChecked, paragraphScores, paragraphComplete, paragraphGrading, paragraphAiGrade, paragraphGradeError, paragraphAcceptedAnswers, paragraphRewriteReview]);
+
+  useEffect(() => {
+    if (!task || result) return;
+    const saved = localStorage.getItem(WRITING_DRAFT_KEY);
+    if (!saved) return;
+    try {
+      const draft = JSON.parse(saved) as { taskId?: string; answer?: string };
+      if (draft.taskId === task.id && draft.answer) setAnswer(draft.answer);
+    } catch { /* bỏ qua bản nháp không hợp lệ */ }
+  }, [task, result]);
+
+  useEffect(() => {
+    if (!task || result) return;
+    const timer = window.setTimeout(() => {
+      localStorage.setItem(WRITING_DRAFT_KEY, JSON.stringify({ taskId: task.id, answer, updatedAt: new Date().toISOString() }));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [answer, task, result]);
 
   const groups = useMemo(() => groupByPart(filterTasks(TASKS, { exam, part })) as { part: number; tasks: Task[] }[], [exam, part]);
   const progress = useMemo(() => summarise(attempts), [attempts]);
@@ -74,6 +199,7 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
       const data = (await response.json()) as Result & { error?: string };
       if (!response.ok || data.error) throw new Error(data.error ?? "Không chấm được bài.");
       setResult(data);
+      localStorage.removeItem(WRITING_DRAFT_KEY);
       setAttempts(
         saveAttempt(
           makeAttempt({
@@ -103,6 +229,183 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
     setError("");
   }
 
+  const paragraphShown = PARAGRAPHS.filter((item) =>
+    (paragraphLevel === "Tất cả" || item.level === paragraphLevel) &&
+    (paragraphKind === "Tất cả" || item.kind === paragraphKind) &&
+    (!favoriteOnly || favorites.includes(item.id)) &&
+    (!paragraphQuery.trim() || `${item.title} ${item.topic} ${item.kind}`.toLocaleLowerCase("vi").includes(paragraphQuery.trim().toLocaleLowerCase("vi"))));
+  const paragraphSentence = paragraphTask?.sentences[paragraphIndex];
+  const paragraphResult = paragraphChecked && paragraphSentence
+    ? gradeTranslation(paragraphSentence.en, paragraphAnswer, "") as { accuracy: number; verdict: string; notes: { kind: string; text: string }[] }
+    : null;
+  // Không dùng độ giống câu mẫu để kết luận đúng/sai. Một ý có thể được dịch đúng
+  // bằng nhiều cấu trúc khác nhau; chỉ kết quả chấm ngữ nghĩa mới quyết định.
+  const paragraphScore = paragraphAiGrade?.score ?? 0;
+  const paragraphPassed = Boolean(paragraphAiGrade && (paragraphAiGrade.correct || paragraphAiGrade.score >= 90));
+
+  function openParagraph(item: ParagraphTask) {
+    paragraphGradeRequest.current += 1;
+    setParagraphTask(item); setParagraphIndex(0); setParagraphAnswer(""); setParagraphChecked(false); setParagraphScores([]); setParagraphComplete(false); setParagraphAiGrade(null); setParagraphGradeError(""); setParagraphAcceptedAnswers([]); setParagraphRewriteReview(null);
+  }
+
+  function toggleFavorite(id: string) {
+    const next = favorites.includes(id) ? favorites.filter((item) => item !== id) : [...favorites, id];
+    setFavorites(next); localStorage.setItem(WRITING_FAVORITES_KEY, JSON.stringify(next));
+  }
+
+  async function checkParagraphSentence() {
+    if (!paragraphSentence || !paragraphAnswer.trim()) return;
+    setParagraphChecked(true);
+    setParagraphAiGrade(null);
+    setParagraphRewriteReview(null);
+    setParagraphGradeError("");
+    await requestParagraphAiGrade();
+    onStudied?.();
+  }
+
+  async function requestParagraphAiGrade() {
+    if (!paragraphSentence || !paragraphAnswer.trim() || paragraphGrading) return;
+    const requestId = ++paragraphGradeRequest.current;
+    setParagraphGrading(true);
+    setParagraphGradeError("");
+    try {
+      const response = await aiFetch("/api/ai/grade", {
+        method: "POST",
+        body: JSON.stringify({ vietnamese: paragraphSentence.vi, answer: paragraphAnswer, reference: paragraphSentence.en }),
+      });
+      const data = (await response.json()) as ParagraphAiGrade & { error?: string };
+      if (!response.ok || data.error) throw new Error(data.error || "AI chưa thể chấm câu này.");
+      if (requestId !== paragraphGradeRequest.current) return;
+      setParagraphAiGrade(data);
+      setParagraphScores((current) => [...current, data.score]);
+      if (data.correct || data.score >= 90) setParagraphAcceptedAnswers((current) => { const next = [...current]; next[paragraphIndex] = formatAcceptedTranslation(paragraphAnswer); return next; });
+    } catch (problem) {
+      if (requestId !== paragraphGradeRequest.current) return;
+      setParagraphGradeError("AI đang bận hoặc đã hết lượt tạm thời. Bạn có thể thử lại sau.");
+      setParagraphAiGrade(null);
+    } finally {
+      if (requestId === paragraphGradeRequest.current) setParagraphGrading(false);
+    }
+  }
+
+  function retryParagraphSentence() {
+    if (paragraphResult) setParagraphRewriteReview({ score: paragraphScore, comment: paragraphAiGrade?.comment || "Câu này chưa đạt 90%. Hãy sửa các điểm bên dưới rồi chấm lại.", issues: hideRewriteAnswers(paragraphAiGrade?.issues || []), notes: [] });
+    paragraphGradeRequest.current += 1;
+    setParagraphGrading(false);
+    setParagraphAnswer("");
+    setParagraphChecked(false);
+    setParagraphAiGrade(null);
+    setParagraphGradeError("");
+    setParagraphScores((current) => current.slice(0, -1));
+  }
+
+  function changeParagraphAnswer(value: string) {
+    if (paragraphChecked && !paragraphPassed) {
+      if (paragraphResult) setParagraphRewriteReview({ score: paragraphScore, comment: paragraphAiGrade?.comment || "Câu này chưa đạt 90%. Hãy sửa các điểm bên dưới rồi chấm lại.", issues: hideRewriteAnswers(paragraphAiGrade?.issues || []), notes: [] });
+      paragraphGradeRequest.current += 1;
+      setParagraphChecked(false);
+      setParagraphAiGrade(null);
+      setParagraphGradeError("");
+      setParagraphGrading(false);
+      setParagraphScores((current) => current.slice(0, -1));
+    }
+    setParagraphAnswer(value);
+  }
+
+  function lookUpParagraphWord() {
+    const word = paragraphDictionaryQuery.trim().toLowerCase().replace(/[^a-z'-]/g, "");
+    if (!word) return;
+    window.open(`https://dictionary.cambridge.org/dictionary/english/${encodeURIComponent(word)}`, "_blank", "noopener,noreferrer");
+  }
+
+  function nextParagraphSentence() {
+    if (!paragraphTask) return;
+    paragraphGradeRequest.current += 1;
+    setParagraphGrading(false);
+    if (paragraphIndex + 1 >= paragraphTask.sentences.length) {
+      const average = Math.round(paragraphScores.reduce((sum, score) => sum + score, 0) / Math.max(1, paragraphScores.length));
+      const next = { ...paragraphProgress, [paragraphTask.id]: { completed: (paragraphProgress[paragraphTask.id]?.completed ?? 0) + 1, best: Math.max(paragraphProgress[paragraphTask.id]?.best ?? 0, average), updatedAt: new Date().toISOString() } };
+      setParagraphProgress(next); localStorage.setItem(PARAGRAPH_PROGRESS_KEY, JSON.stringify(next)); setParagraphComplete(true); return;
+    }
+    setParagraphIndex((value) => value + 1); setParagraphAnswer(""); setParagraphChecked(false); setParagraphAiGrade(null); setParagraphGradeError(""); setParagraphRewriteReview(null);
+  }
+
+  if (paragraphTask && paragraphSentence)
+    return (
+      <div className="page paragraph-session">
+        <button className="back" onClick={() => setParagraphTask(null)}>← Thư viện đoạn văn</button>
+        <header className="paragraph-session-head">
+          <div><span className="eyebrow">{paragraphTask.level} · {paragraphTask.kind}</span><h1>{paragraphTask.title}</h1></div>
+          <div className="paragraph-session-stats"><span>Tiến độ</span><b>{paragraphIndex + 1}/{paragraphTask.sentences.length} câu</b><em>{Math.round(((paragraphIndex + Number(paragraphChecked && paragraphPassed)) / paragraphTask.sentences.length) * 100)}%</em></div>
+        </header>
+        <div className="translation-progress"><i style={{ width: `${((paragraphIndex + Number(paragraphChecked)) / paragraphTask.sentences.length) * 100}%` }} /></div>
+        {paragraphComplete ? <section className="panel paragraph-complete">
+          <span className="writing-hero-icon"><Icon name="check" size={22} /></span>
+          <p className="eyebrow">HOÀN THÀNH BÀI DỊCH</p><h2>{paragraphTask.title}</h2>
+          <strong>{Math.round(paragraphScores.reduce((sum, score) => sum + score, 0) / Math.max(1, paragraphScores.length))}%</strong>
+          <p>Độ tương đồng trung bình của {paragraphTask.sentences.length} câu. Kết quả này dùng để luyện tập, không phải điểm thi.</p>
+          <div><button onClick={() => openParagraph(paragraphTask)}>Làm lại</button><button className="primary" onClick={() => setParagraphTask(null)}>Chọn bài khác →</button></div>
+        </section> : <div className="paragraph-session-grid">
+          <section className="panel paragraph-source">
+            <span className="eyebrow">ĐOẠN TIẾNG VIỆT</span>
+            <p className="paragraph-story">
+              {paragraphTask.sentences.map((line, position) => {
+                const accepted = formatAcceptedTranslation(paragraphAcceptedAnswers[position] || "");
+                const className = ["paragraph-story-sentence", position === paragraphIndex ? "active" : position < paragraphIndex ? "done" : "", accepted ? "translated" : ""].filter(Boolean).join(" ");
+                return <span key={position} className={className} title={accepted ? `Câu tiếng Việt: ${line.vi}` : undefined}>{accepted || line.vi}</span>;
+              })}
+            </p>
+            <div className="paragraph-answer-head">
+              <label htmlFor="paragraph-answer">Dịch câu đang tô sáng sang tiếng Anh</label>
+              <span>{paragraphAnswer.trim() ? paragraphAnswer.trim().split(/\s+/).length : 0} từ</span>
+            </div>
+            <textarea
+              id="paragraph-answer"
+              value={paragraphAnswer}
+              onChange={(event) => changeParagraphAnswer(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey && !paragraphChecked && paragraphAnswer.trim() && !paragraphGrading) {
+                  event.preventDefault();
+                  void checkParagraphSentence();
+                }
+              }}
+              disabled={paragraphChecked && paragraphPassed}
+              placeholder="Nhập bản dịch tiếng Anh…"
+            />
+            <div className="paragraph-input-help"><span><kbd>Enter</kbd> chấm câu · <kbd>Shift + Enter</kbd> xuống dòng</span>{paragraphAnswer && !paragraphChecked ? <button type="button" onClick={() => setParagraphAnswer("")}>Xóa nội dung</button> : null}</div>
+            <div className="paragraph-actions">
+              <button onClick={() => setParagraphAnswer(paragraphSentence.en.split(" ").slice(0, 2).join(" "))}>Gợi ý</button>
+              {!paragraphChecked ? <button className="primary" disabled={!paragraphAnswer.trim() || paragraphGrading} onClick={() => void checkParagraphSentence()}>Chấm câu</button> : paragraphGrading ? <button className="primary" disabled>Đang chấm ngữ nghĩa…</button> : paragraphGradeError ? <button className="primary retry" type="button" onClick={() => void requestParagraphAiGrade()}>Chấm lại bằng AI</button> : paragraphPassed ? <button className="primary" onClick={nextParagraphSentence}>{paragraphIndex + 1 === paragraphTask.sentences.length ? "Xem tổng kết" : "Câu tiếp theo →"}</button> : <button className="primary retry" type="button" onClick={retryParagraphSentence}>Viết lại câu này</button>}
+            </div>
+          </section>
+          <aside className="panel paragraph-feedback">
+            <div className="paragraph-side-tools">
+              <button onClick={() => setParagraphDictionaryOpen((value) => !value)}><Icon name="book" size={18} /><span>Từ điển</span></button>
+              <div><Icon name="target" size={18} /><strong>{paragraphAiGrade ? `${paragraphScore}%` : paragraphGrading ? "…" : "—"}</strong><span>Độ chính xác ngữ nghĩa</span></div>
+            </div>
+            {paragraphDictionaryOpen && <div className="paragraph-dictionary"><label htmlFor="paragraph-dictionary">Tra nhanh từ tiếng Anh</label><div><input id="paragraph-dictionary" value={paragraphDictionaryQuery} onChange={(event) => setParagraphDictionaryQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") lookUpParagraphWord(); }} placeholder="Nhập một từ…" /><button disabled={!paragraphDictionaryQuery.trim()} onClick={lookUpParagraphWord}>Tra từ</button></div><small>Mở định nghĩa, phát âm và ví dụ trong tab mới.</small></div>}
+            <h3>Phản hồi</h3>
+            {!paragraphResult ? paragraphRewriteReview ? <div className="paragraph-review-kept">
+              <div className="paragraph-score-row"><strong>{paragraphRewriteReview.score}%</strong><span>Nhận xét lần chấm trước</span></div>
+              <p>{paragraphRewriteReview.comment}</p>
+              {paragraphRewriteReview.issues.length ? <section className="paragraph-issues"><h4>Hướng dẫn sửa câu</h4>{paragraphRewriteReview.issues.map((issue, index) => <div key={`${issue.type}-${index}`}><b>{issue.wrong || "Cách diễn đạt cần xem lại"}</b><p>{issue.why}</p></div>)}</section> : null}
+              <div className="paragraph-tip"><Icon name="sparkles" size={16} /><span><b>Hãy tự sửa:</b> Đối chiếu từng lỗi ở trên và viết lại bằng cách diễn đạt của bạn. Câu mẫu đã được ẩn trong lúc làm lại.</span></div>
+            </div> : <div className="paragraph-ready"><p>Hoàn thành câu dịch rồi bấm <b>Chấm câu</b>. Hệ thống sẽ phân tích ý nghĩa, ngữ pháp, từ vựng và độ tự nhiên.</p><ol><li>Dịch đúng câu đang được tô sáng</li><li>Nhấn <b>Gợi ý</b> nếu chưa biết cách bắt đầu</li><li>Câu chưa đạt 90% cần sửa lại trước khi tiếp tục</li></ol></div> : <>
+              <div className="paragraph-score-row"><strong>{paragraphAiGrade ? `${paragraphScore}%` : paragraphGrading ? "…" : "—"}</strong><span>Đánh giá theo ý nghĩa</span></div>
+              <p className={paragraphPassed ? "good" : ""}>{paragraphGrading ? "Đang kiểm tra câu của bạn theo ý nghĩa tiếng Việt, ngữ pháp và độ tự nhiên…" : paragraphGradeError || paragraphAiGrade?.comment || "Chưa có kết quả chấm ngữ nghĩa."}</p>
+              {paragraphGrading && <div className="paragraph-ai-loading"><Icon name="sparkles" size={16} /><span>Đang kiểm tra ý nghĩa, ngữ pháp và cách diễn đạt…</span></div>}
+              {paragraphAiGrade?.criteria && <div className="paragraph-criteria">{[["meaning", "Đúng & đủ ý"], ["grammar", "Ngữ pháp"], ["vocabulary", "Từ vựng"], ["naturalness", "Tự nhiên"]].map(([key, label]) => <div key={key}><span>{label}</span><i><b style={{ width: `${paragraphAiGrade.criteria?.[key] || 0}%` }} /></i><strong>{paragraphAiGrade.criteria?.[key] || 0}</strong></div>)}</div>}
+              {paragraphAiGrade?.issues?.length ? <section className="paragraph-issues"><h4>Điểm cần cải thiện</h4>{paragraphAiGrade.issues.map((issue, index) => <div key={`${issue.type}-${index}`}><b>{issue.wrong || "Cách diễn đạt"}{issue.right ? <> → <em>{issue.right}</em></> : null}</b><p>{issue.why}</p></div>)}</section> : null}
+              {paragraphAiGrade && <div className="paragraph-reference"><span>Một cách dịch tự nhiên</span><b>{paragraphAiGrade.suggestion || paragraphSentence.en}</b></div>}
+              {paragraphAiGrade && <div className="paragraph-tip"><Icon name="sparkles" size={16} /><span><b>Cách cải thiện:</b> Sửa các lỗi thực sự về ý nghĩa hoặc ngữ pháp ở trên. Bạn không cần viết giống câu tham khảo nếu cách diễn đạt của bạn vẫn đúng và tự nhiên.</span></div>}
+              {paragraphGradeError && <small className="paragraph-grade-note">{paragraphGradeError}</small>}
+            </>}
+            <section className="paragraph-achievements"><h4>Thành tích hôm nay</h4><div><span><Icon name="flame" size={18} /><b>{paragraphIndex + (paragraphPassed ? 1 : 0)}</b><small>Câu hoàn thành</small></span><span><Icon name="sparkles" size={18} /><b>{paragraphScores.filter((score) => score >= 90).length}</b><small>Câu đạt chuẩn</small></span></div></section>
+          </aside>
+        </div>}
+      </div>
+    );
+
   // ── Màn viết bài và xem điểm ──────────────────────────────────────────────
   if (task)
     return (
@@ -127,6 +430,7 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
               <span className={words >= needed ? "enough" : ""}>
                 {words}/{needed} từ
               </span>
+              {!result && answer.trim() && <small className="writing-saved">Đã tự lưu trên máy</small>}
             </div>
             <textarea
               value={answer}
@@ -220,10 +524,58 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
       </div>
     );
 
-  // ── Màn chọn đề ───────────────────────────────────────────────────────────
+  // ── Cửa vào chung: ba lộ trình, cùng một ngôn ngữ giao diện ───────────────
+  if (route === "home")
+    return (
+      <div className="page writing-hub">
+        <button className="back" onClick={close}>← Chọn chức năng khác</button>
+        <header className="writing-hub-head">
+          <span className="writing-hero-icon"><Icon name="pen" size={20} /></span>
+          <div><h1>Luyện viết</h1><p>Chọn đúng mục tiêu của bạn. Mỗi lộ trình có nội dung và cách chấm riêng.</p></div>
+        </header>
+        <div className="writing-paths">
+          <button onClick={() => setRoute("paragraphs")}>
+            <i>01</i><span><b>Dịch đoạn văn có sẵn</b><small>Luyện Việt → Anh theo từng câu, phân theo trình độ và loại nội dung.</small><em>Cơ bản · Trung cấp · Nâng cao</em></span><strong>→</strong>
+          </button>
+          <button onClick={() => setRoute("exams")}>
+            <i>02</i><span><b>Viết theo kỳ thi</b><small>Làm đề IELTS, TOEIC, VSTEP và nhận điểm cùng nhận xét chi tiết.</small><em>Task 1 · Task 2 · Chấm band</em></span><strong>→</strong>
+          </button>
+          <button onClick={() => openTranslate?.()}>
+            <i>03</i><span><b>Viết bằng từ vựng của bạn</b><small>Chọn từ trong folder, tạo đoạn văn hoặc từng câu để luyện dịch.</small><em>Folder từ vựng · AI tạo nội dung</em></span><strong>→</strong>
+          </button>
+        </div>
+        <section className="writing-flow-note">
+          <b>Một luồng thống nhất</b><span>Chọn lộ trình</span><i>→</i><span>Chọn bài</span><i>→</i><span>Viết</span><i>→</i><span>Nhận phản hồi</span><i>→</i><span>Xem tiến độ</span>
+        </section>
+      </div>
+    );
+
+  if (route === "paragraphs")
+    return (
+      <div className="page paragraph-library">
+        <button className="back" onClick={() => setRoute("home")}>← Luyện viết</button>
+        <header className="writing-hub-head"><span className="writing-hero-icon"><Icon name="book" size={20} /></span><div><h1>Đoạn văn có sẵn</h1><p>Chọn trình độ và nội dung, sau đó dịch từng câu trong một mạch văn hoàn chỉnh.</p></div></header>
+        <div className="paragraph-toolbar">
+          <label><Icon name="search" size={16} /><input value={paragraphQuery} onChange={(event) => setParagraphQuery(event.target.value)} placeholder="Tìm theo tên bài hoặc chủ đề…" /></label>
+          <button className={favoriteOnly ? "active" : ""} onClick={() => setFavoriteOnly((value) => !value)}><Icon name="flag" size={15} /> Đã lưu ({favorites.length})</button>
+        </div>
+        <div className="paragraph-filters">
+          <div><span>Trình độ</span>{["Tất cả", "Cơ bản", "Trung cấp", "Nâng cao"].map((value) => <button key={value} className={paragraphLevel === value ? "active" : ""} onClick={() => setParagraphLevel(value)}>{value}</button>)}</div>
+          <div><span>Loại nội dung</span>{["Tất cả", ...new Set(PARAGRAPHS.map((item) => item.kind))].map((value) => <button key={value} className={paragraphKind === value ? "active" : ""} onClick={() => setParagraphKind(value)}>{value}</button>)}</div>
+        </div>
+        <div className="paragraph-grid">
+          {paragraphShown.map((item) => { const saved = paragraphProgress[item.id]; const thumb = THUMBNAILS[item.kind] ?? THUMBNAILS.Truyện; const favorite = favorites.includes(item.id); return <article key={item.id} className="paragraph-card">
+            <div className={`paragraph-thumb ${thumb.className}`}><span><Icon name={thumb.icon} size={28} /><b>{thumb.label}</b><small>{item.topic}</small></span><button className={favorite ? "saved" : ""} aria-label={favorite ? `Bỏ lưu ${item.title}` : `Lưu ${item.title}`} onClick={() => toggleFavorite(item.id)}><Icon name="flag" size={16} /></button></div>
+            <div className="paragraph-meta"><span>{item.level}</span><em>{item.kind}</em>{saved && <em className="completed">✓ Đã học · tốt nhất {saved.best}%</em>}</div><h3>{item.title}</h3><p>{item.sentences.map((line) => line.vi).join(" ")}</p><footer><small>{item.topic} · {item.sentences.length} câu</small><button onClick={() => openParagraph(item)}>{saved ? "Luyện lại →" : "Bắt đầu →"}</button></footer></article>; })}
+        </div>
+        {!paragraphShown.length && <div className="paragraph-empty"><Icon name="search" size={25} /><h3>Không tìm thấy bài phù hợp</h3><p>Thử bỏ bộ lọc hoặc tìm bằng một chủ đề khác.</p><button onClick={() => { setParagraphQuery(""); setParagraphLevel("Tất cả"); setParagraphKind("Tất cả"); setFavoriteOnly(false); }}>Xóa bộ lọc</button></div>}
+      </div>
+    );
+
+  // ── Màn chọn đề kỳ thi ────────────────────────────────────────────────────
   return (
     <div className="page writing-library">
-      <button className="back" onClick={close}>← Chọn chức năng khác</button>
+      <button className="back" onClick={() => setRoute("home")}>← Luyện viết</button>
 
       <header className="writing-hero">
         <span className="writing-hero-icon"><Icon name="pen" size={20} /></span>
@@ -242,19 +594,6 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
 
       <div className="writing-layout">
         <div className="writing-main">
-          {openTranslate && (
-            // Dịch Việt → Anh cũng là luyện viết, chỉ khác ở chỗ có sẵn câu mẫu để
-            // đối chiếu. Để nó ở đây thay vì một mục riêng ngoài thanh bên.
-            <button className="writing-translate-card" onClick={openTranslate}>
-              <span className="writing-translate-icon"><Icon name="swap" size={19} /></span>
-              <span>
-                <b>Dịch Việt → Anh theo folder từ vựng</b>
-                <small>Viết lại câu tiếng Việt bằng tiếng Anh, chấm theo câu mẫu và theo loại lỗi</small>
-              </span>
-              <em>→</em>
-            </button>
-          )}
-
           <div className="writing-parts" role="group" aria-label="Lọc theo phần">
             {PARTS.map((item) => (
               <button key={item.value} className={part === item.value ? "active" : ""} onClick={() => setPart(item.value)}>

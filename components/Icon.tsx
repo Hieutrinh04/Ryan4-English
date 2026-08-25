@@ -10,7 +10,7 @@ export type IconName =
   | "compass" | "sun" | "moon" | "plus" | "chevron" | "flame" | "clock" | "target"
   | "cards" | "keyboard" | "volume" | "swap" | "blank" | "shuffle" | "check" | "trophy"
   | "play" | "previous" | "replay" | "sparkles" | "arrow" | "stop"
-  | "hand" | "cup" | "heart" | "briefcase" | "flag";
+  | "hand" | "cup" | "heart" | "briefcase" | "flag" | "eye-off";
 
 const PATHS: Record<IconName, string> = {
   home: "M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5",
@@ -48,6 +48,7 @@ const PATHS: Record<IconName, string> = {
   sparkles: "m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2zM5 14l.7 2.3L8 17l-2.3.7L5 20l-.7-2.3L2 17l2.3-.7zM19 14l.6 1.9 1.9.6-1.9.6L19 19l-.6-1.9-1.9-.6 1.9-.6z",
   arrow: "M5 12h14m-5-5 5 5-5 5",
   stop: "M7 7h10v10H7z",
+  "eye-off": "M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.8 5.2A10.6 10.6 0 0 1 12 5c5.5 0 9 7 9 7a14 14 0 0 1-2.1 3M6.2 6.2C4.1 7.7 3 10 3 12c0 0 3.5 7 9 7 1.3 0 2.5-.4 3.5-.9",
 };
 
 /** Biểu tượng nét, thừa hưởng màu chữ (currentColor) của phần tử chứa nó. */

@@ -65,7 +65,7 @@ test("deckStats: danh sách rỗng hoặc sai kiểu trả về số 0, không p
   }
 });
 
-test("setsFor topic: gom theo chủ đề, một từ nhiều chủ đề vào cả hai bộ", () => {
+test("setsFor topic: mỗi từ chỉ vào folder chủ đề chính", () => {
   const sets = setsFor(
     [
       tu({ id: "a", topic: "JOB - NGHỀ NGHIỆP · TIME - THỜI GIAN" }),
@@ -73,12 +73,11 @@ test("setsFor topic: gom theo chủ đề, một từ nhiều chủ đề vào c
     ],
     "topic",
   );
-  assert.deepEqual(sets.map((set) => set.label), ["JOB - NGHỀ NGHIỆP", "TIME - THỜI GIAN"]);
+  assert.deepEqual(sets.map((set) => set.label), ["JOB - NGHỀ NGHIỆP"]);
   assert.equal(sets[0].total, 2);
-  assert.equal(sets[1].total, 1);
 });
 
-test("setsFor topic: bộ nhiều từ đứng trước, bằng nhau thì xếp theo tên", () => {
+test("setsFor topic: folder luôn xếp theo tên", () => {
   const sets = setsFor([tu({ id: "a", topic: "ZOO" }), tu({ id: "b", topic: "ANIMAL" })], "topic");
   assert.deepEqual(sets.map((set) => set.label), ["ANIMAL", "ZOO"]);
 });
@@ -88,25 +87,12 @@ test("setsFor topic: chủ đề trống không thành một bộ vô danh", () 
   assert.deepEqual(sets, []);
 });
 
-test("setsFor ielts: gom theo nhóm chủ đề IELTS", () => {
+test("setsFor week: dùng cùng ngày học với các màn khác và xếp theo tuần", () => {
   const sets = setsFor(
     [
-      tu({ id: "a", ieltsTopics: ["Work & Career", "Education"] }),
-      tu({ id: "b", ieltsTopics: ["Education"] }),
-      tu({ id: "c" }),
-    ],
-    "ielts",
-  );
-  assert.deepEqual(sets.map((set) => set.label), ["Education", "Work & Career"]);
-  assert.equal(sets[0].total, 2);
-});
-
-test("setsFor week: xếp theo thứ tự trong tuần chứ không theo số từ", () => {
-  const sets = setsFor(
-    [
-      tu({ id: "a", source: "07 Sunday.xlsx" }),
-      tu({ id: "b", source: "07 Sunday.xlsx" }),
-      tu({ id: "c", source: "01 Monday.xlsx" }),
+      tu({ id: "a", studyDay: 6 }),
+      tu({ id: "b", studyDay: 6 }),
+      tu({ id: "c", studyDay: 0 }),
     ],
     "week",
   );
@@ -138,7 +124,7 @@ test("setsFor mine: chưa tự thêm từ nào thì không hiện bộ rỗng", 
 });
 
 test("setsFor: dữ liệu sai kiểu không làm sập", () => {
-  for (const collection of ["topic", "ielts", "week", "mine"]) {
+  for (const collection of ["all", "topic", "week", "mine"]) {
     assert.deepEqual(setsFor(null, collection), []);
     assert.deepEqual(setsFor("abc", collection), []);
   }

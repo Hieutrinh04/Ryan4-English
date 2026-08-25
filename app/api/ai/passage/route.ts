@@ -28,6 +28,8 @@ export async function POST(request: Request) {
 - Mỗi câu dùng đúng MỘT từ trong danh sách dưới đây, theo đúng thứ tự đã cho.
 - Mỗi từ xuất hiện đúng một lần, ở dạng tự nhiên trong câu (chia thì, số nhiều tuỳ ý).
 - Câu tiếng Việt tự nhiên như người Việt viết, có dấu đầy đủ, KHÔNG nhắc đến bản thân từ tiếng Anh, không dùng dấu ngoặc kép quanh từ.
+- BẮT BUỘC có đúng một dấu cách giữa mọi từ tiếng Việt. Tuyệt đối không viết dính từ (sai: "cùngbạn", "loàicôn trùng"; đúng: "cùng bạn", "loài côn trùng").
+- Trước khi trả JSON, tự đọc lại từng câu và sửa toàn bộ lỗi thiếu khoảng trắng, lỗi chính tả hoặc từ bị dính.
 - Câu tiếng Anh là bản dịch chuẩn của chính câu tiếng Việt đó, đúng ngữ pháp, tự nhiên.
 - Mỗi câu 8–18 chữ.
 ${topic ? `- Bối cảnh nên xoay quanh chủ đề: ${topic}.` : ""}
@@ -53,7 +55,9 @@ ${shared}`;
   const startedAt = Date.now();
   const usage = (ok: boolean) => logUsage(caller, { feature: "passage", ok, promptChars: prompt.length, latencyMs: Date.now() - startedAt, provider: activeProvider(), model: activeModel() });
   try {
-    const data = await generateJson<{ sentences?: Sentence[] }>(prompt, { temperature: wantPassage ? 0.75 : 0.6, timeoutMs: 50000 });
+    // Nội dung học tập cần ổn định hơn sáng tạo. Nhiệt độ cao khiến một số lần model
+    // sinh tiếng Việt bị dính từ dù JSON vẫn hợp lệ.
+    const data = await generateJson<{ sentences?: Sentence[] }>(prompt, { temperature: wantPassage ? 0.25 : 0.2, timeoutMs: 50000 });
     const sentences = (data.sentences ?? [])
       .map((item) => ({ term: String(item.term ?? "").trim(), vi: String(item.vi ?? "").normalize("NFC").trim(), en: String(item.en ?? "").trim() }))
       .filter((item) => item.term && item.vi && item.en);

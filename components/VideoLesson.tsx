@@ -1,13 +1,13 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
 import Icon from "./Icon";
 import { createRecogniser, hasRecognition, micError, type Recognition } from "../lib/speech";
 import { clearLessonProgress, doneSentences, markSentence, readLessonProgress, readReports, reportedSentences, toggleReport } from "../lib/lessons.mjs";
 import { properNouns, scoreDictation, wordShapes } from "../lib/youtube.mjs";
 import { missingWords, readIpaCache, readTranslationCache, saveIpa, saveTranslation, withIpa } from "../lib/sentence-aids.mjs";
-import { scoreShadowing, shadowingAdvice, paceOf } from "../lib/shadowing.mjs";
+import { scoreShadowing } from "../lib/shadowing.mjs";
 import { audioConstraint, micOptions, pickMic, readMic, saveMic } from "../lib/mic.mjs";
 import { MAX_CHAIN, canChain, chainOf, clampChain } from "../lib/sentence-chain.mjs";
 import { isSaved, makeSaved, readSaved, toggleSentence } from "../lib/saved-sentences.mjs";
@@ -62,7 +62,6 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   // Nói nhại
   const [listening, setListening] = useState(false);
   const [heard, setHeard] = useState("");
-  const [spokenFor, setSpokenFor] = useState(0);
   const [micNote, setMicNote] = useState("");
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [micId, setMicId] = useState("");
@@ -75,10 +74,14 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   const [saved, setSaved] = useState<{ key: string }[]>([]);
   const [reports, setReports] = useState<Record<string, number[]>>({});
   const [recordUrl, setRecordUrl] = useState("");
+  // Phân biệt "chưa ghi âm" với "đã ghi nhưng máy không nghe được chữ nào".
+  // Cả hai cùng có heard="", nhưng trường hợp sau phải hiện toàn bộ từ là sai.
+  const [recordingAttempted, setRecordingAttempted] = useState(false);
   const [coaching, setCoaching] = useState(false);
   const [coachComment, setCoachComment] = useState("");
   const [coachError, setCoachError] = useState("");
   const [coachTips, setCoachTips] = useState<CoachTip[]>([]);
+  const [coachOpen, setCoachOpen] = useState(false);
 
   // Ba thứ đỡ khi nghe, bật tắt riêng vì mỗi người cần mức đỡ khác nhau.
   const [showText, setShowText] = useState(true);
@@ -88,7 +91,8 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   const [showVi, setShowVi] = useState(mode === "shadowing");
   const [ipaCache, setIpaCache] = useState<Record<string, string>>({});
   const [viCache, setViCache] = useState<Record<string, string>>({});
-  const [lookup, setLookup] = useState<{ word: string; ipa: string; meaning: string } | null>(null);
+  const [lookup, setLookup] = useState<{ word: string; ipa: string; meaning: string; part?: string; definitions?: string[]; x: number; y: number } | null>(null);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   // Chấm xong tự sang câu kế tiếp. Tắt mặc định vì người mới cần đọc lại chỗ sai.
   const [autoNext, setAutoNext] = useState(false);
 
@@ -96,6 +100,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   const player = useRef<PlayerHandle | null>(null);
   const engine = useRef<Recognition | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
+  const recordingActive = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const startedAt = useRef(0);
 
@@ -131,8 +136,8 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
         jobs.push(
           fetch("/api/ipa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ words: need }) })
             .then((response) => response.json())
-            .then((data: { ipa?: Record<string, string> }) => {
-              if (alive && data.ipa) setIpaCache(saveIpa(data.ipa));
+            .then((data: { ipa?: Record<string, string>; missing?: string[] }) => {
+              if (alive && (data.ipa || data.missing)) setIpaCache(saveIpa(data.ipa ?? {}, data.missing ?? []));
             })
             .catch(() => {}),
         );
@@ -193,6 +198,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   });
 
   useEffect(() => () => {
+    recordingActive.current = false;
     engine.current?.stop();
     if (recorder.current?.state === "recording") recorder.current.stop();
   }, []);
@@ -200,6 +206,33 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   useEffect(() => () => {
     if (recordUrl) URL.revokeObjectURL(recordUrl);
   }, [recordUrl]);
+
+  // Người học có thể chủ động dừng bất kỳ lúc nào; 30 giây là giới hạn an toàn
+  // giống màn Shadowing mẫu.
+  useEffect(() => {
+    if (!listening) return;
+    const tick = window.setInterval(() => {
+      const elapsed = (Date.now() - startedAt.current) / 1000;
+      if (elapsed < 30) {
+        setRecordingSeconds(elapsed);
+        return;
+      }
+      setRecordingSeconds(30);
+      setRecordingAttempted(true);
+      recordingActive.current = false;
+      try { engine.current?.stop(); } catch { /* engine đã tự kết thúc */ }
+      setListening(false);
+      if (recorder.current?.state === "recording") recorder.current.stop();
+    }, 200);
+    return () => window.clearInterval(tick);
+  }, [listening]);
+
+  useEffect(() => {
+    if (!coachOpen) return;
+    const closeCoach = (event: KeyboardEvent) => { if (event.key === "Escape") setCoachOpen(false); };
+    window.addEventListener("keydown", closeCoach);
+    return () => window.removeEventListener("keydown", closeCoach);
+  }, [coachOpen]);
 
   // Bấm Esc để thoát toàn màn hình thì trình duyệt không báo cho nút của mình,
   // nên phải nghe sự kiện của trình duyệt chứ đừng tự giữ trạng thái.
@@ -250,22 +283,34 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     player.current.play();
   }
 
-  async function lookUp(token: string) {
+  async function lookUp(token: string, element: HTMLElement) {
     const word = token.toLowerCase().replace(/[^a-z'-]/g, "");
     if (!word) return;
-    setLookup({ word, ipa: ipaCache[word] ?? "", meaning: "Đang tra…" });
+    const card = element.closest(".shadowing-card")?.getBoundingClientRect();
+    const anchor = element.getBoundingClientRect();
+    const position = { x: Math.max(12, anchor.left - (card?.left ?? anchor.left)), y: anchor.bottom - (card?.top ?? anchor.top) + 8 };
+    setLookup({ word, ipa: ipaCache[word] ?? "", meaning: "Đang tra…", ...position });
     try {
       const response = await fetch(`/api/ai/glance?q=${encodeURIComponent(word)}`);
-      const data = (await response.json()) as { ipa?: string; meaningVi?: string; senses?: { definition?: string }[]; error?: string };
+      const data = (await response.json()) as { ipa?: string; meaningVi?: string; senses?: { part?: string; definition?: string }[]; error?: string };
       if (!response.ok || data.error) throw new Error(data.error ?? "không tra được");
-      setLookup({ word, ipa: data.ipa || ipaCache[word] || "", meaning: data.meaningVi || data.senses?.[0]?.definition || "Không tra được nghĩa." });
+      setLookup({ word, ipa: data.ipa || ipaCache[word] || "", meaning: data.meaningVi || data.senses?.[0]?.definition || "Không tra được nghĩa.", part: data.senses?.[0]?.part, definitions: data.senses?.map((sense) => sense.definition || "").filter(Boolean).slice(0, 3), ...position });
     } catch {
-      setLookup({ word, ipa: ipaCache[word] ?? "", meaning: "Không tra được từ này." });
+      setLookup({ word, ipa: ipaCache[word] ?? "", meaning: "Không tra được từ này.", ...position });
     }
   }
 
-  function go(step: number) {
+  function speakLookup() {
+    if (!lookup?.word) return;
+    window.speechSynthesis?.cancel();
+    const utterance = new SpeechSynthesisUtterance(lookup.word);
+    utterance.lang = "en-US";
+    window.speechSynthesis?.speak(utterance);
+  }
+
+  function go(step: number, autoplay = false) {
     const next = Math.min(lesson.sentences.length - 1, Math.max(0, index + step));
+    const nextSentence = lesson.sentences[next];
     setIndex(next);
     setChain((value) => clampChain(lesson.sentences, next, value) as number);
     setTyped("");
@@ -273,7 +318,9 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     setHints(0);
     setRevealed(false);
     setHeard("");
+    setRecordingAttempted(false);
     setMicNote("");
+    setRecordingSeconds(0);
     setRecordUrl((current) => {
       if (current) URL.revokeObjectURL(current);
       return "";
@@ -281,8 +328,24 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     setCoachComment("");
     setCoachError("");
     setCoachTips([]);
+    setCoachOpen(false);
     setLookup(null);
+    // Câu đang chọn và vị trí video luôn là một trạng thái duy nhất. Trước đây
+    // danh sách đổi câu nhưng player vẫn đứng ở thời gian cũ nên bấm phát sẽ nói
+    // sang đoạn khác.
     player.current?.pause();
+    if (nextSentence && player.current) {
+      const syncPlayer = () => {
+        if (!player.current) return;
+        player.current.rate(rate);
+        player.current.seek(nextSentence.start);
+        if (autoplay) player.current.play();
+      };
+      // Khi bấm trực tiếp một đoạn, chờ React cập nhật target/end trước rồi mới
+      // phát. Nếu phát ngay, bộ dừng có thể vẫn dùng end của câu cũ.
+      if (autoplay) window.requestAnimationFrame(syncPlayer);
+      else syncPlayer();
+    }
   }
 
   function finish() {
@@ -318,23 +381,18 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   // ── Nói nhại ──────────────────────────────────────────────────────────────
   const spoken = useMemo(
     () =>
-      heard && target.text
+      recordingAttempted && target.text
         ? (scoreShadowing(target.text, heard) as {
             clarity: number;
             words: { word: string; status: string }[];
-            marks: { word: string; status: string }[];
+            marks: { word: string; heard?: string; status: string }[];
             missed: string[];
             swallowed: string[];
             spokenCount: number;
           })
         : null,
-    [heard, target.text],
+    [heard, recordingAttempted, target.text],
   );
-  const advice = useMemo(
-    () => (spoken ? (shadowingAdvice(spoken, paceOf(spoken.words.length, spokenFor)) as { kind: string; text: string }[]) : []),
-    [spoken, spokenFor],
-  );
-
   function saveThis() {
     if (!sentence) return;
     setSaved(
@@ -400,20 +458,41 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     const recogniser = createRecogniser();
     if (!recogniser) return;
     setHeard("");
+    setRecordingAttempted(false);
     setMicNote("");
+    setCoachComment("");
+    setCoachError("");
+    setCoachTips([]);
+    setCoachOpen(false);
+    setRecordingSeconds(0);
+    recordingActive.current = true;
     engine.current = recogniser;
+    recogniser.continuous = true;
     startedAt.current = Date.now();
     player.current?.pause();
     await startRecording();
 
+    let completed = "";
+    let current = "";
     recogniser.onresult = (event) => {
-      const transcript = Array.from(event.results, (item) => item[0]?.transcript ?? "").join(" ").trim();
-      setHeard(transcript);
-      setSpokenFor((Date.now() - startedAt.current) / 1000);
-      finish();
+      current = Array.from(event.results, (item) => item[0]?.transcript ?? "").join(" ").trim();
+      setHeard([completed, current].filter(Boolean).join(" "));
     };
-    recogniser.onerror = (event) => setMicNote(micError(event.error));
+    recogniser.onerror = (event) => {
+      setMicNote(micError(event.error));
+      if (["not-allowed", "service-not-allowed", "audio-capture", "network"].includes(event.error)) recordingActive.current = false;
+    };
     recogniser.onend = () => {
+      if (recordingActive.current) {
+        completed = [completed, current].filter(Boolean).join(" ");
+        current = "";
+        window.setTimeout(() => {
+          if (!recordingActive.current) return;
+          try { recogniser.start(); }
+          catch { recordingActive.current = false; setListening(false); if (recorder.current?.state === "recording") recorder.current.stop(); }
+        }, 80);
+        return;
+      }
       setListening(false);
       if (recorder.current?.state === "recording") recorder.current.stop();
     };
@@ -421,8 +500,18 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     recogniser.start();
   }
 
+  function stopRecording() {
+    setRecordingAttempted(true);
+    recordingActive.current = false;
+    try { engine.current?.stop(); } catch { /* engine đã tự kết thúc */ }
+    setListening(false);
+    if (recorder.current?.state === "recording") recorder.current.stop();
+  }
+
   async function askCoach() {
     if (!sentence || !spoken || coaching) return;
+    setCoachOpen(true);
+    if (coachComment || coachTips.length > 0) return;
     setCoaching(true);
     setCoachError("");
     setCoachComment("");
@@ -686,31 +775,24 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                     nên nhìn ra một dãy thẻ chứ không còn ra một câu. */}
                 <div className="shadowing-card">
                   <div className="lesson-aid-toggles" role="group" aria-label="Hiện thêm">
-                    <button className={showText ? "active" : ""} onClick={() => setShowText((value) => !value)} aria-pressed={showText}>Câu mẫu</button>
-                    <button className={showIpa ? "active" : ""} onClick={() => setShowIpa((value) => !value)} aria-pressed={showIpa}>IPA</button>
-                    <button className={showVi ? "active" : ""} onClick={() => setShowVi((value) => !value)} aria-pressed={showVi}>Dịch nghĩa</button>
+                    <button className={showText ? "active" : ""} onClick={() => setShowText((value) => !value)} aria-pressed={showText}><Icon name="eye-off" size={12} /> Câu mẫu</button>
+                    <button className={showIpa ? "active" : ""} onClick={() => setShowIpa((value) => !value)} aria-pressed={showIpa}><Icon name="eye-off" size={12} /> IPA</button>
+                    <button className={showVi ? "active" : ""} onClick={() => setShowVi((value) => !value)} aria-pressed={showVi}><Icon name="eye-off" size={12} /> Dịch nghĩa</button>
                     {aidBusy && <span className="lesson-aid-busy">đang tra…</span>}
                   </div>
 
                   {showText ? (
                     <>
-                      <p className="shadowing-sentence">
-                        {(withIpa(target.text, ipaCache) as { word: string; ipa: string }[]).map((row, position) => (
-                          <Fragment key={position}>
-                            <button className="shadowing-token" onClick={() => void lookUp(row.word)} title="Bấm để tra nghĩa">
-                              {row.word}
-                            </button>{" "}
-                          </Fragment>
+                      <p className={`shadowing-sentence${showIpa ? " with-ipa" : ""}`}>
+                        {(withIpa(target.text, ipaCache) as { word: string; ipa: string; isWord: boolean; checked: boolean }[]).map((row, position) => (
+                          <button className="shadowing-token lesson-word" key={position} onClick={(event) => void lookUp(row.word, event.currentTarget)} title="Bấm để tra nghĩa">
+                            <span>{row.word}</span>
+                            {/* Tra rồi mà không nguồn nào có — thường là tên riêng — thì để trống,
+                                đừng treo dấu "…" như thể vẫn đang tra. */}
+                            {showIpa && row.isWord && (row.ipa ? <em>{row.ipa}</em> : !row.checked && <em className="loading">…</em>)}
+                          </button>
                         ))}
                       </p>
-                      {showIpa && (
-                        <p className="shadowing-ipa">
-                          {(withIpa(target.text, ipaCache) as { word: string; ipa: string }[])
-                            .map((row) => row.ipa)
-                            .filter(Boolean)
-                            .join(" ")}
-                        </p>
-                      )}
                       <p className="shadowing-tap"><Icon name="book" size={13} /> Nhấn vào từ để tra nghĩa</p>
                     </>
                   ) : (
@@ -718,21 +800,32 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                   )}
 
                   {showVi && <p className="shadowing-vi">{viCache[target.text] || "Đang dịch…"}</p>}
+
+                  {lookup && (
+                    <div className="lesson-lookup lesson-lookup-popover" style={{ left: lookup.x, top: lookup.y }}>
+                      <div className="lesson-lookup-title">
+                        <b>{lookup.word}</b>
+                        <button className="lesson-lookup-speak" onClick={speakLookup} aria-label={`Phát âm ${lookup.word}`}>
+                          <Icon name="volume" size={15} />
+                        </button>
+                        <button className="lesson-lookup-close" onClick={() => setLookup(null)} aria-label="Đóng">×</button>
+                      </div>
+                      <div className="lesson-lookup-meta">
+                        {lookup.ipa && <code>{lookup.ipa}</code>}
+                        {lookup.part && <em>{lookup.part}</em>}
+                      </div>
+                      <strong>{lookup.meaning}</strong>
+                      {lookup.definitions && lookup.definitions.length > 0 && (
+                        <ul>{lookup.definitions.map((definition, position) => <li key={position}>{definition}</li>)}</ul>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {showText && (
                   <div className="shadowing-groups">
                     <span>Chia nhịp</span>
                     {senseGroups(target.text).map((group, position) => <b key={position}>{group}</b>)}
-                  </div>
-                )}
-
-                {lookup && (
-                  <div className="lesson-lookup">
-                    <b>{lookup.word}</b>
-                    {lookup.ipa && <code>{lookup.ipa}</code>}
-                    <span>{lookup.meaning}</span>
-                    <button onClick={() => setLookup(null)} aria-label="Đóng">×</button>
                   </div>
                 )}
 
@@ -752,9 +845,15 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
 
                 <div className="shadowing-record-stage">
                   {listening ? (
-                    <button className="shadowing-record listening" onClick={() => engine.current?.stop()}>
-                      <span><Icon name="stop" size={22} /></span><b>Dừng ghi âm</b><small>Đang lắng nghe giọng nói của bạn…</small>
-                    </button>
+                    <div className="shadowing-recording-live">
+                      <button onClick={stopRecording} aria-label="Dừng ghi âm">
+                        <Icon name="stop" size={21} />
+                      </button>
+                      <b><i /> {Math.max(1, Math.ceil(recordingSeconds))}s / 30s</b>
+                      <div className="shadowing-recording-progress">
+                        <i style={{ width: `${Math.min(100, (recordingSeconds / 30) * 100)}%` }} />
+                      </div>
+                    </div>
                   ) : (
                     <button className="shadowing-record" onClick={listen} disabled={!hasRecognition()}>
                       <span><Icon name="mic" size={24} /></span>
@@ -792,7 +891,20 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                     {/* Từ thừa nằm đúng chỗ nó chen vào, không dồn xuống cuối. */}
                     <div className="shadowing-chips">
                       {spoken.marks.map((mark, position) => (
-                        <span key={position} className={`chip ${mark.status}`}>
+                        <span
+                          key={position}
+                          className={`chip ${mark.status}`}
+                          data-tooltip={
+                            mark.status === "ok"
+                              ? undefined
+                              : mark.status === "extra"
+                                ? `Máy nghe thêm: “${mark.word}”`
+                                : mark.heard
+                                  ? `Bạn đã nói: “${mark.heard}”`
+                                  : "Không nghe thấy từ này"
+                          }
+                          tabIndex={mark.status === "ok" ? undefined : 0}
+                        >
                           {mark.word}
                           <i>{mark.status === "ok" ? "✓" : mark.status === "swallow" ? "⚠" : mark.status === "extra" ? "+" : "✕"}</i>
                         </span>
@@ -801,24 +913,10 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
 
                     <div className="video-ai-coach">
                       <button onClick={() => void askCoach()} disabled={coaching}>
-                        <Icon name="sparkles" size={16} /> {coaching ? "Đang nhờ AI phân tích…" : "Nhờ AI nhận xét phát âm"}
+                        <Icon name="sparkles" size={16} /> {coaching ? "AI đang chấm…" : "Xem nhận xét AI"}
                       </button>
-                      {coachError && <p className="shadowing-warn">{coachError}</p>}
-                      {coachComment && <p className="video-ai-comment">{coachComment}</p>}
-                      {coachTips.length > 0 && (
-                        <ul>
-                          {coachTips.map((tip) => (
-                            <li key={tip.word}><b>{tip.word}</b>{tip.ipa && <code>{tip.ipa}</code>}<span>{tip.how}</span></li>
-                          ))}
-                        </ul>
-                      )}
                     </div>
 
-                    <ul className="shadowing-notes">
-                      {advice.map((note, position) => (
-                        <li key={position} className={note.kind}>{note.text}</li>
-                      ))}
-                    </ul>
                   </div>
                 ) : (
                   <div className="shadowing-repeat">
@@ -844,9 +942,20 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
               </>
             )}
 
-            {index < lesson.sentences.length - 1 && (
+            {mode === "shadowing" ? (
+              <button
+                className="primary lesson-next"
+                disabled={listening}
+                onClick={() => {
+                  finish();
+                  if (index < lesson.sentences.length - 1) go(1);
+                }}
+              >
+                {index < lesson.sentences.length - 1 ? "Câu tiếp theo" : "Hoàn thành"} <Icon name={index < lesson.sentences.length - 1 ? "arrow" : "check"} size={16} />
+              </button>
+            ) : index < lesson.sentences.length - 1 ? (
               <button className="primary lesson-next" onClick={() => go(1)}>Câu tiếp theo <Icon name="arrow" size={16} /></button>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -882,10 +991,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                 <li key={item.index}>
                   <button
                     className={`${position === index ? "active" : ""} ${done.has(item.index) ? "done" : ""}`}
-                    onClick={() => {
-                      go(position - index);
-                      setIndex(position);
-                    }}
+                    onClick={() => go(position - index, true)}
                   >
                     <span className="lesson-list-tick" aria-hidden="true">{done.has(item.index) ? "✓" : ""}</span>
                     <span className="lesson-list-body">
@@ -908,6 +1014,44 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
             })}
           </ol>
         </aside>
+
+        {coachOpen && (
+          <div className="ai-coach-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCoachOpen(false); }}>
+            <section className="ai-coach-modal" role="dialog" aria-modal="true" aria-labelledby="ai-coach-title">
+              <header>
+                <i><Icon name="sparkles" size={18} /></i>
+                <h2 id="ai-coach-title">AI Huấn luyện phát âm</h2>
+                <button onClick={() => setCoachOpen(false)} aria-label="Đóng nhận xét AI">×</button>
+              </header>
+              <div className="ai-coach-content">
+                {coaching && <div className="ai-coach-loading"><Icon name="sparkles" size={18} /> Đang phân tích phần thực hành của bạn…</div>}
+                {!coaching && coachError && (
+                  <div className="ai-coach-error">
+                    <p>{coachError}</p>
+                    <button onClick={() => { setCoachError(""); void askCoach(); }}>Thử lại</button>
+                  </div>
+                )}
+                {!coaching && !coachError && coachComment && (
+                  <>
+                    <p className="ai-coach-intro">Chào bạn, tôi là huấn luyện viên phát âm của bạn. Dưới đây là đánh giá cho phần thực hành vừa rồi:</p>
+                    <h3>1. Đánh giá chung</h3>
+                    <p>{coachComment}</p>
+                  </>
+                )}
+                {!coaching && !coachError && coachTips.length > 0 && (
+                  <>
+                    <h3>2. Các điểm cần cải thiện</h3>
+                    <ul>
+                      {coachTips.map((tip) => (
+                        <li key={tip.word}><b>{tip.word}</b>{tip.ipa && <code>{tip.ipa}</code>}<span>{tip.how}</span></li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { aiFetch } from "../lib/supabase";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLevel } from "../lib/dictation-lessons";
 import { buildShadowingLessons, minutesOf, paceOf, scoreShadowing, shadowingAdvice } from "../lib/shadowing.mjs";
+import { missingWords, readIpaCache, readTranslationCache, saveIpa, saveTranslation, withIpa } from "../lib/sentence-aids.mjs";
 
 // Luyện nói nhại: nghe câu mẫu, nói đuổi theo, đối chiếu chữ máy nghe được với câu
 // mẫu rồi chỉ ra chỗ chệch.
@@ -64,11 +65,14 @@ const ERROR_TEXT: Record<string, string> = {
   network: "Mất kết nối tới dịch vụ nhận dạng giọng nói của trình duyệt.",
 };
 
-export default function ShadowingPractice({ close, onPractised }: { close: () => void; onPractised?: (seconds: number) => void }) {
+export default function ShadowingPractice({ close, onPractised, initialTopic, initialLevel, initialTitle }: { close: () => void; onPractised?: (seconds: number) => void; initialTopic?: string; initialLevel?: DictationLevel; initialTitle?: string }) {
+  const openedFromLibrary = Boolean(initialTopic && initialLevel);
   const lessons = useMemo(() => buildShadowingLessons(dictationLessons) as Lesson[], []);
-  const [topic, setTopic] = useState(dictationTopics[0]);
-  const [level, setLevel] = useState<DictationLevel>("A1");
-  const [lesson, setLesson] = useState<Lesson | null>(null);
+  const [topic, setTopic] = useState(initialTopic ?? dictationTopics[0]);
+  const [level, setLevel] = useState<DictationLevel>(initialLevel ?? "A1");
+  const [lesson, setLesson] = useState<Lesson | null>(() => initialTopic && initialLevel
+    ? lessons.find((item) => item.topic === initialTopic && item.level === initialLevel && (!initialTitle || item.title === initialTitle)) ?? null
+    : null);
   const [lineIndex, setLineIndex] = useState(0);
   const [rate, setRate] = useState(0.85);
 
@@ -87,6 +91,11 @@ export default function ShadowingPractice({ close, onPractised }: { close: () =>
   const [recordUrl, setRecordUrl] = useState("");
   const [practisedSeconds, setPractisedSeconds] = useState(0);
   const [doneLines, setDoneLines] = useState<string[]>([]);
+  const [showText, setShowText] = useState(true);
+  const [showIpa, setShowIpa] = useState(true);
+  const [showVi, setShowVi] = useState(true);
+  const [ipaCache, setIpaCache] = useState<Record<string, string>>({});
+  const [viCache, setViCache] = useState<Record<string, string>>({});
 
   const engineRef = useRef<Recognition | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -104,11 +113,37 @@ export default function ShadowingPractice({ close, onPractised }: { close: () =>
   }, []);
 
   const line = lesson?.lines[lineIndex];
+  const wordAids = useMemo(() => withIpa(line?.text ?? "", ipaCache) as { word: string; ipa: string }[], [line?.text, ipaCache]);
   const advice: Note[] = useMemo(
     () => (result ? (shadowingAdvice(result, paceOf(result.words.length, seconds)) as Note[]) : []),
     [result, seconds],
   );
   const pace = result ? paceOf(result.words.length, seconds) : null;
+
+  useEffect(() => {
+    setIpaCache(readIpaCache());
+    setViCache(readTranslationCache());
+  }, []);
+
+  useEffect(() => {
+    if (!line) return;
+    let alive = true;
+    if (showIpa) {
+      const words = missingWords(line.text, ipaCache) as string[];
+      if (words.length) fetch("/api/ipa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ words }) })
+        .then((response) => response.json()).then((data: { ipa?: Record<string, string> }) => {
+          if (alive && data.ipa) setIpaCache(saveIpa(data.ipa));
+        }).catch(() => {});
+    }
+    if (showVi && !viCache[line.text]) fetch("/api/translate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texts: [line.text] }) })
+      .then((response) => response.json()).then((data: { translations?: string[] }) => {
+        const translated = data.translations?.[0];
+        if (alive && translated) setViCache(saveTranslation(line.text, translated));
+      }).catch(() => {});
+    return () => { alive = false; };
+    // Cache đổi vì chính effect này; không đưa vào dependency để tránh gọi lặp.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [line?.text, showIpa, showVi]);
 
   function speak(speed = rate, text = line?.text) {
     if (!text) return;
@@ -252,71 +287,79 @@ export default function ShadowingPractice({ close, onPractised }: { close: () =>
   }
 
   return (
-    <div className="page shadowing-page">
-      <button className="back" onClick={() => { setLesson(null); resetLine(); }}>← Chọn bài khác</button>
+    <div className="shadowing-page shadowing-workspace-page">
+      <header className="shadowing-workspace-bar">
+        <button className="back" onClick={() => { resetLine(); if (openedFromLibrary) close(); else setLesson(null); }}>←</button>
+        <span className="shadowing-level-tag">{lesson.level}</span>
+        <div><b>{lesson.title}</b><small>{lesson.topic}</small></div>
+        <span className="shadowing-progress"><b>{lineIndex + 1}/{lesson.lines.length}</b><small>{Math.round(((lineIndex + 1) / lesson.lines.length) * 100)}%</small></span>
+      </header>
 
-      <div className="shadowing-head">
-        <div>
-          <div className="eyebrow">{lesson.topic} · {lesson.level}</div>
-          <h1>{lesson.title}</h1>
-          {lesson.sourceName && (
-            <p className="dictation-source">
-              Nguồn: {lesson.sourceUrl ? <a href={lesson.sourceUrl} target="_blank" rel="noreferrer">{lesson.sourceName}</a> : lesson.sourceName}
-              {lesson.license ? ` · ${lesson.license}` : ""}
-            </p>
-          )}
-        </div>
-        <div className="shadowing-progress">
-          <b>{doneLines.length}/{lesson.lines.length}</b>
-          <small>câu đã nói</small>
-        </div>
-      </div>
-
-      <div className="shadowing-lines">
-        {lesson.lines.map((item, position) => (
-          <button
-            key={item.id}
-            className={`shadowing-chip${position === lineIndex ? " active" : ""}${doneLines.includes(item.id) ? " done" : ""}`}
-            onClick={() => goToLine(position)}
-          >
-            {position + 1}
-          </button>
-        ))}
-      </div>
-
-      <div className="panel shadowing-stage">
-        <p className="shadowing-target">{line?.text}</p>
-
-        <div className="shadowing-speeds">
-          <span>Nghe mẫu:</span>
-          {[0.6, 0.85, 1].map((speed) => (
-            <button key={speed} onClick={() => { setRate(speed); speak(speed); }} className={speed === rate ? "active" : ""}>
-              {speed === 1 ? "Bình thường" : speed === 0.85 ? "Chậm" : "Rất chậm"}
-            </button>
-          ))}
-        </div>
-
-        <div className="shadowing-actions">
-          {listening ? (
-            <button className="primary listening" onClick={() => engineRef.current?.stop()}>■ Dừng nói</button>
-          ) : (
-            <button className="primary" onClick={listen} disabled={supported === false}>◉ Nói theo</button>
-          )}
-          {result && <button onClick={resetLine}>Nói lại</button>}
-        </div>
-
-        {listening && <p className="shadowing-hint">Đang nghe… nói cả câu rồi bấm dừng, hoặc im lặng một chút để máy tự dừng.</p>}
-        {micError && <p className="shadowing-warn">{micError}</p>}
-
-        {recordUrl && (
-          <div className="shadowing-playback">
-            <span>Bản ghi của bạn:</span>
-            {/* eslint-disable-next-line jsx-a11y/media-has-caption -- giọng người học vừa thu, không có phụ đề */}
-            <audio controls src={recordUrl} />
-            <button onClick={() => speak(rate)}>Nghe lại câu mẫu để so</button>
+      <div className="shadowing-workspace">
+        <aside className="shadowing-source-pane">
+          <div className="shadowing-media-card">
+            <span>{lesson.level}</span>
+            <small>{lesson.topic}</small>
+            <h2>{lesson.title}</h2>
+            <button onClick={() => speak(rate)} aria-label="Nghe câu hiện tại">▶</button>
+            <p>{line?.text}</p>
           </div>
-        )}
-      </div>
+          <div className="shadowing-transcript-head">
+            <b>Phụ đề</b><span>{doneLines.length}/{lesson.lines.length} đã luyện</span>
+          </div>
+          <div className="shadowing-progress-track"><i style={{ width: `${Math.round((doneLines.length / lesson.lines.length) * 100)}%` }} /></div>
+          <div className="shadowing-transcript-list">
+            {lesson.lines.map((item, position) => (
+              <button key={item.id} className={`${position === lineIndex ? "active" : ""}${doneLines.includes(item.id) ? " done" : ""}`} onClick={() => goToLine(position)}>
+                <span>{doneLines.includes(item.id) ? "✓" : `#${position + 1}`}</span><p>{item.text}</p><i>›</i>
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        <section className="shadowing-practice-pane">
+          <div className="shadowing-current-meta"><span>#{lineIndex + 1}</span><span>{line?.text.split(/\s+/).length ?? 0} từ</span><button>☆ Lưu câu</button></div>
+          <div className="panel shadowing-stage">
+            <div className="shadowing-aid-toggles">
+              <button className={showText ? "active" : ""} onClick={() => setShowText((value) => !value)}>Câu mẫu</button>
+              <button className={showIpa ? "active" : ""} onClick={() => setShowIpa((value) => !value)}>IPA</button>
+              <button className={showVi ? "active" : ""} onClick={() => setShowVi((value) => !value)}>Dịch nghĩa</button>
+            </div>
+            {showText ? <>
+              <div className={`shadowing-target shadowing-word-aids${showIpa ? " has-ipa" : ""}`}>
+                {wordAids.map((item, position) => (
+                  <span className="shadowing-word-aid" key={position}>
+                    <b>{item.word}</b>
+                    {showIpa && <small>{item.ipa || "·"}</small>}
+                  </span>
+                ))}
+              </div>
+            </> : <p className="shadowing-hidden-text">Câu mẫu đang ẩn — hãy nghe rồi nói theo.</p>}
+            {showVi && <p className="shadowing-translation">{line ? viCache[line.text] || "Đang dịch…" : ""}</p>}
+          </div>
+
+          <div className="shadowing-mic-row"><span>♩ Micro</span><small>Microphone mặc định</small></div>
+          <button className={`shadowing-record-card${listening ? " listening" : ""}`} onClick={() => listening ? engineRef.current?.stop() : void listen()} disabled={supported === false}>
+            <i>{listening ? "■" : "♩"}</i><span><b>{listening ? "Đang ghi âm… bấm để dừng" : result ? "Thử lại" : "Nhấn để bắt đầu ghi âm"}</b><small>{listening ? "Nói trọn câu hiện tại" : "Tối đa 30 giây"}</small></span>
+          </button>
+          {listening && <p className="shadowing-hint">Đang nghe… nói cả câu rồi bấm dừng, hoặc im lặng một chút để máy tự dừng.</p>}
+          {micError && <p className="shadowing-warn">{micError}</p>}
+
+          <p className="shadowing-repeat-label">Nghe và lặp lại câu trên</p>
+          <div className="shadowing-word-shapes">{(line?.text.match(/[A-Za-z']+/g) ?? []).map((word, position) => <span key={position}>{"•".repeat(Math.min(word.length, 12))}</span>)}</div>
+          <div className="shadowing-player-controls">
+            <button onClick={() => speak(rate)}>▶</button>
+            {[0.6, 0.85, 1, 1.25].map((speed) => <button key={speed} className={speed === rate ? "active" : ""} onClick={() => { setRate(speed); speak(speed); }}>{speed}x</button>)}
+          </div>
+
+          {recordUrl && (
+            <div className="shadowing-playback">
+              <span>Bạn đã nói:</span>
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption -- giọng người học vừa thu, không có phụ đề */}
+              <audio controls src={recordUrl} />
+              <button onClick={() => speak(rate)}>Nghe lại câu mẫu</button>
+            </div>
+          )}
 
       {result && (
         <div className="panel shadowing-result">
@@ -389,6 +432,8 @@ export default function ShadowingPractice({ close, onPractised }: { close: () =>
       {practisedSeconds > 0 && (
         <p className="shadowing-total">Phiên này bạn đã nói {minutesOf(practisedSeconds)} phút.</p>
       )}
+        </section>
+      </div>
     </div>
   );
 }

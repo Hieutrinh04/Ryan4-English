@@ -7,7 +7,10 @@
 // ra trình duyệt. Mọi tính năng dùng hàm này đều phải có đường lui khi thiếu khoá
 // hoặc gọi hỏng — app vẫn phải học được mà không cần mô hình ngôn ngữ.
 
-const GEMINI_MODEL = "gemini-3.6-flash";
+// Tài khoản Gemini mới dùng dòng 3.6. Luôn đặt thinkingLevel thấp cho các tác vụ
+// JSON ngắn; nếu để mặc định, model có thể dành gần hết token cho suy luận nội bộ
+// và không kịp trả nội dung cho giao diện.
+const GEMINI_MODEL_DEFAULT = "gemini-3.6-flash";
 const OPENROUTER_MODEL_DEFAULT = "google/gemini-2.5-flash";
 
 export class LlmError extends Error {}
@@ -16,15 +19,16 @@ type Options = { temperature?: number; timeoutMs?: number; thinking?: "low" | "h
 type Provider = "openrouter" | "gemini" | "none";
 
 export function activeProvider(): Provider {
-  if (process.env.OPENROUTER_API_KEY?.trim()) return "openrouter";
+  // Gemini trực tiếp thường nhanh và ổn định hơn model miễn phí qua OpenRouter.
   if (process.env.GEMINI_API_KEY?.trim()) return "gemini";
+  if (process.env.OPENROUTER_API_KEY?.trim()) return "openrouter";
   return "none";
 }
 /** Tên mô hình đang dùng, để ghi vào ai_usage. */
 export function activeModel(): string {
   const provider = activeProvider();
   if (provider === "openrouter") return process.env.OPENROUTER_MODEL || OPENROUTER_MODEL_DEFAULT;
-  if (provider === "gemini") return GEMINI_MODEL;
+  if (provider === "gemini") return process.env.GEMINI_MODEL?.trim() || GEMINI_MODEL_DEFAULT;
   return "";
 }
 
@@ -37,22 +41,31 @@ export function hasLlm() {
 const TRANSIENT = /Mô hình trả về (429|500|502|503|504)/;
 
 export async function generateJson<T>(prompt: string, options: Options = {}): Promise<T> {
+  const providers: Provider[] = [];
+  if (process.env.GEMINI_API_KEY?.trim()) providers.push("gemini");
+  if (process.env.OPENROUTER_API_KEY?.trim()) providers.push("openrouter");
+  if (!providers.length) throw new LlmError("Chưa cấu hình OPENROUTER_API_KEY hoặc GEMINI_API_KEY.");
+
   let lastError: LlmError = new LlmError("Không gọi được mô hình ngôn ngữ.");
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const providerErrors: string[] = [];
+  // Mỗi nhà cung cấp chỉ thử một lần rồi chuyển ngay sang dự phòng. Việc thử ba
+  // lần cùng một model từng khiến người học phải chờ hơn một phút khi model 429.
+  for (const provider of providers) {
     try {
-      return await callOnce<T>(prompt, options);
+      return await callOnce<T>(prompt, { ...options, timeoutMs: Math.min(options.timeoutMs ?? 25000, 25000) }, provider);
     } catch (error) {
       lastError = error instanceof LlmError ? error : new LlmError(String(error));
-      if (!TRANSIENT.test(lastError.message)) throw lastError;
-      await new Promise((resolve) => setTimeout(resolve, 900 * (attempt + 1)));
+      providerErrors.push(`${provider}: ${lastError.message}`);
+      // Lỗi khoá/quota/model ở một provider vẫn có thể được provider còn lại xử lý.
+      // Không sleep ở đây để phản hồi nhanh nhất có thể.
     }
   }
-  throw lastError;
+  throw new LlmError(providerErrors.length ? providerErrors.join(" | ") : lastError.message);
 }
 
-async function callOnce<T>(prompt: string, options: Options = {}): Promise<T> {
+async function callOnce<T>(prompt: string, options: Options = {}, forcedProvider?: Provider): Promise<T> {
   const { temperature = 0.4, timeoutMs = 45000, thinking } = options;
-  const provider = activeProvider();
+  const provider = forcedProvider ?? activeProvider();
   if (provider === "none") throw new LlmError("Chưa cấu hình OPENROUTER_API_KEY hoặc GEMINI_API_KEY.");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -96,13 +109,18 @@ function openRouterRequest(prompt: string, temperature: number) {
     },
   };
 }
-function geminiRequest(prompt: string, temperature: number, thinking?: "low" | "high") {
+function geminiRequest(prompt: string, temperature: number, thinking: "low" | "high" = "low") {
+  const model = process.env.GEMINI_MODEL?.trim() || GEMINI_MODEL_DEFAULT;
+  // Dòng Gemini 2.5 Flash Lite không nhận `thinkingLevel`; gửi trường này làm
+  // toàn bộ request bị 400 dù khóa và hạn mức vẫn hợp lệ.
+  const generationConfig: Record<string, unknown> = { temperature, responseMimeType: "application/json", maxOutputTokens: 3000 };
+  if (!model.startsWith("gemini-2.5-flash-lite")) generationConfig.thinkingConfig = { thinkingLevel: thinking };
   return {
-    url: `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY?.trim() ?? "")}`,
+    url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY?.trim() ?? "")}`,
     headers: { "Content-Type": "application/json" },
     body: {
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature, responseMimeType: "application/json", ...(thinking ? { thinkingConfig: { thinkingLevel: thinking } } : {}) },
+      generationConfig,
     },
   };
 }

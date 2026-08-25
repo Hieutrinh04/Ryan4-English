@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { WordCard } from "../lib/types";
-import { DRILL_MODES, choicesFor, clozeOf, deckSupports, hasIpa, isCorrect, resolveMode, seededOrder, summarise } from "../lib/vocab-drill.mjs";
+import type { PointerEvent as ReactPointerEvent } from "react";
+import type { Rating, ReviewMode, WordCard } from "../lib/types";
+import { DRILL_MODES, choicesFor, deckSupports, hasIpa, isCorrect, resolveMode, seededOrder, summarise } from "../lib/vocab-drill.mjs";
 import { COLLECTIONS, deckStats, progressOf, searchSets, setsFor, splitLabel } from "../lib/word-sets.mjs";
+import { buildDailyQueue } from "../lib/study-queue.mjs";
 import Icon from "./Icon";
 
 // Buổi luyện từ vựng: một bộ thẻ, sáu cách luyện, đổi qua lại bằng thanh tab mà
@@ -13,9 +15,10 @@ import Icon from "./Icon";
 // menu rồi chọn folder lại từ đầu. Người học muốn "từ này gõ thử xem" thì phải đi
 // hết một vòng. Gộp lại thì đổi cách chỉ là một cú bấm.
 
-type Mode = "card" | "type" | "listen" | "reverse" | "cloze" | "mixed";
+type Mode = "card" | "type" | "listen" | "reverse" | "quiz" | "mixed";
 type Result = { id: string; mode: string; correct: boolean; graded: boolean };
 type WordSet = { id: string; label: string; words: WordCard[]; total: number; learned: number; due: number; fresh: number; mastered: number };
+const SWIPE_THRESHOLD = 90;
 
 const OTHER_MODES = [
   { value: "learn", icon: "✎", label: "Học tới khi thuộc", hint: "Lặp riêng những từ còn sai cho tới khi thuộc hết bộ" },
@@ -26,8 +29,8 @@ const OTHER_MODES = [
 const MODE_HINT: Record<string, string> = {
   type: "Đọc nghĩa tiếng Việt rồi gõ lại từ tiếng Anh.",
   listen: "Nghe phát âm rồi gõ lại từ. Bấm loa để nghe lại.",
-  reverse: "Đọc nghĩa tiếng Việt rồi chọn từ tiếng Anh đúng.",
-  cloze: "Điền từ còn thiếu vào chỗ trống trong câu.",
+  reverse: "Xem từ tiếng Anh rồi nhớ lại nghĩa tiếng Việt.",
+  quiz: "Chọn đúng nghĩa tiếng Việt của từ tiếng Anh.",
 };
 
 /** Giọng đọc theo vùng. Máy không có giọng đó thì trả về undefined và đọc giọng mặc định. */
@@ -48,11 +51,11 @@ function speak(text: string, region: "US" | "UK" = "US", rate = 1) {
   window.speechSynthesis?.speak(utterance);
 }
 
-export default function VocabPractice({ words, close, onStudied, onPickOther }: { words: WordCard[]; close: () => void; onStudied?: () => void; onPickOther?: (mode: string) => void }) {
+export default function VocabPractice({ words, close, onStudied, onResult, onToggleStar, onPickOther, onStartReview }: { words: WordCard[]; close: () => void; onStudied?: () => void; onResult?: (id: string, rating: Rating) => void; onToggleStar?: (id: string) => void; onPickOther?: (mode: string) => void; onStartReview?: (words: WordCard[], mode: ReviewMode) => void }) {
   const [mode, setMode] = useState<Mode>("card");
   // Chọn bộ từ trước, rồi mới tới cách luyện. null nghĩa là đang ở màn thư viện.
   const [chosen, setChosen] = useState<WordSet | null>(null);
-  const [collection, setCollection] = useState("topic");
+  const [collection, setCollection] = useState("all");
   const [query, setQuery] = useState("");
   // Chọn cách luyện trước rồi mới vào buổi học, thay vì đổ thẳng người học vào một
   // chế độ mặc định rồi để họ tự tìm thanh tab.
@@ -66,7 +69,25 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
   // tranh chung, còn tiến độ từng bộ đã nằm trên thẻ bộ rồi.
   const allStats = useMemo(() => deckStats(words) as { total: number; learned: number; due: number; fresh: number; mastered: number }, [words]);
   const sets = useMemo(() => setsFor(words, collection) as WordSet[], [words, collection]);
-  const visibleSets = useMemo(() => searchSets(sets, query) as WordSet[], [sets, query]);
+  const dailySet = useMemo(() => {
+    const queue = buildDailyQueue(words) as WordCard[];
+    return queue.length ? ({ id: "daily-review", label: "Ôn tập hằng ngày", words: queue, ...deckStats(queue) } as WordSet) : null;
+  }, [words]);
+  const visibleSets = useMemo(() => {
+    const librarySets = collection === "all" && dailySet ? [dailySet, ...sets] : sets;
+    return searchSets(librarySets, query) as WordSet[];
+  }, [sets, query, collection, dailySet]);
+
+  // Kết quả luyện cập nhật state ở trang cha. Đồng bộ lại bản ghi trong bộ đang
+  // mở để hộp Leitner, gắn sao và thống kê không giữ ảnh chụp cũ của đầu phiên.
+  useEffect(() => {
+    setChosen((current) => {
+      if (!current) return current;
+      const ids = new Set(current.words.map((word) => word.id));
+      const latest = words.filter((word) => ids.has(word.id));
+      return { ...current, words: latest, ...deckStats(latest) } as WordSet;
+    });
+  }, [words]);
 
   const pool = chosen?.words ?? words;
   const deck: WordCard[] = useMemo(() => {
@@ -81,11 +102,16 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
   const [picked, setPicked] = useState<string | null>(null);
   const [results, setResults] = useState<Result[]>([]);
   const [autoSpeak, setAutoSpeak] = useState(true);
+  const [tracking, setTracking] = useState(true);
   const [region, setRegion] = useState<"US" | "UK">("US");
   const [done, setDone] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const swipeStartRef = useRef<number | null>(null);
+  const swipeMovedRef = useRef(false);
+  const swipeXRef = useRef(0);
+  const [swipeX, setSwipeX] = useState(0);
 
   const card = deck[index];
   const active = resolveMode(card, mode, index, seed) as Mode;
@@ -93,11 +119,19 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
   // flashcard khiến người học tưởng bấm nhầm.
   const modeUsable = deckSupports(deck, mode);
   const choices: WordCard[] = useMemo(
-    () => (active === "reverse" && card ? (choicesFor(card, deck, index + seed) as WordCard[]) : []),
+    () => (active === "quiz" && card ? (choicesFor(card, deck, index + seed) as WordCard[]) : []),
     [active, card, deck, index, seed],
   );
   const summary = useMemo(() => summarise(results), [results]);
   const progress = deck.length ? Math.round(((index + (checked || flipped ? 1 : 0)) / deck.length) * 100) : 0;
+
+  // Mỗi thẻ mới luôn bắt đầu ở mặt tiếng Anh. Điều này cũng chặn cú click được
+  // trình duyệt phát sinh sau khi thả một thao tác kéo khỏi lật nhầm thẻ kế tiếp.
+  useEffect(() => {
+    setFlipped(false);
+    swipeXRef.current = 0;
+    setSwipeX(0);
+  }, [card?.id]);
 
   useEffect(() => {
     if (!card || !autoSpeak) return;
@@ -129,6 +163,7 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
     // Luyện tập không đụng hộp Leitner, nhưng vẫn là có học: không tính vào chuỗi
     // ngày học thì một buổi luyện cả tiếng vẫn làm đứt chuỗi.
     onStudied?.();
+    if (graded) onResult?.(card.id, correct ? "good" : "again");
     setResults((list) => [...list.filter((item) => item.id !== card.id), { id: card.id, mode: active, correct, graded }]);
   }
 
@@ -140,11 +175,40 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
     else setIndex((value) => value + 1);
   }
 
+  function beginSwipe(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (active !== "card" || !tracking || event.button !== 0) return;
+    if ((event.target as HTMLElement).closest(".drill-speaker")) return;
+    swipeStartRef.current = event.clientX;
+    swipeMovedRef.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveSwipe(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (swipeStartRef.current === null || active !== "card" || !tracking) return;
+    const distance = event.clientX - swipeStartRef.current;
+    if (Math.abs(distance) > 12) swipeMovedRef.current = true;
+    swipeXRef.current = distance;
+    setSwipeX(distance);
+  }
+
+  function endSwipe() {
+    if (swipeStartRef.current === null) return;
+    swipeStartRef.current = null;
+    const distance = swipeXRef.current;
+    swipeXRef.current = 0;
+    setSwipeX(0);
+    if (Math.abs(distance) > SWIPE_THRESHOLD) selfCheck(distance > 0);
+  }
+
+  function clickFlip(next: boolean) {
+    if (!swipeMovedRef.current) setFlipped(next);
+    swipeMovedRef.current = false;
+  }
+
   function check() {
     if (!card || checked || !typed.trim()) return;
     setChecked(true);
-    // Bài điền chỗ trống chấp nhận cả biến thể: chỗ trống có thể nằm ở "rescued".
-    record(isCorrect(typed, card.term, active === "cloze"));
+    record(isCorrect(typed, card.term));
   }
 
   function pick(choice: WordCard) {
@@ -201,7 +265,7 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
           <span className="writing-hero-icon"><Icon name="book" size={20} /></span>
           <div>
             <h1>Luyện từ vựng</h1>
-            <p>Chọn một bộ từ để luyện. Cùng một từ có thể nằm trong nhiều bộ.</p>
+            <p>Dùng chung bộ từ, lịch Leitner và tiến độ với Ôn tập hằng ngày.</p>
           </div>
         </header>
 
@@ -266,7 +330,7 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
                     {name.sub && <small>{name.sub}</small>}
                     <span className="vocab-set-bar"><i style={{ width: `${percent}%` }} /></span>
                     <em>
-                      {percent}% đã học
+                      {set.id === "daily-review" ? "Cùng hàng đợi Ôn tập hằng ngày" : `${percent}% đã học`}
                       {set.due > 0 && <span className="vocab-set-due"> · {set.due} cần ôn</span>}
                       {set.due === 0 && set.fresh > 0 && <span> · {set.fresh} chưa học</span>}
                     </em>
@@ -307,7 +371,25 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
             ))}
           </div>
 
-          <button className="primary mode-start" onClick={() => setStarted(true)} disabled={!deck.length}>
+          <button
+            className="primary mode-start"
+            onClick={() => {
+              // Sáu chế độ cơ bản dùng nguyên phiên Ôn tập làm nguồn duy nhất.
+              // Màn này chỉ chịu trách nhiệm chọn bộ và chọn cách luyện; nhờ vậy
+              // kéo/lật thẻ, phím tắt, chấm Leitner và giao diện không thể lệch.
+              const reviewMode: Record<Mode, ReviewMode> = {
+                card: "card",
+                type: "vi_en",
+                listen: "listen",
+                reverse: "en_vi",
+                quiz: "quiz",
+                mixed: "mixed",
+              };
+              if (onStartReview) onStartReview(deck, reviewMode[mode]);
+              else setStarted(true);
+            }}
+            disabled={!deck.length}
+          >
             Bắt đầu luyện tập
           </button>
 
@@ -364,15 +446,23 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
     );
 
   return (
-    <div className="page vocab-drill" ref={stageRef}>
+    <div className="page vocab-drill review-synced" ref={stageRef}>
       <div className="drill-top">
-        <button className="drill-icon" onClick={() => setStarted(false)} aria-label="Đổi chế độ luyện">←</button>
-        <b>{index + 1} / {deck.length}</b>
-        <button className="drill-icon" onClick={fullscreen} aria-label="Toàn màn hình">⤢</button>
-      </div>
-
-      <div className="drill-progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label="Tiến trình buổi luyện">
-        <i style={{ width: `${progress}%` }} />
+        <button className="drill-icon round" onClick={() => setStarted(false)} aria-label="Đổi chế độ luyện">×</button>
+        <div className="drill-top-progress">
+          <span><b>{index + 1} / {deck.length}</b><b>{progress}%</b></span>
+          <div className="drill-progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label="Tiến trình buổi luyện">
+            <i style={{ width: `${progress}%` }} />
+          </div>
+        </div>
+        <button
+          className={`drill-icon round ${card.starred ? "starred" : ""}`}
+          onClick={() => {
+            onToggleStar?.(card.id);
+            setChosen((current) => current ? { ...current, words: current.words.map((word) => word.id === card.id ? { ...word, starred: !word.starred } : word) } : current);
+          }}
+          aria-label="Gắn sao"
+        >{card.starred ? "★" : "☆"}</button>
       </div>
 
       <div className="drill-tabs" role="group" aria-label="Cách luyện">
@@ -388,45 +478,36 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
         ))}
       </div>
 
-      <div className="panel drill-card">
+      <div
+        className={`panel drill-card ${active === "card" && tracking ? "swipe-enabled" : ""} ${swipeX ? "is-dragging" : ""} ${swipeX > SWIPE_THRESHOLD ? "swipe-known" : swipeX < -SWIPE_THRESHOLD ? "swipe-learning" : ""}`}
+        style={active === "card" && swipeX ? { transform: `translateX(${swipeX}px) rotate(${swipeX / 26}deg)` } : undefined}
+      >
         {!modeUsable ? (
           <div className="drill-face">
             <p className="drill-empty">
-              {mode === "cloze"
-                ? "Bộ từ này chưa có câu ví dụ thật nên chưa khoét được chỗ trống. Bấm “Bổ sung từ thiếu” ở trang Từ vựng để lấy ví dụ, hoặc chọn cách luyện khác."
-                : "Bộ từ này chưa đủ dữ liệu cho cách luyện đó. Chọn cách khác nhé."}
+              Bộ từ này chưa đủ dữ liệu cho cách luyện đó. Chọn cách khác nhé.
             </p>
           </div>
         ) : active === "card" ? (
           <div className="drill-face">
             {flipped ? (
               <>
-                <button className="drill-flip" onClick={() => setFlipped(false)}>
+                <button className="drill-flip" onClick={() => clickFlip(false)} onPointerDown={beginSwipe} onPointerMove={moveSwipe} onPointerUp={endSwipe} onPointerCancel={endSwipe}>
+                  <small className="drill-side-label">TIẾNG VIỆT</small>
                   <b className="drill-meaning">{card.meaning}</b>
                   {card.exampleVi && <p className="drill-example">{card.exampleVi}</p>}
-                  <i>Nhấn để lật lại <kbd>Space</kbd></i>
+                  <i>Nhấn để lật lại</i>
                 </button>
-                <span className="drill-selfcheck">
-                  <button className="wrong" onClick={() => selfCheck(false)}>Chưa thuộc</button>
-                  <button className="right" onClick={() => selfCheck(true)}>Đã biết</button>
-                </span>
               </>
             ) : (
               <>
-                <button className="drill-flip" onClick={() => setFlipped(true)}>
+                <button className="drill-speaker" onClick={() => speak(card.term, region)} aria-label={`Phát âm ${card.term}`}>◖))</button>
+                <button className="drill-flip" onClick={() => clickFlip(true)} onPointerDown={beginSwipe} onPointerMove={moveSwipe} onPointerUp={endSwipe} onPointerCancel={endSwipe}>
+                  <small className="drill-side-label">TIẾNG ANH</small>
                   <b className="drill-term">{card.term}</b>
                   {hasIpa(card.ipa) && <em className="drill-ipa">{card.ipa}</em>}
-                </button>
-                {/* Nút chọn giọng phải nằm NGOÀI nút lật thẻ: nút lồng nút là HTML
-                    không hợp lệ và gây lỗi hydrate. */}
-                <span className="drill-voices">
-                  <button onClick={() => { setRegion("US"); speak(card.term, "US"); }} className={region === "US" ? "active" : ""}>◖)) US</button>
-                  <button onClick={() => { setRegion("UK"); speak(card.term, "UK"); }} className={region === "UK" ? "active" : ""}>◖)) UK</button>
-                  <button onClick={() => setAutoSpeak((value) => !value)} className={autoSpeak ? "active" : ""} aria-pressed={autoSpeak}>◖)) Tự động</button>
-                </span>
-                {card.partOfSpeech && <span className="drill-pos">{card.partOfSpeech}</span>}
-                <button className="drill-flip drill-flip-hint" onClick={() => setFlipped(true)}>
-                  <i>Nhấn để xem nghĩa <kbd>Space</kbd></i>
+                  {card.example && <p className="drill-example">{card.example}</p>}
+                  <i>Nhấn để lật thẻ</i>
                 </button>
               </>
             )}
@@ -437,13 +518,16 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
 
             {active === "listen" ? (
               <button className="drill-listen" onClick={() => speak(card.term, region)} aria-label="Nghe lại">◖))</button>
-            ) : active === "cloze" ? (
-              <p className="drill-sentence">{clozeOf(card)}</p>
+            ) : active === "quiz" || active === "reverse" ? (
+              <>
+                <b className="drill-term">{card.term}</b>
+                {hasIpa(card.ipa) && <em className="drill-ipa">{card.ipa}</em>}
+              </>
             ) : (
               <b className="drill-meaning">{card.meaning}</b>
             )}
 
-            {active === "reverse" ? (
+            {active === "quiz" ? (
               <div className="drill-choices">
                 {choices.map((choice) => (
                   <button
@@ -452,9 +536,24 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
                     className={picked ? (choice.id === card.id ? "right" : choice.id === picked ? "wrong" : "") : ""}
                     onClick={() => pick(choice)}
                   >
-                    {choice.term}
+                    {choice.meaning}
                   </button>
                 ))}
+              </div>
+            ) : active === "reverse" ? (
+              <div className="drill-reverse-answer">
+                {!checked ? (
+                  <button className="secondary" onClick={() => setChecked(true)}>Xem nghĩa</button>
+                ) : (
+                  <>
+                    <b>{card.meaning}</b>
+                    {card.exampleVi && <p>{card.exampleVi}</p>}
+                    <span className="drill-selfcheck">
+                      <button className="wrong" onClick={() => selfCheck(false)}>Đang học</button>
+                      <button className="right" onClick={() => selfCheck(true)}>Đã biết</button>
+                    </span>
+                  </>
+                )}
               </div>
             ) : (
               <form className="drill-answer" onSubmit={(event) => { event.preventDefault(); check(); }}>
@@ -472,7 +571,7 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
               </form>
             )}
 
-            {checked && (
+            {checked && active !== "reverse" && (
               <div className={`drill-verdict ${results.find((item) => item.id === card.id)?.correct ? "right" : "wrong"}`}>
                 {results.find((item) => item.id === card.id)?.correct ? (
                   <b>✓ Chính xác</b>
@@ -489,15 +588,31 @@ export default function VocabPractice({ words, close, onStudied, onPickOther }: 
         )}
       </div>
 
-      <div className="drill-nav">
-        <button onClick={back} disabled={index === 0}>← Thẻ trước</button>
-        <button onClick={() => { setShuffled((value) => !value); setIndex(0); resetCard(); }} className={shuffled ? "active" : ""}>
-          ⤨ {shuffled ? "Đang xáo" : "Xáo trộn"}
-        </button>
-        <button className="primary" onClick={next}>
-          {index >= deck.length - 1 ? "Kết thúc →" : "Thẻ tiếp →"}
-        </button>
+      <div className="drill-footer">
+        <label className="track-toggle">
+          <input type="checkbox" checked={tracking} onChange={(event) => setTracking(event.target.checked)} />
+          <span /> Theo dõi tiến độ
+        </label>
+        {tracking && active === "card" ? (
+          <div className="track-actions">
+            <button className="track-learning-btn" onClick={() => selfCheck(false)}>Đang học</button>
+            <b>{index + 1} / {deck.length}</b>
+            <button className="track-known-btn" onClick={() => selfCheck(true)}>Đã biết</button>
+          </div>
+        ) : (
+          <div className="drill-nav compact">
+            <button onClick={back} disabled={index === 0} aria-label="Thẻ trước">←</button>
+            <b>{index + 1} / {deck.length}</b>
+            <button onClick={next} aria-label={index >= deck.length - 1 ? "Kết thúc" : "Thẻ tiếp"}>{"→"}</button>
+          </div>
+        )}
+        <div className="drill-options">
+          <button className={autoSpeak ? "active" : ""} onClick={() => setAutoSpeak((value) => !value)} aria-label="Tự động phát">{autoSpeak ? "❚❚" : "▶"}</button>
+          <button onClick={() => { setShuffled((value) => !value); setIndex(0); resetCard(); }} className={shuffled ? "active" : ""} aria-label="Xáo trộn">⇄</button>
+          <button onClick={fullscreen} aria-label="Toàn màn hình">⛶</button>
+        </div>
       </div>
+      {active === "card" && tracking && <p className="drill-swipe-hint">Kéo sang trái nếu còn đang học · Kéo sang phải nếu đã biết · Nhấn Space để lật thẻ</p>}
     </div>
   );
 }

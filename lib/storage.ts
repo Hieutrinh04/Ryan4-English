@@ -18,6 +18,29 @@ export const weeklyImportKey = "lexilo:weekly-import:v1";
 // Danh sách từ đã xoá. writeLocalWords chỉ gộp thêm chứ không bao giờ bớt (để một lần nạp
 // lỗi không thổi bay cả kho), nên nếu không ghi nhận riêng thì từ đã xoá sẽ sống lại sau F5.
 export const activeTabKey = "lexilo:tab:v1";
+export const appNavigationKey = "lexilo:navigation:v1";
+export type AppTab = "home" | "words" | "practice" | "stats" | "dictionary";
+export type AppNavigation = { tab: AppTab; practiceIntent: string | null };
+export function readAppNavigation(): AppNavigation | null {
+  try {
+    const raw = localStorage.getItem(appNavigationKey);
+    const parsed = raw ? (JSON.parse(raw) as Partial<AppNavigation>) : null;
+    const tabs: AppTab[] = ["home", "words", "practice", "stats", "dictionary"];
+    if (!parsed || !tabs.includes(parsed.tab as AppTab)) return null;
+    return { tab: parsed.tab as AppTab, practiceIntent: typeof parsed.practiceIntent === "string" ? parsed.practiceIntent : null };
+  } catch {
+    return null;
+  }
+}
+export function writeAppNavigation(value: AppNavigation) {
+  try {
+    localStorage.setItem(appNavigationKey, JSON.stringify(value));
+    // Giữ khóa cũ để các bản ứng dụng trước vẫn mở đúng màn hình.
+    localStorage.setItem(activeTabKey, value.tab);
+  } catch {
+    // Bỏ qua khi trình duyệt chặn lưu trữ.
+  }
+}
 export const deletedIdsKey = "lexilo:deleted:v1";
 export function readDeletedIds(): Set<string> {
   try {

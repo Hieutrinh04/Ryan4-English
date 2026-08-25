@@ -102,3 +102,10 @@ test("marks: giữ nguyên thứ tự nói, từ thừa nằm đúng chỗ nó c
 test("marks: câu mẫu rỗng trả về danh sách rỗng chứ không phải undefined", () => {
   assert.deepEqual(scoreShadowing("", "gì đó").marks, []);
 });
+
+test("marks: từ nói sai giữ lại chữ máy đã nghe để hiện khi rê chuột", () => {
+  const result = scoreShadowing("do you go skateboarding", "do you go spike");
+  const wrong = result.marks.find((mark) => mark.word === "skateboarding");
+  assert.equal(wrong.status, "missed");
+  assert.equal(wrong.heard, "spike");
+});
