@@ -3191,6 +3191,7 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
     return (
       <FolderPicker
         mode={pendingMode}
+        backLabel={translating ? "Luyện viết" : undefined}
         personalWords={personalWords}
         pdfWords={pdfWords}
         topics={pdfTopics}
@@ -3310,13 +3311,16 @@ const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
   translate: "Luyện viết",
 };
 
-function FolderPicker({ mode, personalWords, pdfWords, topics, choose, close }: { mode: Exclude<PracticeMode, "menu">; personalWords: WordCard[]; pdfWords: WordCard[]; topics: string[]; choose: (words: WordCard[]) => void; close: () => void }) {
+function FolderPicker({ mode, personalWords, pdfWords, topics, choose, close, backLabel }: { mode: Exclude<PracticeMode, "menu">; personalWords: WordCard[]; pdfWords: WordCard[]; topics: string[]; choose: (words: WordCard[]) => void; close: () => void; backLabel?: string }) {
   const dailyFolders = (setsFor(personalWords, "week") as { label: string; words: WordCard[] }[]).map((folder) => ({ name: folder.label, words: folder.words }));
   const topicFolders = (setsFor(pdfWords, "topic") as { label: string; words: WordCard[] }[]).map((folder) => ({ name: folder.label, words: folder.words }));
   return (
     <div className="page folder-picker-page">
-      <button className="back" onClick={close}>← Chọn chức năng khác</button>
-      <div className="eyebrow">BƯỚC 2 / 2</div>
+      <button className="back" onClick={close}>← {backLabel ?? "Chọn chức năng khác"}</button>
+      {/* Không đánh số bước nữa: cùng màn này vào từ Luyện viết là bước 2 trong
+          ba bước, vào từ chỗ khác lại là bước cuối. Đếm kiểu nào cũng sai một
+          đường, mà tên bước thì luôn đúng. */}
+      <div className="eyebrow">BƯỚC CHỌN FOLDER</div>
       <h1>Chọn folder cho {practiceModeNames[mode]}</h1>
       <p className="page-sub">Chức năng chỉ sử dụng các từ trong folder bạn chọn.</p>
       {!!personalWords.length && (

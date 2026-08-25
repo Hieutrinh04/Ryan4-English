@@ -78,6 +78,11 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
     return searchSets(librarySets, query) as WordSet[];
   }, [sets, query, collection, dailySet]);
 
+  // Tab "Tất cả" chỉ có vài thẻ bắt đầu nhanh. Để chúng trong lưới bốn cột thì
+  // hai thẻ con con nằm nép một góc, nhìn như màn hình bị lỗi — ít thẻ thì cho
+  // thẻ rộng ra cho kín hàng.
+  const sparseGrid = visibleSets.length <= 2;
+
   // Kết quả luyện cập nhật state ở trang cha. Đồng bộ lại bản ghi trong bộ đang
   // mở để hộp Leitner, gắn sao và thống kê không giữ ảnh chụp cũ của đầu phiên.
   useEffect(() => {
@@ -315,7 +320,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
             {query ? `Không có bộ nào khớp "${query}".` : "Chưa có bộ từ nào ở cách gom này."}
           </p>
         ) : (
-          <div className="vocab-set-grid">
+          <div className={sparseGrid ? "vocab-set-grid few" : "vocab-set-grid"}>
             {visibleSets.map((set) => {
               const name = splitLabel(set.label) as { main: string; sub: string };
               const percent = progressOf(set) as number;

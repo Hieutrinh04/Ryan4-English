@@ -1986,3 +1986,6 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
     scroll-behavior:auto!important;
   }
 }
+
+/* Ít thẻ thì đừng để lưới bốn cột: hai thẻ nhỏ nép một góc trông như lỗi. */
+.vocab-set-grid.few{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
