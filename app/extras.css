@@ -1893,3 +1893,96 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
   .video-url-row{grid-template-columns:1fr}.video-url-row button{min-height:42px}
   .video-import-preview{grid-template-columns:1fr}.video-import-preview img{width:100%}
 }
+
+/* ══ Lớp chuyển động và phản hồi dùng chung ═══════════════════════════════════
+   Trước đây mỗi chỗ tự chọn thời lượng riêng — đếm được bảy giá trị khác nhau
+   từ .12s tới .35s — nên cùng một cú bấm ở hai màn lại nhanh chậm khác nhau.
+   Gom về ba nấc: nhanh (phản hồi cú bấm), thường (đổi màu, nhấc thẻ), chậm
+   (vào màn). Một đường cong duy nhất để mọi chuyển động cùng một tính cách. */
+:root{
+  --ease:cubic-bezier(.2,.7,.3,1);
+  --t-fast:120ms;
+  --t-base:200ms;
+  --t-slow:320ms;
+}
+
+/* ── Đi bằng bàn phím phải thấy mình đang ở đâu ─────────────────────────────
+   globals.css không có một kiểu :focus-visible nào. Người dùng bàn phím, và cả
+   người dùng chuột lỡ bấm Tab, đều mất dấu hoàn toàn. Đây là thứ đáng thêm
+   nhất trong cả lớp này. Dùng :focus-visible chứ không phải :focus để người
+   bấm chuột không bị viền nhấp nháy vô cớ. */
+:where(button,a,input,select,textarea,summary,[tabindex]):focus-visible{
+  outline:2px solid var(--purple);
+  outline-offset:2px;
+}
+
+/* ── Bấm vào thì thấy nó lún xuống ─────────────────────────────────────────── */
+:where(button):not(:disabled){
+  transition:transform var(--t-fast) var(--ease),
+             background-color var(--t-base) var(--ease),
+             border-color var(--t-base) var(--ease),
+             color var(--t-base) var(--ease),
+             box-shadow var(--t-base) var(--ease),
+             opacity var(--t-base) var(--ease);
+}
+:where(button):not(:disabled):active{transform:scale(.97)}
+:where(button):disabled{transition:opacity var(--t-base) var(--ease)}
+
+.primary:not(:disabled):hover{filter:brightness(1.07)}
+.primary:not(:disabled):active{transform:scale(.98)}
+
+/* ── Thanh điều hướng ──────────────────────────────────────────────────────── */
+.nav-item{transition:background-color var(--t-base) var(--ease),color var(--t-base) var(--ease);position:relative}
+.nav-item:hover:not(.active){background:var(--surface-2);color:var(--ink)}
+/* Vạch nhỏ bên trái cho mục đang mở: nhìn lướt là biết mình ở đâu, không phải
+   đọc chữ. */
+.nav-item.active::before{
+  content:"";position:absolute;left:0;top:50%;translate:0 -50%;
+  width:3px;height:20px;border-radius:0 3px 3px 0;background:var(--purple);
+}
+.mobile-nav button{transition:color var(--t-base) var(--ease)}
+
+/* ── Thẻ bấm được thì nhấc nhẹ lên khi rê ──────────────────────────────────── */
+.speaking-card,.vocab-set,.library-card,.topic-folder-grid button,
+.mode-option,.writing-route,.stat{
+  transition:transform var(--t-base) var(--ease),
+             border-color var(--t-base) var(--ease),
+             box-shadow var(--t-base) var(--ease),
+             background-color var(--t-base) var(--ease);
+}
+.speaking-card:hover,.vocab-set:hover,.library-card:hover,.mode-option:hover{
+  box-shadow:0 10px 26px #0000001f;
+}
+
+/* ── Vào màn mới ───────────────────────────────────────────────────────────
+   Nhích lên 8px trong 320ms. Đủ để mắt biết nội dung vừa đổi, chưa đủ lâu để
+   thành thứ phải ngồi chờ. */
+@keyframes page-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.page{animation:page-in var(--t-slow) var(--ease) both}
+
+/* ── Khung xương lúc chờ dữ liệu ───────────────────────────────────────────── */
+@keyframes skeleton-sweep{from{background-position:-160% 0}to{background-position:260% 0}}
+.skeleton{
+  border-radius:8px;color:transparent!important;user-select:none;
+  background:linear-gradient(90deg,var(--surface-2) 25%,var(--soft) 37%,var(--surface-2) 63%);
+  background-size:260% 100%;
+  animation:skeleton-sweep 1.3s ease-in-out infinite;
+}
+
+/* ── Số liệu đếm lên thì đổi mượt, không giật ──────────────────────────────── */
+.vocab-set-bar i,.lesson-list-bar i,.progress i,.practice-progress i{
+  transition:width var(--t-slow) var(--ease);
+}
+
+/* ── Người dùng đã xin giảm chuyển động thì tắt sạch ───────────────────────
+   Không chỉ là chuyện thẩm mỹ: chuyển động lớn gây chóng mặt và buồn nôn thật
+   với người bị rối loạn tiền đình. Trước đây cả app chỉ có đúng một chỗ để ý
+   tới việc này. */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.01ms!important;
+    scroll-behavior:auto!important;
+  }
+}
