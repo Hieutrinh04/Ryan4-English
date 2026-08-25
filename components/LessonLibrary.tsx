@@ -98,7 +98,7 @@ export default function LessonLibrary({
           <button className="library-back" onClick={close} aria-label="Quay lại">←</button>
           <span className="library-mode-icon"><Icon name={mode === "dictation" ? "headphones" : "mic"} size={19} /></span>
           <div>
-            <h1>{mode === "dictation" ? "Luyện Dictation" : "Luyện Shadowing"}</h1>
+            <h1>{mode === "dictation" ? "Nghe chép" : "Nói nhại"}</h1>
             <p>{mode === "dictation" ? "Chọn chủ đề để luyện kỹ năng nghe" : "Chọn chủ đề để luyện kỹ năng nói"}</p>
           </div>
         </div>

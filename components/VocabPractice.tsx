@@ -6,7 +6,7 @@ import type { Rating, ReviewMode, WordCard } from "../lib/types";
 import { DRILL_MODES, choicesFor, deckSupports, hasIpa, isCorrect, resolveMode, seededOrder, summarise } from "../lib/vocab-drill.mjs";
 import { COLLECTIONS, deckStats, progressOf, searchSets, setsFor, splitLabel } from "../lib/word-sets.mjs";
 import { buildDailyQueue } from "../lib/study-queue.mjs";
-import Icon from "./Icon";
+import Icon, { type IconName } from "./Icon";
 
 // Buổi luyện từ vựng: một bộ thẻ, sáu cách luyện, đổi qua lại bằng thanh tab mà
 // không mất chỗ đang đứng.
@@ -21,9 +21,9 @@ type WordSet = { id: string; label: string; words: WordCard[]; total: number; le
 const SWIPE_THRESHOLD = 90;
 
 const OTHER_MODES = [
-  { value: "learn", icon: "✎", label: "Học tới khi thuộc", hint: "Lặp riêng những từ còn sai cho tới khi thuộc hết bộ" },
-  { value: "test", icon: "◉", label: "Kiểm tra chấm điểm", hint: "Làm một mạch không xem đáp án, chấm điểm ở cuối bài" },
-  { value: "match", icon: "⌘", label: "Nối cặp", hint: "Ghép từ với nghĩa nhanh nhất" },
+  { value: "learn", icon: "pen", label: "Học tới khi thuộc", hint: "Lặp riêng những từ còn sai cho tới khi thuộc hết bộ" },
+  { value: "test", icon: "target", label: "Kiểm tra chấm điểm", hint: "Làm một mạch không xem đáp án, chấm điểm ở cuối bài" },
+  { value: "match", icon: "shuffle", label: "Nối cặp", hint: "Ghép từ với nghĩa nhanh nhất" },
 ];
 
 const MODE_HINT: Record<string, string> = {
@@ -361,7 +361,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
                 onClick={() => setMode(item.value as Mode)}
                 disabled={!deckSupports(deck, item.value)}
               >
-                <span className="mode-option-icon">{item.icon}</span>
+                <span className="mode-option-icon"><Icon name={item.icon as IconName} size={18} /></span>
                 <span className="mode-option-text">
                   <b>{item.label}</b>
                   <small>{deckSupports(deck, item.value) ? item.hint : "Bộ từ này chưa đủ dữ liệu cho cách luyện đó"}</small>
@@ -398,7 +398,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
               <span className="mode-more-title">Hoặc luyện cả bộ theo cách khác</span>
               {OTHER_MODES.map((item) => (
                 <button key={item.value} className="mode-option" onClick={() => onPickOther(item.value)}>
-                  <span className="mode-option-icon">{item.icon}</span>
+                  <span className="mode-option-icon"><Icon name={item.icon as IconName} size={18} /></span>
                   <span className="mode-option-text">
                     <b>{item.label}</b>
                     <small>{item.hint}</small>
@@ -472,7 +472,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
             className={mode === item.value ? "active" : ""}
             onClick={() => { setMode(item.value as Mode); resetCard(); }}
           >
-            <span>{item.icon}</span>
+            <span><Icon name={item.icon as IconName} size={16} /></span>
             {item.label}
           </button>
         ))}

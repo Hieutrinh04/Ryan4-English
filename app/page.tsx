@@ -1282,18 +1282,21 @@ export default function Home() {
         )}
       </section>
 
+      {/* Dùng đúng tên và đúng icon của thanh bên: trước đây chỗ này gọi là
+          "Hôm nay / Từ vựng / Luyện tập / Thống kê" — bộ tên thứ ba trong cùng
+          một app — và vẽ bằng ký tự Unicode nên lệch hẳn với phần còn lại. */}
       <nav className="mobile-nav" aria-label="Điều hướng di động">
         <button className={tab === "home" ? "active" : ""} onClick={() => goTab("home")}>
-          <span>⌂</span>Hôm nay
+          <Icon name="home" size={18} />Trang chủ
         </button>
         <button className={tab === "words" ? "active" : ""} onClick={() => goTab("words")}>
-          <span>▤</span>Từ vựng
+          <Icon name="list" size={18} />Danh sách từ
         </button>
         <button className={tab === "practice" ? "active" : ""} onClick={() => goTab("practice")}>
-          <span>◇</span>Luyện tập
+          <Icon name="compass" size={18} />Luyện tập
         </button>
         <button className={tab === "stats" ? "active" : ""} onClick={() => goTab("stats")}>
-          <span>⌁</span>Thống kê
+          <Icon name="chart" size={18} />Tiến độ
         </button>
       </nav>
       {showAdd && (
@@ -1489,7 +1492,7 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
         </div>
         <div className="journey-steps">
           <button onClick={() => openPractice("vocab")}>
-            <i>01</i><span><b>Từ vựng</b><small>Hiểu nghĩa, phát âm và nhớ từ trong ngữ cảnh.</small></span><em>{todayQueue.length || words.length} từ</em><strong>→</strong>
+            <i>01</i><span><b>Luyện từ vựng</b><small>Hiểu nghĩa, phát âm và nhớ từ trong ngữ cảnh.</small></span><em>{todayQueue.length || words.length} từ</em><strong>→</strong>
           </button>
           <button onClick={() => openPractice("dictation")}>
             <i>02</i><span><b>Nghe chép</b><small>Nghe từng đoạn ngắn, gõ lại và sửa lỗi.</small></span><em>5–10 phút</em><strong>→</strong>
@@ -2247,7 +2250,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
       <div className="section-head">
         <div>
           <div className="eyebrow">THƯ VIỆN CỦA BẠN</div>
-          <h1>Từ vựng</h1>
+          <h1>Danh sách từ</h1>
           <p>{collectionFilter === "pdf" ? (pdfTopic ? `${activeCollection.length} từ trong chủ đề ${pdfTopic}.` : `${pdfWords.length} từ trong ${pdfTopics.length} thư mục chủ đề.`) : `${personalWords.length} từ cá nhân · quản lý theo Leitner Box.`}</p>
         </div>
         <div className="section-actions"><AddMenu onManual={add} onPaste={bulkAdd} onDictionary={openDictionary} /></div>
@@ -3350,18 +3353,18 @@ function normalizeAnswer(value: string) {
 // và "Nghe" trong Luyện từ vựng đã làm, chỉ ít tính năng hơn.
 type PracticeMode = "menu" | "vocab" | "learn" | "test" | "match" | "dictation" | "shadow" | "speak" | "translate";
 // Bốn cách luyện từ vựng, hiện ngay trong mục Luyện từ vựng để đổi qua lại nhanh.
-const practiceModeBar: { value: PracticeMode; label: string; icon: string }[] = [
-  { value: "vocab", label: "Luyện thẻ", icon: "▤" },
-  { value: "learn", label: "Học tới khi thuộc", icon: "✎" },
-  { value: "test", label: "Kiểm tra", icon: "◉" },
-  { value: "match", label: "Nối cặp", icon: "⌘" },
+const practiceModeBar: { value: PracticeMode; label: string; icon: IconName }[] = [
+  { value: "vocab", label: "Luyện thẻ", icon: "cards" },
+  { value: "learn", label: "Học tới khi thuộc", icon: "pen" },
+  { value: "test", label: "Kiểm tra", icon: "target" },
+  { value: "match", label: "Nối cặp", icon: "shuffle" },
 ];
 function PracticeModeBar({ mode, setMode }: { mode: PracticeMode; setMode: (m: PracticeMode) => void }) {
   return (
     <div className="mode-bar" role="group" aria-label="Chế độ luyện tập">
       {practiceModeBar.map((item) => (
         <button key={item.value} className={mode === item.value ? "active" : ""} onClick={() => setMode(item.value)}>
-          <span>{item.icon}</span>
+          <span><Icon name={item.icon} size={16} /></span>
           {item.label}
         </button>
       ))}
@@ -5137,7 +5140,7 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
   return (
     <div className="page">
       <div className="eyebrow">TIẾN ĐỘ CỦA BẠN</div>
-      <h1>Thống kê</h1>
+      <h1>Tiến độ</h1>
       <p className="page-sub">Tổng quan được tính trực tiếp trên {scopeLabel.toLowerCase()}.</p>
 
       <section className="period-block">
