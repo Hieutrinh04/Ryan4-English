@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Icon from "./Icon";
 import { groupByLesson, readSaved, removeSentence } from "../lib/saved-sentences.mjs";
+import { addToCatalogue, countNew, groupByChannel, readCatalogue, removeFromCatalogue, withLessonState } from "../lib/catalogue.mjs";
+import { readableLength } from "../lib/youtube-list.mjs";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLevel } from "../lib/dictation-lessons";
 
 // Màn hình vào của Dictation và Shadowing.
@@ -26,6 +28,8 @@ export type VideoLessonCard = {
 };
 
 type Filter = "all" | "video" | "builtin" | "saved";
+type CatalogueVideo = { videoId: string; title: string; channel: string; seconds: number; thumbnail: string; ready?: boolean };
+type ChannelGroup = { channel: string; videos: CatalogueVideo[] };
 type Saved = { key: string; lessonId: string; lessonTitle: string; index: number; text: string; translation: string };
 type SavedGroup = { lessonId: string; title: string; items: Saved[] };
 
@@ -64,11 +68,51 @@ export default function LessonLibrary({
   const [topic, setTopic] = useState(ALL_TOPICS);
   const [level, setLevel] = useState(ALL_LEVELS);
   const [saved, setSaved] = useState<Saved[]>([]);
+  const [catalogue, setCatalogue] = useState<CatalogueVideo[]>([]);
+  const [link, setLink] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [note, setNote] = useState("");
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
     setSaved(readSaved() as Saved[]);
+    setCatalogue(readCatalogue() as CatalogueVideo[]);
   }, []);
+
+  /**
+   * Đọc một playlist hoặc kênh thành danh mục.
+   *
+   * Chỉ lấy phần thông tin YouTube cho phép lấy qua API chính thức. Phụ đề KHÔNG
+   * lấy ở đây — Google chỉ cho chủ kênh tải phụ đề — nên video mới thêm vào chưa
+   * học được ngay, phải mở trên YouTube rồi dùng tiện ích.
+   */
+  async function fetchList() {
+    if (loading || !link.trim()) return;
+    setLoading(true);
+    setNote("");
+    try {
+      const response = await fetch("/api/youtube/playlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: link.trim(), limit: 50 }),
+      });
+      const data = (await response.json()) as { videos?: CatalogueVideo[]; error?: string };
+      if (!response.ok || data.error) throw new Error(data.error ?? "Không đọc được danh sách này.");
+      const videos = data.videos ?? [];
+      const fresh = countNew(videos, catalogue) as number;
+      setCatalogue(addToCatalogue(videos) as CatalogueVideo[]);
+      setLink("");
+      setNote(
+        fresh > 0
+          ? `Đã thêm ${fresh} video mới. Video phát trực tiếp từ YouTube, kênh gốc được ghi trên từng thẻ.`
+          : "Danh mục đã có đủ những video này rồi.",
+      );
+    } catch (problem) {
+      setNote(problem instanceof Error ? problem.message : "Không đọc được danh sách này.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const savedGroups = useMemo(() => groupByLesson(saved) as SavedGroup[], [saved]);
   const builtInSets = useMemo(() => {
@@ -155,6 +199,85 @@ export default function LessonLibrary({
                 <p>Dán liên kết YouTube để Lexilo lấy thông tin và phụ đề tiếng Anh, hoặc dùng tiện ích trên trang YouTube.</p>
                 <button className="library-empty-action" onClick={addVideo}>Dán link YouTube</button>
               </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {showVideo && (
+        <section className="library-block library-catalogue">
+          <div className="library-section-title">
+            <div><small>DANH MỤC CỦA BẠN</small><h2>Thêm cả playlist hoặc cả kênh</h2></div>
+            <span>{catalogue.length ? `${catalogue.length} video trong danh mục` : "Dán link playlist hoặc kênh YouTube"}</span>
+          </div>
+
+          {/* Video vẫn phát từ YouTube. Ở đây chỉ lấy tiêu đề, kênh, thời lượng và
+              ảnh bìa qua API chính thức — không tải video về, không lưu video. */}
+          <form
+            className="catalogue-add"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void fetchList();
+            }}
+          >
+            <input
+              value={link}
+              onChange={(event) => setLink(event.target.value)}
+              placeholder="https://www.youtube.com/@bbclearningenglish hoặc link playlist…"
+              aria-label="Link playlist hoặc kênh YouTube"
+              disabled={loading}
+            />
+            <button className="primary" type="submit" disabled={loading || !link.trim()}>
+              {loading ? "Đang đọc…" : "Lấy danh sách"}
+            </button>
+          </form>
+          {note && <p className="catalogue-note">{note}</p>}
+
+          {catalogue.length > 0 && (
+            <div className="catalogue-groups">
+              {(groupByChannel(withLessonState(catalogue, lessons)) as ChannelGroup[]).map((group) => (
+                <div key={group.channel} className="catalogue-group">
+                  <div className="catalogue-group-head">
+                    <b>{group.channel}</b>
+                    <em>{group.videos.length} video</em>
+                  </div>
+                  <div className="library-grid">
+                    {group.videos.map((video) => {
+                      const lesson = lessons.find((item) => item.videoId === video.videoId);
+                      return (
+                        <div key={video.videoId} className="library-card video catalogue-card">
+                          <button
+                            className="catalogue-open"
+                            onClick={() => {
+                              if (lesson) pickVideo(lesson);
+                              else window.open(`https://www.youtube.com/watch?v=${video.videoId}`, "_blank", "noopener");
+                            }}
+                          >
+                            <span className="library-thumb" style={{ backgroundImage: `url(${video.thumbnail})` }}>
+                              {video.seconds > 0 && <em className="duration-badge">◷ {readableLength(video.seconds)}</em>}
+                              {video.ready && <em className="level-badge">Có phụ đề</em>}
+                            </span>
+                            <span className="library-card-copy">
+                              <b>{video.title}</b>
+                              <small>{video.channel}</small>
+                              {/* Phụ đề chỉ lấy được từ trong trang YouTube: Google không
+                                  cho tải phụ đề bằng khoá API. Nói rõ để khỏi tưởng hỏng. */}
+                              <strong>{video.ready ? "Vào học →" : "Mở trên YouTube rồi bấm Lexilo để lấy phụ đề"}</strong>
+                            </span>
+                          </button>
+                          <button
+                            className="catalogue-remove"
+                            onClick={() => setCatalogue(removeFromCatalogue(video.videoId) as CatalogueVideo[])}
+                            aria-label={`Bỏ ${video.title} khỏi danh mục`}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </section>

@@ -2141,3 +2141,27 @@ html,body{
 /* Phiên âm do mô hình ước lượng (tên riêng không có trong từ điển): nhạt hơn và
    nghiêng, để không bị nhầm với phiên âm tra được từ từ điển. */
 .video-lesson-v2 .lesson-word em.guessed,.shadowing-ipa em.guessed{opacity:.72;font-style:italic}
+
+/* ── Danh mục video từ playlist/kênh YouTube ───────────────────────────────── */
+.catalogue-add{display:flex;gap:9px;margin:12px 0 6px}
+.catalogue-add input{flex:1;min-width:0;border:1px solid var(--line);background:var(--surface);
+  color:var(--ink);border-radius:10px;padding:11px 14px;font-size:13px}
+.catalogue-add input:focus{outline:2px solid var(--purple);outline-offset:-1px}
+.catalogue-add input:disabled{opacity:.6}
+.catalogue-add .primary{white-space:nowrap}
+.catalogue-note{margin:4px 0 0;color:var(--muted);font-size:11.5px;line-height:1.6}
+
+.catalogue-groups{display:grid;gap:20px;margin-top:16px}
+.catalogue-group-head{display:flex;align-items:baseline;gap:10px;margin-bottom:9px}
+.catalogue-group-head b{font-size:13.5px}
+.catalogue-group-head em{font-style:normal;color:var(--muted);font-size:11px}
+
+/* Thẻ có nút xoá riêng nên bọc ngoài thay vì để cả thẻ là một nút. */
+.catalogue-card{position:relative;padding:0;border:0;background:none}
+.catalogue-open{display:block;width:100%;text-align:left;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);border-radius:14px;overflow:hidden;padding:0}
+.catalogue-open:hover{border-color:var(--purple)}
+.catalogue-remove{position:absolute;right:8px;top:8px;width:26px;height:26px;border:0;border-radius:50%;
+  background:#0b0812c7;color:#f3eef8;font-size:15px;line-height:1;display:grid;place-items:center;opacity:0}
+.catalogue-card:hover .catalogue-remove,.catalogue-remove:focus-visible{opacity:1}
+.catalogue-remove:hover{background:var(--pink);color:#fff}
