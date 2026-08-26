@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MAX_PRACTICE_SECONDS,
   catalogueEntry,
   channelRefFrom,
   looksLikeShort,
@@ -68,6 +69,14 @@ test("usableForPractice: bỏ video quá ngắn và quá dài", () => {
   assert.equal(usableForPractice({ seconds: 7200 }), false);
   // Thời lượng 0 là chưa đọc được, không phải là ngắn — vẫn giữ.
   assert.equal(usableForPractice({ seconds: 0 }), true);
+});
+
+test("usableForPractice: trần đúng 13 phút", () => {
+  assert.equal(MAX_PRACTICE_SECONDS, 780);
+  assert.equal(usableForPractice({ seconds: 780 }), true);
+  assert.equal(usableForPractice({ seconds: 781 }), false);
+  // Bài 35 phút từng lọt vào danh mục cũ cũng phải bị loại.
+  assert.equal(usableForPractice({ seconds: 2100 }), false);
 });
 
 test("groupByChannel: gom theo kênh, kênh nhiều video đứng trước", () => {
