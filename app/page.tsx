@@ -1,6 +1,6 @@
 "use client";
 
-import { Dispatch, FormEvent, Fragment, PointerEvent as ReactPointerEvent, type ReactNode, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
+import { Dispatch, FormEvent, Fragment, useSyncExternalStore, PointerEvent as ReactPointerEvent, type ReactNode, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { aiFetch, supabase } from "../lib/supabase";
 import ieltsAreaData from "../lib/ielts-areas.json";
 import VocabPractice from "../components/VocabPractice";
@@ -13,11 +13,12 @@ import WritingPractice from "../components/WritingPractice";
 import SpeakingPractice from "../components/SpeakingPractice";
 import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
 import { lessonFromHash, readLessons, saveLesson } from "../lib/lessons.mjs";
-import { MAX_FOLDERS, addFolder, addWords, editFolder, emptyStore, folderDate, folderPath,
-  foldersOf, foldersWithCounts, readFolders, removeFolder, saveFolders, toggleWord,
+import { MAX_FOLDERS, addFolder, addWords, editFolder, folderDate, folderPath,
+  commitFolders, foldersOf, foldersServerSnapshot, foldersSnapshot, foldersWithCounts,
+  removeFolder, subscribeFolders, toggleWord,
   wordsIn } from "../lib/folders.mjs";
 // Kiểu lấy ngay từ module JS: khai báo lại ở đây thì sớm muộn cũng lệch nhau.
-type FolderStore = ReturnType<typeof readFolders>;
+type FolderStore = ReturnType<typeof foldersSnapshot>;
 type Folder = FolderStore["list"][number];
 import { alignTranscript } from "../lib/youtube.mjs";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
@@ -317,6 +318,11 @@ const heat = [0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 4, 2, 0, 1, 1, 2, 4, 3, 1, 2, 0, 3, 
 export default function Home() {
   // Luôn khởi tạo "home" để HTML dựng sẵn khớp với client; trang đã lưu được khôi phục sau khi hydrate.
   const [tab, setTab] = useState<"home" | "words" | "practice" | "stats" | "dictionary">("home");
+  // Kho danh sách từ nằm ở đây chứ không nằm trong Words: sườn trái cần đếm số
+  // danh sách, và số đó phải đổi ngay khi người dùng tạo hay xoá bên trong.
+  const folders: FolderStore = useSyncExternalStore(subscribeFolders, foldersSnapshot, foldersServerSnapshot);
+  const [wordsView, setWordsView] = useState<"daily" | "pdf" | "folder">("daily");
+  const updateFolders = commitFolders;
   // Bài nghe lấy từ video. Tiện ích trình duyệt mở app kèm bài trong phần neo địa chỉ.
   const [lessons, setLessons] = useState<VideoLesson[]>([]);
   const [imported, setImported] = useState("");
@@ -1115,9 +1121,19 @@ export default function Home() {
           ))}
 
           <span className="nav-group">THƯ VIỆN</span>
-          <button className={tab === "words" ? "nav-item active" : "nav-item"} onClick={() => goTab("words")}>
-            <Icon name="list" /> Danh sách từ
+          <button
+            className={tab === "words" && wordsView !== "folder" ? "nav-item active" : "nav-item"}
+            onClick={() => { goTab("words"); setWordsView("daily"); }}
+          >
+            <Icon name="list" /> Kho từ vựng
             <em className="nav-count">{words.length}</em>
+          </button>
+          <button
+            className={tab === "words" && wordsView === "folder" ? "nav-item active" : "nav-item"}
+            onClick={() => { goTab("words"); setWordsView("folder"); }}
+          >
+            <Icon name="cards" /> Danh sách từ
+            <em className="nav-count">{folders.list.length}</em>
           </button>
           <button className={tab === "dictionary" ? "nav-item active" : "nav-item"} onClick={() => goTab("dictionary")}>
             <Icon name="search" /> Từ điển AI
@@ -1229,6 +1245,10 @@ export default function Home() {
             add={() => setShowAdd(true)}
             bulkAdd={() => setShowBulkAdd(true)}
             openDictionary={() => goTab("dictionary")}
+            folders={folders}
+            updateFolders={updateFolders}
+            collectionFilter={wordsView}
+            setCollectionFilter={setWordsView}
             startTopicReview={startTopicReview}
             startWordListReview={startWordListReview}
             startDayReview={(day) => startReview(day)}
@@ -2126,15 +2146,11 @@ function WordListModal({ title, note, words, close }: { title: string; note: str
   );
 }
 
-function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionary, remove, importWords, startTopicReview, startWordListReview, setStudyDay, startDayReview, openWordDetail, fillMissingFields, backfill }: { words: WordCard[]; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; openDictionary: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; startTopicReview: (topic: string) => void; startWordListReview: (list: WordCard[]) => void; setStudyDay: (id: string, day: number) => void; startDayReview: (day?: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null }) {
+function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionary, remove, importWords, folders, updateFolders, collectionFilter, setCollectionFilter, startTopicReview, startWordListReview, setStudyDay, startDayReview, openWordDetail, fillMissingFields, backfill }: { words: WordCard[]; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; openDictionary: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; folders: FolderStore; updateFolders: (next: FolderStore) => void; collectionFilter: "daily" | "pdf" | "folder"; setCollectionFilter: (view: "daily" | "pdf" | "folder") => void; startTopicReview: (topic: string) => void; startWordListReview: (list: WordCard[]) => void; setStudyDay: (id: string, day: number) => void; startDayReview: (day?: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null }) {
   const PAGE_SIZE = 25;
   const fileRef = useRef<HTMLInputElement>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [dayFilter, setDayFilter] = useState<number | null>(null);
-  const [collectionFilter, setCollectionFilter] = useState<"daily" | "pdf" | "folder">("daily");
-  // Đọc thẳng lúc dựng chứ không qua effect: localStorage chỉ có ở trình duyệt,
-  // và đọc trong effect thì màn hình chớp một nhịp rỗng trước khi hiện danh sách.
-  const [folders, setFolders] = useState<FolderStore>(() => (typeof window === "undefined" ? emptyStore() : readFolders()));
   const [folderFilter, setFolderFilter] = useState<string | null>(null);
   const [creating, setCreating] = useState<{ parentId: string } | null>(null);
   const [editing, setEditing] = useState<Folder | null>(null);
@@ -2144,7 +2160,6 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
   const [pickerDraft, setPickerDraft] = useState("");
   const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null);
   const [folderPicker, setFolderPicker] = useState<WordCard | null>(null);
-  const updateFolders = (next: FolderStore) => setFolders(saveFolders(next));
   // Gom khoảng trắng y như lib/folders làm, để so tên mà không cần biểu thức chính quy.
   const tidy = (value: string) => value.split(" ").filter(Boolean).join(" ");
   // Lấy đường dẫn thay vì tra thẳng mã: danh sách vừa bị xoá thì đường dẫn rỗng,
@@ -2336,7 +2351,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
       <div className="section-head">
         <div>
           <div className="eyebrow">THƯ VIỆN CỦA BẠN</div>
-          <h1>Danh sách từ</h1>
+          <h1>{collectionFilter === "folder" ? "Danh sách từ" : collectionFilter === "pdf" ? "Bộ từ vựng PDF" : "Kho từ vựng"}</h1>
           <p>{collectionFilter === "folder" ? (openFolder ? `${activeCollection.length} từ trong ${openFolder.name}.` : `${folders.list.length} danh sách từ bạn tự tạo.`) : collectionFilter === "pdf" ? (pdfTopic ? `${activeCollection.length} từ trong chủ đề ${pdfTopic}.` : `${pdfWords.length} từ trong ${pdfTopics.length} thư mục chủ đề.`) : `${personalWords.length} từ cá nhân · quản lý theo Leitner Box.`}</p>
         </div>
         <div className="section-actions"><AddMenu onManual={add} onPaste={bulkAdd} onDictionary={openDictionary} /></div>
