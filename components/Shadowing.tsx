@@ -1,5 +1,6 @@
 "use client";
 
+import Icon from "./Icon";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { aiFetch } from "../lib/supabase";
 import { dictationLessons, dictationLevels, dictationTopics, type DictationLevel } from "../lib/dictation-lessons";
@@ -414,7 +415,7 @@ export default function ShadowingPractice({ close, onPractised, initialTopic, in
                     <li key={tip.word}>
                       <b>{tip.word}</b>
                       {tip.ipa && <code>{tip.ipa}</code>}
-                      <button className="listen-inline" onClick={() => speak(0.7, tip.word)} aria-label={`Nghe từ ${tip.word}`}>◖))</button>
+                      <button className="listen-inline" onClick={() => speak(0.7, tip.word)} aria-label={`Nghe từ ${tip.word}`}><Icon name="volume" size={14} /></button>
                       <span>{tip.how}</span>
                     </li>
                   ))}

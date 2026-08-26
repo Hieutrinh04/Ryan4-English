@@ -58,7 +58,7 @@ function formatAcceptedTranslation(value: string) {
   if (!compact) return "";
   // Giữ cách diễn đạt của người học, chỉ chuẩn hóa hình thức hiển thị để các câu
   // tiếng Anh đã hoàn thành đọc như một đoạn văn thật sự.
-  const capitalized = compact.replace(/^(["'“‘(\[]*)([a-z])/, (_, prefix: string, letter: string) => `${prefix}${letter.toUpperCase()}`);
+  const capitalized = compact.replace(/^(["'“‘([]*)([a-z])/, (_, prefix: string, letter: string) => `${prefix}${letter.toUpperCase()}`);
   return /[.!?]["'”’)]?$/.test(capitalized) ? capitalized : `${capitalized}.`;
 }
 
@@ -281,7 +281,13 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
       if (data.correct || data.score >= 90) setParagraphAcceptedAnswers((current) => { const next = [...current]; next[paragraphIndex] = formatAcceptedTranslation(paragraphAnswer); return next; });
     } catch (problem) {
       if (requestId !== paragraphGradeRequest.current) return;
-      setParagraphGradeError("AI đang bận hoặc đã hết lượt tạm thời. Bạn có thể thử lại sau.");
+      // Nói đúng lý do hỏng. Hết lượt trong ngày và mô hình nghẽn là hai chuyện
+      // khác nhau — gộp thành một câu thì người học ngồi thử lại một việc vô ích.
+      setParagraphGradeError(
+        problem instanceof Error && problem.message
+          ? problem.message
+          : "AI đang bận hoặc đã hết lượt tạm thời. Bạn có thể thử lại sau.",
+      );
       setParagraphAiGrade(null);
     } finally {
       if (requestId === paragraphGradeRequest.current) setParagraphGrading(false);

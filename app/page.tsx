@@ -8,6 +8,7 @@ import ShadowingPractice from "../components/Shadowing";
 import VocabPractice from "../components/VocabPractice";
 import Dictionary, { type NewWord } from "../components/Dictionary";
 import Icon, { type IconName } from "../components/Icon";
+import { useEscape } from "../components/useEscape";
 import VideoLesson from "../components/VideoLesson";
 import LessonLibrary from "../components/LessonLibrary";
 import WritingPractice from "../components/WritingPractice";
@@ -1420,6 +1421,7 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
     });
   }, [studiedDays]);
   const [editingExam, setEditingExam] = useState(false);
+  useEscape(() => setEditingExam(false), editingExam);
   const [examDraft, setExamDraft] = useState<ExamGoal>({ date: exam?.date ?? "", label: exam?.label ?? "" });
   // Số từ chưa thuộc, dùng để gợi ý nhịp học mỗi ngày cho kịp ngày thi.
   const wordsLeft = words.filter((word) => wordState(word).key !== "mastered").length;
@@ -1761,11 +1763,6 @@ function addedDayIndex(word: WordCard) {
   return weekdayIndex(new Date(word.addedDate + "T12:00:00"));
 }
 
-function prioritySort(a: WordCard, b: WordCard) {
-  const dateOrder = (a.dueDate ?? "0000-00-00").localeCompare(b.dueDate ?? "0000-00-00");
-  return dateOrder || b.lapses - a.lapses || a.term.localeCompare(b.term);
-}
-
 // Phiên chính luôn xử lý phần đã học đến hạn trước. Từ mới chỉ lấy ở nhóm của hôm nay
 // và được giới hạn để lượng ôn không tăng nhanh hơn khả năng ghi nhớ.
 function buildTodayQueue(words: WordCard[]) {
@@ -2072,6 +2069,7 @@ function Stat({ label, value, note, icon, tone, onOpen }: { label: string; value
 
 // Danh sách từ đứng sau một con số thống kê. Bấm một dòng thì mở thẻ chi tiết.
 function WordListModal({ title, note, words, close }: { title: string; note: string; words: WordCard[]; close: () => void }) {
+  useEscape(close);
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState<WordCard | null>(null);
   const shown = useMemo(() => {
@@ -2127,6 +2125,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
   const [pdfTopic, setPdfTopic] = useState<string | null>(null);
   const [page, setPage] = useState({ key: "", value: 1 });
   const [deleteCandidate, setDeleteCandidate] = useState<WordCard | null>(null);
+  useEscape(() => setDeleteCandidate(null), Boolean(deleteCandidate));
   const isPdfWord = isPdfVocabulary;
   const personalWords = words.filter((word) => !isPdfWord(word));
   const pdfWords = words.filter(isPdfWord);
@@ -2567,7 +2566,7 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
             <div className="flash-tools">
               {/* Không lặp nút sao ở đây: header của phiên ôn đã có sẵn một nút cho mọi kiểu thẻ. */}
               <button onClick={() => speak(card.term)} aria-label={`Phát âm ${card.term}`}>
-                ◖))
+                <Icon name="volume" size={15} />
               </button>
             </div>
           </div>
@@ -2603,7 +2602,7 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
                 <div className="term-line">
                   <h1>{card.term}</h1>
                   <button onClick={() => speak(card.term)} aria-label={`Phát âm ${card.term}`}>
-                    ◖))
+                    <Icon name="volume" size={15} />
                   </button>
                 </div>
                 <div className="ipa">{card.ipa}</div>
@@ -2628,7 +2627,7 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
               <>
                 <span className="card-label">NGHE VÀ VIẾT</span>
                 <button className="listen-btn" onClick={() => speak(card.term)} aria-label={`Phát âm ${card.term}`}>
-                  ◖))
+                  <Icon name="volume" size={15} />
                 </button>
                 <label className="answer">
                   <input
@@ -2651,7 +2650,7 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
             <div className="term-line">
               <h1>{card.term}</h1>
               <button onClick={() => speak(card.term)} aria-label={`Phát âm ${card.term}`}>
-                ◖))
+                <Icon name="volume" size={15} />
               </button>
             </div>
             <div className="ipa">{card.ipa}</div>
@@ -2722,6 +2721,7 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
 
 // study không bắt buộc: ở màn luyện tập không có chỗ để mở phiên ôn cho một từ lẻ.
 function WordDetail({ word, close, study, speak }: { word: WordCard; close: () => void; study?: () => void; speak: (text: string) => void }) {
+  useEscape(close);
   const usageFields = [
     ["Đồng nghĩa", word.synonyms, word.synonymDetails],
     ["Trái nghĩa", word.antonyms, word.antonymDetails],
@@ -2735,7 +2735,7 @@ function WordDetail({ word, close, study, speak }: { word: WordCard; close: () =
           <div><span className="eyebrow">THẺ TỪ VỰNG ĐẦY ĐỦ</span><h2>{word.term}</h2><p>{word.ipa} · {word.partOfSpeech || "chưa xác định loại từ"}</p></div>
           <button onClick={close} aria-label="Đóng">×</button>
         </header>
-        <button className="detail-speak" onClick={() => speak(word.term)}>◖)) Nghe phát âm</button>
+        <button className="detail-speak" onClick={() => speak(word.term)}><Icon name="volume" size={14} /> Nghe phát âm</button>
         <section className="detail-meaning"><b>Nghĩa tiếng Việt</b><p>{word.meaning}</p><small>{word.definition || "Chưa có định nghĩa Anh–Anh."}</small></section>
         {word.collocation && <section className="detail-collocation"><span>CỤM NÊN HỌC</span><h3><EnglishText text={word.collocation} /></h3><p>{word.collocationVi}</p></section>}
         <section className="detail-example"><b>Ví dụ thực tế</b><p><EnglishText text={word.example} /></p>{word.exampleVi && <small>{word.exampleVi}</small>}</section>
@@ -3174,7 +3174,6 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
   const activeWords = practiceWords.length ? practiceWords : words;
   const personalWords = words.filter((item) => !isPdfVocabulary(item));
   const pdfWords = words.filter(isPdfVocabulary);
-  const pdfTopics = [...new Set(pdfWords.flatMap((item) => item.topic.split(" · ")))];
 
   function chooseFolder(folderWords: WordCard[]) {
     if (!pendingMode || !folderWords.length) return;
@@ -3194,7 +3193,6 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
         backLabel={translating ? "Luyện viết" : undefined}
         personalWords={personalWords}
         pdfWords={pdfWords}
-        topics={pdfTopics}
         choose={chooseFolder}
         close={() => {
           setPendingMode(null);
@@ -3258,7 +3256,6 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
     return (
       <TranslateMode
         words={activeWords}
-        setMode={setMode}
         back={() => {
           setTranslating(false);
           setPracticeWords([]);
@@ -3311,7 +3308,7 @@ const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
   translate: "Luyện viết",
 };
 
-function FolderPicker({ mode, personalWords, pdfWords, topics, choose, close, backLabel }: { mode: Exclude<PracticeMode, "menu">; personalWords: WordCard[]; pdfWords: WordCard[]; topics: string[]; choose: (words: WordCard[]) => void; close: () => void; backLabel?: string }) {
+function FolderPicker({ mode, personalWords, pdfWords, choose, close, backLabel }: { mode: Exclude<PracticeMode, "menu">; personalWords: WordCard[]; pdfWords: WordCard[]; choose: (words: WordCard[]) => void; close: () => void; backLabel?: string }) {
   const dailyFolders = (setsFor(personalWords, "week") as { label: string; words: WordCard[] }[]).map((folder) => ({ name: folder.label, words: folder.words }));
   const topicFolders = (setsFor(pdfWords, "topic") as { label: string; words: WordCard[] }[]).map((folder) => ({ name: folder.label, words: folder.words }));
   return (
@@ -3411,7 +3408,7 @@ function cleanStudyVietnamese(value: string) {
     .trim();
 }
 
-function TranslateMode({ words, setMode, back }: { words: WordCard[]; setMode: (m: PracticeMode) => void; back: () => void }) {
+function TranslateMode({ words, back }: { words: WordCard[]; back: () => void }) {
   // Chỉ nhận từ có đủ cả câu tiếng Anh lẫn bản dịch, vì bản dịch là đề bài còn câu
   // tiếng Anh là đáp án mẫu.
   const usable = useMemo(() => words.filter((word) => word.example?.trim() && word.exampleVi?.trim()), [words]);
@@ -3882,7 +3879,7 @@ function TranslateMode({ words, setMode, back }: { words: WordCard[]; setMode: (
               <label htmlFor="translation-answer">Bản dịch tiếng Anh của bạn</label>
               <div>
                 <button type="button" onClick={() => speakWord(current.word.term)} title={`Nghe phát âm ${current.word.term}`}>
-                  ◖)) {current.word.term}
+                  <Icon name="volume" size={14} /> {current.word.term}
                 </button>
                 <span>{typed.trim() ? typed.trim().split(/\s+/).length : 0} từ</span>
               </div>
@@ -5074,7 +5071,7 @@ function DictationPractice({ words, close, initialTopic, initialLevel, initialTi
                     <br />
                     Đọc chậm một lần, sau đó nhấn nghe mẫu và đọc theo đúng nhịp.
                   </p>
-                  <button onClick={speak}>◖)) Nghe mẫu</button>
+                  <button onClick={speak}><Icon name="volume" size={14} /> Nghe mẫu</button>
                 </div>
                 <button className="primary next-dictation" onClick={next}>
                   Câu tiếp theo →
@@ -5888,6 +5885,7 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
 }
 
 function AuthModal({ close, signedInEmail }: { close: () => void; signedInEmail: string | null }) {
+  useEscape(close);
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);

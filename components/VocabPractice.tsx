@@ -506,7 +506,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
               </>
             ) : (
               <>
-                <button className="drill-speaker" onClick={() => speak(card.term, region)} aria-label={`Phát âm ${card.term}`}>◖))</button>
+                <button className="drill-speaker" onClick={() => speak(card.term, region)} aria-label={`Phát âm ${card.term}`}><Icon name="volume" size={16} /></button>
                 <button className="drill-flip" onClick={() => clickFlip(true)} onPointerDown={beginSwipe} onPointerMove={moveSwipe} onPointerUp={endSwipe} onPointerCancel={endSwipe}>
                   <small className="drill-side-label">TIẾNG ANH</small>
                   <b className="drill-term">{card.term}</b>
@@ -522,7 +522,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
             <p className="drill-hint">{MODE_HINT[active]}</p>
 
             {active === "listen" ? (
-              <button className="drill-listen" onClick={() => speak(card.term, region)} aria-label="Nghe lại">◖))</button>
+              <button className="drill-listen" onClick={() => speak(card.term, region)} aria-label="Nghe lại"><Icon name="volume" size={16} /></button>
             ) : active === "quiz" || active === "reverse" ? (
               <>
                 <b className="drill-term">{card.term}</b>
@@ -586,7 +586,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
                     {hasIpa(card.ipa) && <em>{card.ipa}</em>}
                   </>
                 )}
-                <button className="drill-replay" onClick={() => speak(card.term, region)} aria-label={`Nghe từ ${card.term}`}>◖))</button>
+                <button className="drill-replay" onClick={() => speak(card.term, region)} aria-label={`Nghe từ ${card.term}`}><Icon name="volume" size={16} /></button>
               </div>
             )}
           </div>
@@ -614,7 +614,18 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
         <div className="drill-options">
           <button className={autoSpeak ? "active" : ""} onClick={() => setAutoSpeak((value) => !value)} aria-label="Tự động phát">{autoSpeak ? "❚❚" : "▶"}</button>
           <button onClick={() => { setShuffled((value) => !value); setIndex(0); resetCard(); }} className={shuffled ? "active" : ""} aria-label="Xáo trộn">⇄</button>
-          <button onClick={fullscreen} aria-label="Toàn màn hình">⛶</button>
+          <button onClick={fullscreen} aria-label="Toàn màn hình"><Icon name="target" size={15} /></button>
+          {/* Giọng đọc: state region có từ đầu và được truyền vào speak(), nhưng
+              chưa từng có nút nào đổi nó, nên mọi thẻ đều đọc giọng Mỹ. Màn Từ
+              điển AI đã cho chọn US/UK rồi, chỗ này để lệch là vô lý. */}
+          <button
+            className="drill-accent"
+            onClick={() => setRegion((value) => (value === "US" ? "UK" : "US"))}
+            aria-label={region === "US" ? "Đang đọc giọng Mỹ, đổi sang giọng Anh" : "Đang đọc giọng Anh, đổi sang giọng Mỹ"}
+            title="Đổi giọng đọc"
+          >
+            {region}
+          </button>
         </div>
       </div>
       {active === "card" && tracking && <p className="drill-swipe-hint">Kéo sang trái nếu còn đang học · Kéo sang phải nếu đã biết · Nhấn Space để lật thẻ</p>}

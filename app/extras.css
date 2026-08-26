@@ -2085,3 +2085,6 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
   border-color:var(--purple);
   box-shadow:0 0 0 3px color-mix(in srgb,var(--purple) 18%,transparent);
 }
+
+/* Nút đổi giọng đọc Mỹ/Anh trong phiên luyện thẻ. */
+.drill-accent{min-width:34px;font-size:10.5px;font-weight:800;letter-spacing:.04em}

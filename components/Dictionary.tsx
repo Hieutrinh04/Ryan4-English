@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Icon from "./Icon";
 
 // Từ điển AI: tra một từ rồi lưu thẳng vào danh sách từ.
 //
@@ -124,8 +125,8 @@ export default function Dictionary({ onSave, has }: { onSave: (word: NewWord) =>
               {result.ipa && <em>{result.ipa}</em>}
             </div>
             <div className="dictionary-voices">
-              <button onClick={() => speak(result.term, "US")}>◖)) US</button>
-              <button onClick={() => speak(result.term, "UK")}>◖)) UK</button>
+              <button onClick={() => speak(result.term, "US")}><Icon name="volume" size={13} /> US</button>
+              <button onClick={() => speak(result.term, "UK")}><Icon name="volume" size={13} /> UK</button>
             </div>
           </div>
 
