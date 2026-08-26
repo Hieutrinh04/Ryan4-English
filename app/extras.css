@@ -1900,10 +1900,20 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
    Gom về ba nấc: nhanh (phản hồi cú bấm), thường (đổi màu, nhấc thẻ), chậm
    (vào màn). Một đường cong duy nhất để mọi chuyển động cùng một tính cách. */
 :root{
-  --ease:cubic-bezier(.2,.7,.3,1);
-  --t-fast:120ms;
-  --t-base:200ms;
+  /* Lấy đúng bộ số đo được từ trang mẫu. Đường cong của tôi trước đây vọt lên
+     rồi hãm lại (.2,.7) nên mọi thứ giật một nhịp; của họ vào ra đều hai đầu
+     nên cảm giác trôi hơn. Thời lượng cũng khác: đổi màu 150ms, dịch chuyển
+     300ms — chậm hơn tôi đang dùng, và chính chỗ chậm đó tạo ra sự đầm tay. */
+  --ease:cubic-bezier(.4,0,.2,1);
+  --t-fast:150ms;
+  --t-base:300ms;
   --t-slow:320ms;
+
+  /* Bóng hai lớp: một lớp toả rộng cho khối nổi lên, một lớp sát mép cho nó
+     bám xuống nền. Bóng một lớp trông phẳng và dán vào nền. */
+  --shadow-sm:0 1px 3px #0000002e,0 1px 2px -1px #00000026;
+  --shadow-md:0 10px 15px -3px #0000003d,0 4px 6px -4px #00000033;
+  --shadow-lg:0 20px 25px -5px #0000004d,0 8px 10px -6px #00000040;
 }
 
 /* ── Đi bằng bàn phím phải thấy mình đang ở đâu ─────────────────────────────
@@ -2258,3 +2268,28 @@ html,body{
   background:#0b0812d9;color:#e3d3f6;border:1px solid #ffffff2b;border-radius:6px;
   padding:2px 7px;font-size:10px;font-weight:800;letter-spacing:.03em}
 .catalogue-empty{margin:18px 0 0;color:var(--muted);font-size:12.5px;line-height:1.6}
+
+/* ══ Cảm giác: bám theo số đo từ trang mẫu ═══════════════════════════════════ */
+
+/* Chip bo tròn hẳn thành viên thuốc — đếm được 47 phần tử như vậy bên họ, và đó
+   là thứ tạo ra vẻ nhẹ, trong khi bo 20px vẫn còn ra dáng cái nút. */
+.catalogue-filter button,.catalogue-suggested button,.vocab-tabs button,
+.speaking-levels button,.library-filters button,.library-chip-row button,
+.lesson-chain,.lesson-save,.lesson-report{border-radius:9999px}
+
+/* Thẻ bấm được: bóng hai lớp và nhấc bằng transform 300ms. */
+.catalogue-open .catalogue-thumb,.speaking-card,.vocab-set,.library-card,.writing-paths button{
+  box-shadow:var(--shadow-sm);
+}
+.catalogue-open:hover .catalogue-thumb{
+  box-shadow:var(--shadow-md);
+  transform:translateY(-2px);
+}
+.catalogue-open .catalogue-thumb{transition:box-shadow var(--t-base) var(--ease),transform var(--t-base) var(--ease),border-color var(--t-fast) var(--ease)}
+.speaking-card:hover,.vocab-set:hover,.library-card:hover,.writing-paths button:hover{box-shadow:var(--shadow-md)}
+
+/* Nút chính và thẻ số liệu dùng chung thang bóng đó, thay vì mỗi chỗ một kiểu. */
+.primary{box-shadow:var(--shadow-sm)}
+.primary:not(:disabled):hover{box-shadow:var(--shadow-md)}
+.stat:hover{box-shadow:var(--shadow-md)}
+.panel{box-shadow:var(--shadow-sm)}
