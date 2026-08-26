@@ -1,6 +1,6 @@
 "use client";
 
-import { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, type ReactNode, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
+import { Dispatch, FormEvent, Fragment, PointerEvent as ReactPointerEvent, type ReactNode, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { aiFetch, supabase } from "../lib/supabase";
 import ieltsAreaData from "../lib/ielts-areas.json";
 import VocabPractice from "../components/VocabPractice";
@@ -13,6 +13,12 @@ import WritingPractice from "../components/WritingPractice";
 import SpeakingPractice from "../components/SpeakingPractice";
 import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
 import { lessonFromHash, readLessons, saveLesson } from "../lib/lessons.mjs";
+import { MAX_FOLDERS, addFolder, addWords, editFolder, emptyStore, folderDate, folderPath,
+  foldersOf, foldersWithCounts, readFolders, removeFolder, saveFolders, toggleWord,
+  wordsIn } from "../lib/folders.mjs";
+// Kiểu lấy ngay từ module JS: khai báo lại ở đây thì sớm muộn cũng lệch nhau.
+type FolderStore = ReturnType<typeof readFolders>;
+type Folder = FolderStore["list"][number];
 import { alignTranscript } from "../lib/youtube.mjs";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
 // mẫu vẫn được công nhận đúng.
@@ -896,6 +902,11 @@ export default function Home() {
   function startTopicReview(topic: string) {
     launchReview(buildCollectionQueue(words.filter((word) => primaryTopic(word) === topic)));
   }
+  // Học đúng một danh sách đã chọn sẵn. Thư mục người dùng tự tạo không suy ra
+  // được từ một trường nào của từ, nên phải nhận thẳng danh sách.
+  function startWordListReview(list: WordCard[]) {
+    launchReview(buildCollectionQueue(list));
+  }
   function rate(rating: Rating) {
     const { box: after, interval } = scheduleFor(card, rating);
     const due = new Date();
@@ -1219,6 +1230,7 @@ export default function Home() {
             bulkAdd={() => setShowBulkAdd(true)}
             openDictionary={() => goTab("dictionary")}
             startTopicReview={startTopicReview}
+            startWordListReview={startWordListReview}
             startDayReview={(day) => startReview(day)}
             fillMissingFields={() => void fillMissingFields()}
             backfill={backfill}
@@ -2114,12 +2126,87 @@ function WordListModal({ title, note, words, close }: { title: string; note: str
   );
 }
 
-function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionary, remove, importWords, startTopicReview, setStudyDay, startDayReview, openWordDetail, fillMissingFields, backfill }: { words: WordCard[]; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; openDictionary: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; startTopicReview: (topic: string) => void; setStudyDay: (id: string, day: number) => void; startDayReview: (day?: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null }) {
+function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionary, remove, importWords, startTopicReview, startWordListReview, setStudyDay, startDayReview, openWordDetail, fillMissingFields, backfill }: { words: WordCard[]; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; openDictionary: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; startTopicReview: (topic: string) => void; startWordListReview: (list: WordCard[]) => void; setStudyDay: (id: string, day: number) => void; startDayReview: (day?: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null }) {
   const PAGE_SIZE = 25;
   const fileRef = useRef<HTMLInputElement>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [dayFilter, setDayFilter] = useState<number | null>(null);
-  const [collectionFilter, setCollectionFilter] = useState<"daily" | "pdf">("daily");
+  const [collectionFilter, setCollectionFilter] = useState<"daily" | "pdf" | "folder">("daily");
+  // Đọc thẳng lúc dựng chứ không qua effect: localStorage chỉ có ở trình duyệt,
+  // và đọc trong effect thì màn hình chớp một nhịp rỗng trước khi hiện danh sách.
+  const [folders, setFolders] = useState<FolderStore>(() => (typeof window === "undefined" ? emptyStore() : readFolders()));
+  const [folderFilter, setFolderFilter] = useState<string | null>(null);
+  const [creating, setCreating] = useState<{ parentId: string } | null>(null);
+  const [editing, setEditing] = useState<Folder | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const [draftNote, setDraftNote] = useState("");
+  const [formError, setFormError] = useState("");
+  const [pickerDraft, setPickerDraft] = useState("");
+  const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null);
+  const [folderPicker, setFolderPicker] = useState<WordCard | null>(null);
+  const updateFolders = (next: FolderStore) => setFolders(saveFolders(next));
+  // Gom khoảng trắng y như lib/folders làm, để so tên mà không cần biểu thức chính quy.
+  const tidy = (value: string) => value.split(" ").filter(Boolean).join(" ");
+  // Lấy đường dẫn thay vì tra thẳng mã: danh sách vừa bị xoá thì đường dẫn rỗng,
+  // và màn hình tự quay về mức gốc thay vì đứng trơ ở một chỗ không còn tồn tại.
+  const trail = folderFilter ? folderPath(folders, folderFilter) : [];
+  const openFolder = trail.length ? trail[trail.length - 1] : null;
+  const openId = openFolder ? openFolder.id : "";
+  const shownFolders = foldersWithCounts(folders, words, openId);
+  function closeFolderForm() {
+    setCreating(null);
+    setEditing(null);
+    setDraftName("");
+    setDraftNote("");
+    setFormError("");
+  }
+  function openCreateForm(parentId: string) {
+    closeFolderForm();
+    setCreating({ parentId });
+  }
+  function openEditForm(folder: Folder) {
+    closeFolderForm();
+    setEditing(folder);
+    setDraftName(folder.name);
+    setDraftNote(folder.note);
+  }
+  function submitFolderForm() {
+    const name = tidy(draftName);
+    if (!name) return;
+    const clash = "Đã có danh sách tên " + name + " ở cùng chỗ này.";
+    if (editing) {
+      const next = editFolder(folders, editing.id, { name, note: draftNote });
+      if (!next.list.some((item) => item.id === editing.id && item.name === name)) return setFormError(clash);
+      updateFolders(next);
+      return closeFolderForm();
+    }
+    const added = addFolder(folders, name, { note: draftNote, parentId: creating ? creating.parentId : "" });
+    if (added.list.length === folders.list.length) {
+      return setFormError(folders.list.length >= MAX_FOLDERS ? `Đã đủ ${MAX_FOLDERS} danh sách, xoá bớt rồi tạo tiếp.` : clash);
+    }
+    updateFolders(added);
+    closeFolderForm();
+  }
+  // Tạo nhanh ngay trong bảng chọn, không có ghi chú — chỗ này người dùng đang
+  // cất một từ, bắt điền thêm ghi chú là chặn đường họ.
+  function createFromPicker(wordId: string) {
+    const name = tidy(pickerDraft);
+    if (!name) return;
+    const added = addFolder(folders, name);
+    if (added.list.length === folders.list.length) return setFormError("Đã có danh sách tên " + name + ".");
+    updateFolders(addWords(added, added.list[added.list.length - 1].id, [wordId]));
+    setPickerDraft("");
+    setFormError("");
+  }
+  function dropFolder(id: string) {
+    updateFolders(removeFolder(folders, id));
+    // Đang mở đúng danh sách vừa xoá thì lùi về cha, đừng để màn hình trống.
+    if (openId === id) setFolderFilter(openFolder && openFolder.parentId ? openFolder.parentId : null);
+    setFolderToDelete(null);
+  }
+  useEscape(() => setFolderPicker(null), Boolean(folderPicker));
+  useEscape(() => setFolderToDelete(null), Boolean(folderToDelete));
+  useEscape(closeFolderForm, Boolean(creating || editing));
   const [pdfTopic, setPdfTopic] = useState<string | null>(null);
   const [page, setPage] = useState({ key: "", value: 1 });
   const [deleteCandidate, setDeleteCandidate] = useState<WordCard | null>(null);
@@ -2128,12 +2215,14 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
   const personalWords = words.filter((word) => !isPdfWord(word));
   const pdfWords = words.filter(isPdfWord);
   const pdfTopics = (setsFor(pdfWords, "topic") as { label: string }[]).map((folder) => folder.label);
-  const activeCollection = collectionFilter === "pdf" ? (pdfTopic ? pdfWords.filter((word) => primaryTopic(word) === pdfTopic) : pdfWords) : personalWords;
+  const activeCollection: WordCard[] = collectionFilter === "folder"
+    ? (openId ? wordsIn(folders, openId, words) : [])
+    : collectionFilter === "pdf" ? (pdfTopic ? pdfWords.filter((word) => primaryTopic(word) === pdfTopic) : pdfWords) : personalWords;
   const visible = activeCollection.filter((w) => (statusFilter === "all" || wordState(w).key === statusFilter) && (dayFilter === null || addedDayIndex(w) === dayFilter));
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   // Đổi bộ lọc thì về trang 1, và trang không bao giờ vượt quá số trang hiện có.
   // Suy ra ngay lúc render thay vì dùng effect, tránh một lượt render thừa hiển thị trang rỗng.
-  const filterKey = `${query}|${statusFilter}|${dayFilter}|${collectionFilter}|${pdfTopic}`;
+  const filterKey = `${query}|${statusFilter}|${dayFilter}|${collectionFilter}|${pdfTopic}|${openId}`;
   const currentPage = page.key === filterKey ? Math.min(page.value, pageCount) : 1;
   const pagedVisible = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const goToPage = (value: number) => setPage({ key: filterKey, value: Math.min(Math.max(1, value), pageCount) });
@@ -2248,7 +2337,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
         <div>
           <div className="eyebrow">THƯ VIỆN CỦA BẠN</div>
           <h1>Danh sách từ</h1>
-          <p>{collectionFilter === "pdf" ? (pdfTopic ? `${activeCollection.length} từ trong chủ đề ${pdfTopic}.` : `${pdfWords.length} từ trong ${pdfTopics.length} thư mục chủ đề.`) : `${personalWords.length} từ cá nhân · quản lý theo Leitner Box.`}</p>
+          <p>{collectionFilter === "folder" ? (openFolder ? `${activeCollection.length} từ trong ${openFolder.name}.` : `${folders.list.length} danh sách từ bạn tự tạo.`) : collectionFilter === "pdf" ? (pdfTopic ? `${activeCollection.length} từ trong chủ đề ${pdfTopic}.` : `${pdfWords.length} từ trong ${pdfTopics.length} thư mục chủ đề.`) : `${personalWords.length} từ cá nhân · quản lý theo Leitner Box.`}</p>
         </div>
         <div className="section-actions"><AddMenu onManual={add} onPaste={bulkAdd} onDictionary={openDictionary} /></div>
       </div>
@@ -2260,6 +2349,10 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
         <button className={collectionFilter === "pdf" ? "active" : ""} onClick={() => { setDayFilter(null); setCollectionFilter("pdf"); setPdfTopic(null); setQuery(""); }}>
           Bộ từ vựng PDF
           <small>{pdfWords.length}</small>
+        </button>
+        <button className={collectionFilter === "folder" ? "active" : ""} onClick={() => { setDayFilter(null); setCollectionFilter("folder"); setPdfTopic(null); setFolderFilter(null); setQuery(""); }}>
+          Danh sách từ
+          <small>{folders.list.length}</small>
         </button>
         {collectionFilter === "daily" && dayNames.map((name, index) => (
           <button className={dayFilter === index && collectionFilter === "daily" ? "active" : ""} onClick={() => { setDayFilter(index); setCollectionFilter("daily"); }} key={name}>
@@ -2279,6 +2372,59 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
               return <button key={topic} onClick={() => setPdfTopic(topic)}><span>▰</span><b>{topic}</b><small>{count} từ</small><i> Mở →</i></button>;
             })}
           </div>
+        </section>
+      )}
+      {collectionFilter === "folder" && (
+        <section className="wordlists">
+          <div className="wordlists-bar">
+            {openFolder ? (
+              <nav className="wordlist-trail" aria-label="Đường dẫn danh sách từ">
+                <button onClick={() => setFolderFilter(null)}>Danh sách từ của tôi</button>
+                {trail.map((step, index) => (
+                  <Fragment key={step.id}>
+                    <span aria-hidden="true">›</span>
+                    {index === trail.length - 1
+                      ? <b aria-current="page">{step.name}</b>
+                      : <button onClick={() => setFolderFilter(step.id)}>{step.name}</button>}
+                  </Fragment>
+                ))}
+              </nav>
+            ) : (
+              <button className="primary wordlist-create" onClick={() => openCreateForm("")}>
+                <Icon name="plus" /> Tạo danh sách từ
+              </button>
+            )}
+            <div className="wordlists-bar-end">
+              {openFolder && <button onClick={() => openCreateForm(openFolder.id)}><Icon name="plus" /> Tạo danh sách con</button>}
+              {openFolder && <button className="primary" disabled={!activeCollection.length} onClick={() => startWordListReview(activeCollection)}>Ôn tập ({activeCollection.length} từ)</button>}
+            </div>
+          </div>
+          {shownFolders.length > 0 && (
+            <div className="wordlist-grid">
+              {shownFolders.map((folder) => (
+                <div className="wordlist-card" key={folder.id}>
+                  <button className="wordlist-open" onClick={() => setFolderFilter(folder.id)}>
+                    <b>{folder.name}</b>
+                    <span className="wordlist-date"><Icon name="clock" /> {folderDate(folder.createdAt)}</span>
+                    <p className={folder.note ? "" : "muted"}>{folder.note || "Không có ghi chú."}</p>
+                    <span className="wordlist-foot">
+                      <strong>{folder.count}</strong> TỪ{folder.childCount ? ` · ${folder.childCount} danh sách con` : ""}
+                    </span>
+                  </button>
+                  <div className="folder-card-actions">
+                    <button title="Sửa" aria-label={`Sửa danh sách ${folder.name}`} onClick={() => openEditForm(folder)}>✎</button>
+                    <button title="Xoá" aria-label={`Xoá danh sách ${folder.name}`} onClick={() => setFolderToDelete(folder)}>×</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {!shownFolders.length && !openFolder && (
+            <p className="folder-empty">Chưa có danh sách nào. Bấm <b>Tạo danh sách từ</b> để mở cái đầu tiên, rồi bấm nút ▤ ở đầu mỗi từ để cất từ vào.</p>
+          )}
+          {openFolder && !activeCollection.length && !shownFolders.length && (
+            <p className="folder-empty">Danh sách này chưa có từ nào. Mở tab <b>Từ của tôi</b> hoặc <b>Bộ từ vựng PDF</b>, rồi bấm nút ▤ ở đầu mỗi từ để cất vào đây.</p>
+          )}
         </section>
       )}
       {collectionFilter === "pdf" && pdfTopic && (
@@ -2319,7 +2465,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
           )}
         </div>
       )}
-      {(collectionFilter === "daily" || pdfTopic) && <>
+      {(collectionFilter === "daily" || pdfTopic || openId) && <>
       <div className="word-tools">
         <label>
           <span>⌕</span>
@@ -2368,6 +2514,14 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
             <span className="word-main">
               <button onClick={(event) => { event.stopPropagation(); toggleStar(w.id); }} aria-label="Gắn sao">
                 {w.starred ? "★" : "☆"}
+              </button>
+              <button
+                className={`folder-pin${foldersOf(folders, w.id).length ? " in-folder" : ""}`}
+                aria-label={`Cất ${w.term} vào danh sách từ`}
+                title="Cất vào danh sách từ"
+                onClick={(event) => { event.stopPropagation(); setFormError(""); setPickerDraft(""); setFolderPicker(w); }}
+              >
+                ▤
               </button>
               <span>
                 <b>
@@ -2426,6 +2580,94 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
         </nav>
       )}
       </>}
+      {(creating || editing) && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeFolderForm(); }}>
+          <section className="modal wordlist-form" role="dialog" aria-modal="true" aria-labelledby="wordlist-form-title">
+            <div className="modal-head">
+              <h2 id="wordlist-form-title">{editing ? "Sửa danh sách từ" : creating && creating.parentId ? "Tạo danh sách con" : "Tạo danh sách từ mới"}</h2>
+              <button onClick={closeFolderForm} aria-label="Đóng">×</button>
+            </div>
+            <form onSubmit={(event) => { event.preventDefault(); submitFolderForm(); }}>
+              <label htmlFor="wordlist-name">Tiêu đề</label>
+              <input
+                id="wordlist-name"
+                ref={(node) => { if (node && document.activeElement !== node) node.focus(); }}
+                value={draftName}
+                onChange={(event) => { setDraftName(event.target.value); setFormError(""); }}
+                placeholder="Nhập tiêu đề danh sách từ"
+                maxLength={60}
+              />
+              <label htmlFor="wordlist-note">Ghi chú</label>
+              <textarea
+                id="wordlist-note"
+                value={draftNote}
+                onChange={(event) => setDraftNote(event.target.value)}
+                placeholder="Nhập ghi chú hoặc mô tả"
+                rows={4}
+                maxLength={300}
+              />
+              {formError && <p className="folder-note" role="status">{formError}</p>}
+              <div className="modal-actions">
+                <button type="button" onClick={closeFolderForm}>Huỷ</button>
+                <button className="primary" type="submit" disabled={!tidy(draftName)}>{editing ? "Lưu" : "Tạo"}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+      {folderPicker && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFolderPicker(null); }}>
+          <section className="modal folder-picker" role="dialog" aria-modal="true" aria-labelledby="folder-picker-title">
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">CẤT VÀO DANH SÁCH</span>
+                <h2 id="folder-picker-title">{folderPicker.term}</h2>
+              </div>
+              <button onClick={() => setFolderPicker(null)} aria-label="Đóng">×</button>
+            </div>
+            {folders.list.length === 0 ? (
+              <p className="folder-empty">Chưa có danh sách nào. Đặt tên một cái ở dưới, từ này sẽ vào đó luôn.</p>
+            ) : (
+              <ul className="folder-check-list">
+                {folders.list.map((folder) => {
+                  const inside = foldersOf(folders, folderPicker.id).includes(folder.id);
+                  const parent = folder.parentId ? folderPath(folders, folder.id).slice(0, -1).map((step) => step.name).join(" › ") : "";
+                  return (
+                    <li key={folder.id}>
+                      <button className={inside ? "active" : ""} aria-pressed={inside} onClick={() => updateFolders(toggleWord(folders, folder.id, folderPicker.id))}>
+                        <i aria-hidden="true">{inside ? "✓" : "＋"}</i>
+                        <b>{folder.name}</b>
+                        <small>{parent || "Danh sách gốc"}</small>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <form className="folder-new" onSubmit={(event) => { event.preventDefault(); createFromPicker(folderPicker.id); }}>
+              <input value={pickerDraft} onChange={(event) => { setPickerDraft(event.target.value); setFormError(""); }} placeholder="Tên danh sách mới" aria-label="Tên danh sách mới" maxLength={60} />
+              <button className="primary" type="submit" disabled={!tidy(pickerDraft)}>Tạo và cất vào</button>
+            </form>
+            {formError && <p className="folder-note" role="status">{formError}</p>}
+          </section>
+        </div>
+      )}
+      {folderToDelete && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFolderToDelete(null); }}>
+          <section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="folder-delete-title">
+            <span className="confirm-icon">▤</span>
+            <div>
+              <span className="eyebrow">XÁC NHẬN XOÁ DANH SÁCH</span>
+              <h2 id="folder-delete-title">Xoá danh sách “{folderToDelete.name}”?</h2>
+              <p>Danh sách con bên trong cũng bị xoá theo. Từ vựng thì vẫn nằm nguyên trong thư viện của bạn.</p>
+            </div>
+            <div className="confirm-actions">
+              <button onClick={() => setFolderToDelete(null)}>Giữ lại</button>
+              <button className="danger-button" onClick={() => dropFolder(folderToDelete.id)}>Xoá danh sách</button>
+            </div>
+          </section>
+        </div>
+      )}
       {deleteCandidate && (
         <div className="modal-backdrop" onMouseDown={() => setDeleteCandidate(null)}>
           <section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" onMouseDown={(event) => event.stopPropagation()}>

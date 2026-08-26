@@ -2293,3 +2293,82 @@ html,body{
 .primary:not(:disabled):hover{box-shadow:var(--shadow-md)}
 .stat:hover{box-shadow:var(--shadow-md)}
 .panel{box-shadow:var(--shadow-sm)}
+
+
+/* ── Danh sách từ do người dùng tự tạo ─────────────────────────────────────── */
+.wordlists{margin-top:22px}
+.wordlists-bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:18px;min-height:44px}
+.wordlists-bar-end{display:flex;gap:10px;align-items:center;margin-left:auto}
+.wordlist-create{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;font-size:14px;border-radius:12px}
+.wordlist-create svg{width:16px;height:16px}
+.wordlists-bar-end button{display:inline-flex;align-items:center;gap:7px;padding:10px 16px;font-size:13px;border-radius:11px}
+.wordlists-bar-end svg{width:14px;height:14px}
+
+/* Đường dẫn "Danh sách từ của tôi › Từ vựng › ...", mức cuối là chữ thường
+   không bấm được vì bấm vào chính chỗ đang đứng thì chẳng đi đâu. */
+.wordlist-trail{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px}
+.wordlist-trail button{border:0;background:none;padding:0;color:var(--muted);font-size:14px}
+.wordlist-trail button:hover{color:var(--purple)}
+.wordlist-trail span{color:var(--text-3)}
+.wordlist-trail b{color:var(--ink);font-weight:700}
+
+.wordlist-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px}
+.wordlist-card{position:relative;display:grid}
+.wordlist-open{width:100%;display:grid;gap:9px;align-content:start;padding:20px 20px 0;border:1px solid var(--line);background:var(--surface);border-radius:14px;text-align:left;transition:border-color var(--t-fast) var(--ease),transform var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease)}
+.wordlist-open:hover{border-color:var(--purple);transform:translateY(-2px);box-shadow:var(--shadow-md)}
+.wordlist-open>b{font-size:17px;font-weight:700;line-height:1.3}
+.wordlist-date{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}
+.wordlist-date svg{width:13px;height:13px}
+.wordlist-open>p{margin:4px 0 0;font-size:13px;line-height:1.5;color:var(--text-2);min-height:38px}
+.wordlist-open>p.muted{color:var(--text-3)}
+/* Chân thẻ có vạch ngăn kéo hết bề ngang, nên phải bù lại phần đệm hai bên. */
+.wordlist-foot{margin:12px -20px 0;padding:14px 20px;border-top:1px solid var(--line);color:var(--muted);font-size:11px;letter-spacing:.06em}
+.wordlist-foot strong{color:var(--ink);font-size:15px;letter-spacing:0;margin-right:4px}
+
+/* Nút sửa và xoá nổi trên thẻ. Nút lồng trong nút là HTML sai, nên thẻ phải là
+   một div bọc ngoài chứ không phải một nút to. */
+.folder-card-actions{position:absolute;top:10px;right:10px;display:flex;gap:4px;opacity:0;transition:opacity var(--t-fast) var(--ease)}
+/* Hiện khi rê chuột, và cả khi đi bằng bàn phím — nếu không thì người dùng bàn
+   phím tab vào một nút vô hình. */
+.wordlist-card:hover .folder-card-actions,.wordlist-card:focus-within .folder-card-actions{opacity:1}
+.folder-card-actions button{min-height:0;width:26px;height:26px;padding:0;display:grid;place-items:center;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);color:var(--muted);font-size:13px;line-height:1}
+.folder-card-actions button:hover{border-color:var(--purple);color:var(--purple);transform:none;box-shadow:none}
+
+/* Hộp thoại tạo và sửa danh sách */
+.wordlist-form{width:min(480px,92vw)}
+.wordlist-form form{display:grid;gap:7px;margin-top:6px}
+.wordlist-form label{font-size:13px;font-weight:600;margin-top:8px}
+.wordlist-form input,.wordlist-form textarea{width:100%;box-sizing:border-box}
+.wordlist-form textarea{resize:vertical;min-height:96px;font:inherit;line-height:1.5}
+.wordlist-form .modal-actions{margin-top:16px;display:flex;justify-content:flex-end;gap:10px}
+
+.folder-new{display:flex;gap:8px}
+.folder-new input{flex:1;min-width:0}
+.folder-new button{white-space:nowrap}
+.folder-note{margin:0;font-size:12px;color:var(--pink)}
+.folder-empty{margin:0;padding:26px;border:1px dashed var(--line);border-radius:14px;color:var(--muted);font-size:13px;text-align:center;line-height:1.6}
+.folder-empty b{color:var(--ink)}
+
+/* Nút cất từ vào danh sách, nằm cạnh nút sao trong từng hàng. Mờ khi chưa dùng
+   để không tranh chỗ với nội dung của từ, rõ hẳn khi từ đã nằm trong danh sách. */
+.folder-pin{border:0;background:none;padding:0;margin-left:-5px;font-size:13px;line-height:1;color:var(--muted);opacity:.4;transition:opacity var(--t-fast) var(--ease),color var(--t-fast) var(--ease)}
+.word-tr:hover .folder-pin,.folder-pin:focus-visible{opacity:1}
+.folder-pin.in-folder{opacity:1;color:var(--purple)}
+
+.folder-picker{width:min(420px,92vw);display:grid;gap:14px}
+.folder-check-list{list-style:none;margin:0;padding:0;display:grid;gap:6px;max-height:46vh;overflow-y:auto}
+.folder-check-list button{width:100%;display:grid;grid-template-columns:24px 1fr auto;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);background:var(--surface-2);border-radius:11px;text-align:left;transition:border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
+.folder-check-list i{font-style:normal;width:22px;height:22px;border-radius:7px;display:grid;place-items:center;background:var(--soft);color:var(--purple);font-size:12px}
+.folder-check-list b{font-size:13px;font-weight:600}
+.folder-check-list small{color:var(--muted);font-size:11px}
+.folder-check-list button:hover{border-color:var(--purple)}
+.folder-check-list button.active{border-color:var(--purple);background:var(--soft)}
+
+@media(max-width:520px){
+  .wordlists-bar{flex-direction:column;align-items:stretch}
+  .wordlists-bar-end{margin-left:0}
+  .wordlists-bar-end button,.wordlist-create{flex:1;justify-content:center}
+  .folder-new{flex-direction:column}
+  .folder-new button{width:100%}
+  .folder-card-actions{opacity:1}
+}
