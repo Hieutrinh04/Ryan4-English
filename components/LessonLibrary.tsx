@@ -40,7 +40,6 @@ type SavedGroup = { lessonId: string; title: string; items: Saved[] };
 const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "Tất cả" },
   { value: "video", label: "Video của tôi" },
-  { value: "builtin", label: "Thư viện Lexilo" },
   { value: "saved", label: "Câu đã lưu" },
 ];
 
@@ -62,11 +61,6 @@ function shelfLabel(key: ShelfKey, video: { percent: number; done: number; total
   if (key === "finished") return "Đã xong · học lại";
   if (key === "doing") return `${video.percent}% hoàn thành`;
   return video.total ? `${video.total} phân đoạn` : "Sẵn sàng học";
-}
-
-function minutes(seconds: number) {
-  if (!seconds) return "";
-  return `${Math.max(1, Math.round(seconds / 60))} phút`;
 }
 
 export default function LessonLibrary({
@@ -193,7 +187,16 @@ export default function LessonLibrary({
             <p>{mode === "dictation" ? "Chọn chủ đề để luyện kỹ năng nghe" : "Chọn chủ đề để luyện kỹ năng nói"}</p>
           </div>
         </div>
-        <div className="library-summary"><span>▣ <b>{shelf.doing.length}</b> đang học</span><i /> <span className="complete">✓ <b>{shelf.finished.length}</b> đã hoàn thành</span></div>
+        <div className="library-summary">
+          <span>▣ <b>{shelf.doing.length}</b> đang học</span>
+          <i />
+          <span className="complete">✓ <b>{shelf.finished.length}</b> đã hoàn thành</span>
+          {/* Thêm một video lẻ bằng link. Khác với ô thêm cả playlist ở cuối trang:
+              đường này lấy luôn phụ đề nên học được ngay. */}
+          <button className="library-add-video" onClick={addVideo}>
+            <Icon name="plus" size={14} /> Thêm video
+          </button>
+        </div>
       </header>
 
       <div className="library-filter-panel">
@@ -207,128 +210,54 @@ export default function LessonLibrary({
               </button>
             ))}
           </div>
-        ) : (
-          <div className="library-source-summary" aria-label="Nguồn video">
-            <div><i><Icon name="play" size={17} /></i><span><b>Video của bạn</b><small>Video thêm từ YouTube</small></span><em>{lessons.length}</em></div>
-          </div>
+        ) : null}
+        {/* Bộ lọc đặt ngay dưới tiêu đề, không để tận cuối trang: nó là thứ
+            người học dùng trước khi chọn bài, chứ không phải thứ tìm thấy sau
+            khi đã cuộn qua hết danh sách. */}
+        {catalogue.length > 0 && (
+          <>
+                  {/* Thanh lọc theo kênh, kèm số lượng — nhìn là biết kênh nào nhiều bài. */}
+                  <div className="catalogue-filter" role="group" aria-label="Lọc theo kênh">
+                    <button className={channelFilter ? "" : "active"} onClick={() => setChannelFilter("")}>
+                      Tất cả <em>{catalogue.length}</em>
+                    </button>
+                    {allGroups.map((group) => (
+                      <button
+                        key={group.channel}
+                        className={channelFilter === group.channel ? "active" : ""}
+                        onClick={() => setChannelFilter(group.channel)}
+                      >
+                        {group.channel} <em>{group.videos.length}</em>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Cấp độ đo từ chính lời thoại nên chỉ video đã có phụ đề mới có.
+                      Lọc theo mức sẽ bỏ qua video chưa đo được — đó là chủ ý, chứ xếp
+                      đại vào một mức thì bộ lọc thành vô nghĩa. */}
+                  <div className="catalogue-filter levels" role="group" aria-label="Lọc theo cấp độ">
+                    <button className={levelFilter ? "" : "active"} onClick={() => setLevelFilter("")}>
+                      Tất cả cấp độ
+                    </button>
+                    {(LEVELS as string[]).map((item) => (
+                      <button
+                        key={item}
+                        className={levelFilter === item ? "active" : ""}
+                        onClick={() => setLevelFilter(item)}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+          </>
         )}
       </div>
 
-      {showVideo && (
-        <section className="library-block library-user-videos">
-          <div className="library-section-title"><div><small>THƯ VIỆN CÁ NHÂN</small><h2>{mode === "shadowing" ? "Video của bạn" : "Tiếp tục học"}</h2></div><span>{lessons.length ? `${lessons.length} video đã thêm` : "Thêm video từ YouTube để bắt đầu"}</span><button className="library-add-video" onClick={addVideo}><Icon name="plus" size={14} /> Thêm video</button></div>
-          {lessons.length ? (
-            <div className="library-grid">
-              {lessons.map((lesson) => (
-                <button key={lesson.id} className="library-card video" onClick={() => pickVideo(lesson)}>
-                  {/* Ảnh bìa lấy thẳng từ YouTube theo mã video, không phải tải về lưu. */}
-                  <span className="library-thumb" style={{ backgroundImage: `url(https://i.ytimg.com/vi/${lesson.videoId}/mqdefault.jpg)` }}>
-                    <em className="level-badge">B1</em><em className="duration-badge">◷ {minutes(lesson.seconds)}</em>
-                  </span>
-                  <span className="library-card-copy"><b>{lesson.title}</b><small>{lesson.author || "Video của tôi"}</small><strong>{lesson.sentences.length} phân đoạn</strong></span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            // Chưa có bài thì phải nói rõ cách lấy, chứ không để một ô trống khiến
-            // người dùng tưởng tính năng chưa tồn tại.
-            <div className="library-empty">
-              <Icon name="headphones" size={22} />
-              <div>
-                <b>Chưa có bài nào từ video</b>
-                <p>Dán liên kết YouTube để Lexilo lấy thông tin và phụ đề tiếng Anh, hoặc dùng tiện ích trên trang YouTube.</p>
-                <button className="library-empty-action" onClick={addVideo}>Dán link YouTube</button>
-              </div>
-            </div>
-          )}
-        </section>
-      )}
 
       {showVideo && (
         <section className="library-block library-catalogue">
-          <div className="library-section-title">
-            <div><small>DANH MỤC CỦA BẠN</small><h2>Thêm cả playlist hoặc cả kênh</h2></div>
-            <span>{catalogue.length ? `${catalogue.length} video trong danh mục` : "Dán link playlist hoặc kênh YouTube"}</span>
-          </div>
-
-          {/* Video vẫn phát từ YouTube. Ở đây chỉ lấy tiêu đề, kênh, thời lượng và
-              ảnh bìa qua API chính thức — không tải video về, không lưu video. */}
-          <form
-            className="catalogue-add"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void fetchList();
-            }}
-          >
-            <input
-              value={link}
-              onChange={(event) => setLink(event.target.value)}
-              placeholder="https://www.youtube.com/@bbclearningenglish hoặc link playlist…"
-              aria-label="Link playlist hoặc kênh YouTube"
-              disabled={loading}
-            />
-            <button className="primary" type="submit" disabled={loading || !link.trim()}>
-              {loading ? "Đang đọc…" : "Lấy danh sách"}
-            </button>
-          </form>
-          {note && <p className="catalogue-note">{note}</p>}
-
-          {/* Kênh gợi ý: bấm một cái là có cả danh sách bài, không phải đi tìm link.
-              Chỉ lưu tên kênh trong mã, danh sách video luôn đọc mới từ API. */}
-          <div className="catalogue-suggested">
-            <span>Kênh gợi ý</span>
-            <div>
-              {(alreadyAdded(SUGGESTED_CHANNELS, catalogue) as Suggested[]).map((channel) => (
-                <button
-                  key={channel.handle}
-                  className={channel.added ? "added" : ""}
-                  disabled={loading || channel.added}
-                  onClick={() => void loadFrom(channelUrl(channel.handle) as string)}
-                  title={channel.blurb}
-                >
-                  {channel.name}
-                  <em>{channel.added ? "đã thêm" : channel.levels}</em>
-                </button>
-              ))}
-            </div>
-          </div>
-
           {catalogue.length > 0 && (
             <>
-              {/* Thanh lọc theo kênh, kèm số lượng — nhìn là biết kênh nào nhiều bài. */}
-              <div className="catalogue-filter" role="group" aria-label="Lọc theo kênh">
-                <button className={channelFilter ? "" : "active"} onClick={() => setChannelFilter("")}>
-                  Tất cả <em>{catalogue.length}</em>
-                </button>
-                {allGroups.map((group) => (
-                  <button
-                    key={group.channel}
-                    className={channelFilter === group.channel ? "active" : ""}
-                    onClick={() => setChannelFilter(group.channel)}
-                  >
-                    {group.channel} <em>{group.videos.length}</em>
-                  </button>
-                ))}
-              </div>
-
-              {/* Cấp độ đo từ chính lời thoại nên chỉ video đã có phụ đề mới có.
-                  Lọc theo mức sẽ bỏ qua video chưa đo được — đó là chủ ý, chứ xếp
-                  đại vào một mức thì bộ lọc thành vô nghĩa. */}
-              <div className="catalogue-filter levels" role="group" aria-label="Lọc theo cấp độ">
-                <button className={levelFilter ? "" : "active"} onClick={() => setLevelFilter("")}>
-                  Tất cả cấp độ
-                </button>
-                {(LEVELS as string[]).map((item) => (
-                  <button
-                    key={item}
-                    className={levelFilter === item ? "active" : ""}
-                    onClick={() => setLevelFilter(item)}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-
               {/* Xếp theo TRẠNG THÁI HỌC chứ không theo kênh: mở lên là thấy ngay
                   việc cần làm tiếp, không phải tự nhớ hôm qua đang dở bài nào. */}
               {/* Lọc ra rỗng thì nói rõ, đừng để một mảng trống bên dưới bộ lọc
@@ -393,6 +322,53 @@ export default function LessonLibrary({
               })}
             </>
           )}
+
+          <div className="library-section-title">
+            <div><small>DANH MỤC CỦA BẠN</small><h2>Thêm cả playlist hoặc cả kênh</h2></div>
+            <span>{catalogue.length ? `${catalogue.length} video trong danh mục` : "Dán link playlist hoặc kênh YouTube"}</span>
+          </div>
+
+          {/* Video vẫn phát từ YouTube. Ở đây chỉ lấy tiêu đề, kênh, thời lượng và
+              ảnh bìa qua API chính thức — không tải video về, không lưu video. */}
+          <form
+            className="catalogue-add"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void fetchList();
+            }}
+          >
+            <input
+              value={link}
+              onChange={(event) => setLink(event.target.value)}
+              placeholder="https://www.youtube.com/@bbclearningenglish hoặc link playlist…"
+              aria-label="Link playlist hoặc kênh YouTube"
+              disabled={loading}
+            />
+            <button className="primary" type="submit" disabled={loading || !link.trim()}>
+              {loading ? "Đang đọc…" : "Lấy danh sách"}
+            </button>
+          </form>
+          {note && <p className="catalogue-note">{note}</p>}
+
+          {/* Kênh gợi ý: bấm một cái là có cả danh sách bài, không phải đi tìm link.
+              Chỉ lưu tên kênh trong mã, danh sách video luôn đọc mới từ API. */}
+          <div className="catalogue-suggested">
+            <span>Kênh gợi ý</span>
+            <div>
+              {(alreadyAdded(SUGGESTED_CHANNELS, catalogue) as Suggested[]).map((channel) => (
+                <button
+                  key={channel.handle}
+                  className={channel.added ? "added" : ""}
+                  disabled={loading || channel.added}
+                  onClick={() => void loadFrom(channelUrl(channel.handle) as string)}
+                  title={channel.blurb}
+                >
+                  {channel.name}
+                  <em>{channel.added ? "đã thêm" : channel.levels}</em>
+                </button>
+              ))}
+            </div>
+          </div>
         </section>
       )}
 
