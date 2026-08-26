@@ -5,6 +5,7 @@ import Icon from "./Icon";
 import { groupByLesson, readSaved, removeSentence } from "../lib/saved-sentences.mjs";
 import { addToCatalogue, countNew, groupByChannel, readCatalogue, removeFromCatalogue, withLessonState } from "../lib/catalogue.mjs";
 import { readableLength } from "../lib/youtube-list.mjs";
+import { doneSentences, readLessonProgress } from "../lib/lessons.mjs";
 import { DEFAULT_CHANNEL, SUGGESTED_CHANNELS, alreadyAdded, channelUrl } from "../lib/suggested-channels.mjs";
 
 // Màn hình vào của Dictation và Shadowing.
@@ -43,6 +44,29 @@ const FILTERS: { value: Filter; label: string }[] = [
 
 const SEEDED = "lexilo:catalogue-seeded:v1";
 
+// Mỗi khối mở sẵn năm thẻ, đúng một hàng. Một kênh có thể có hàng trăm bài; đổ
+// hết ra thì phải cuộn rất lâu mới tới kênh tiếp theo.
+const PER_ROW = 5;
+
+/**
+ * Trạng thái học của một video, để hiện ngay trên thẻ.
+ *
+ * Bốn mức tách bạch: chưa có phụ đề thì chưa học được, có rồi mà chưa đụng tới
+ * là chưa bắt đầu, đang dở thì cho biết đã qua bao nhiêu câu.
+ */
+function watchState(
+  video: { ready?: boolean },
+  lesson: VideoLessonCard | undefined,
+  progress: Record<string, unknown>,
+) {
+  if (!video.ready || !lesson) return { label: "Chưa có phụ đề", tone: "waiting" };
+  const total = lesson.sentences.length;
+  const done = (doneSentences(progress, lesson.id, "shadowing") as number[]).length;
+  if (!done) return { label: "Chưa bắt đầu", tone: "" };
+  if (done >= total) return { label: "Đã xong", tone: "done" };
+  return { label: `${done}/${total} câu`, tone: "doing" };
+}
+
 function minutes(seconds: number) {
   if (!seconds) return "";
   return `${Math.max(1, Math.round(seconds / 60))} phút`;
@@ -67,12 +91,16 @@ export default function LessonLibrary({
   const [link, setLink] = useState("");
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState("");
+  const [channelFilter, setChannelFilter] = useState("");
+  const [expanded, setExpanded] = useState<string[]>([]);
+  const [progress, setProgress] = useState<Record<string, unknown>>({});
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
     setSaved(readSaved() as Saved[]);
     const saved = readCatalogue() as CatalogueVideo[];
     setCatalogue(saved);
+    setProgress(readLessonProgress() as Record<string, unknown>);
     // Lần đầu vào mà chưa có gì thì tự nạp một kênh cho có bài sẵn. Chỉ thử đúng
     // một lần: đánh dấu TRƯỚC khi gọi, để mạng hỏng cũng không gọi lại mỗi lần mở.
     try {
@@ -127,6 +155,14 @@ export default function LessonLibrary({
   const fetchList = () => loadFrom(link.trim());
 
   const savedGroups = useMemo(() => groupByLesson(saved) as SavedGroup[], [saved]);
+  const allGroups = useMemo(
+    () => groupByChannel(withLessonState(catalogue, lessons)) as ChannelGroup[],
+    [catalogue, lessons],
+  );
+  const shownGroups = useMemo(
+    () => (channelFilter ? allGroups.filter((group) => group.channel === channelFilter) : allGroups),
+    [allGroups, channelFilter],
+  );
   // Chỉ còn một nguồn video: video bạn tự thêm. Kho bài "hệ thống" cũ đã bỏ —
   // nó gắn nhãn "Video hệ thống" nhưng không có video nào, chỉ là từng câu chữ
   // lẻ kèm icon micro, nhại một câu rời như vậy không luyện được gì.
@@ -245,51 +281,88 @@ export default function LessonLibrary({
           </div>
 
           {catalogue.length > 0 && (
-            <div className="catalogue-groups">
-              {(groupByChannel(withLessonState(catalogue, lessons)) as ChannelGroup[]).map((group) => (
-                <div key={group.channel} className="catalogue-group">
-                  <div className="catalogue-group-head">
-                    <b>{group.channel}</b>
-                    <em>{group.videos.length} video</em>
-                  </div>
-                  <div className="library-grid">
-                    {group.videos.map((video) => {
-                      const lesson = lessons.find((item) => item.videoId === video.videoId);
-                      return (
-                        <div key={video.videoId} className="library-card video catalogue-card">
+            <>
+              {/* Thanh lọc theo nhóm, kèm số lượng — nhìn là biết nhóm nào có
+                  nhiều bài, không phải cuộn hết mới biết. */}
+              <div className="catalogue-filter" role="group" aria-label="Lọc theo kênh">
+                <button className={channelFilter ? "" : "active"} onClick={() => setChannelFilter("")}>
+                  Tất cả <em>{catalogue.length}</em>
+                </button>
+                {allGroups.map((group) => (
+                  <button
+                    key={group.channel}
+                    className={channelFilter === group.channel ? "active" : ""}
+                    onClick={() => setChannelFilter(group.channel)}
+                  >
+                    {group.channel} <em>{group.videos.length}</em>
+                  </button>
+                ))}
+              </div>
+
+              <div className="catalogue-groups">
+                {shownGroups.map((group) => {
+                  const open = expanded.includes(group.channel);
+                  // Mỗi khối chỉ mở năm thẻ đầu. Một kênh có thể có hàng trăm bài;
+                  // đổ hết ra thì phải cuộn rất lâu mới tới kênh tiếp theo.
+                  const videos = open ? group.videos : group.videos.slice(0, PER_ROW);
+                  return (
+                    <div key={group.channel} className="catalogue-group">
+                      <div className="catalogue-group-head">
+                        <b>{group.channel}</b>
+                        <em>{group.videos.length}</em>
+                        {group.videos.length > PER_ROW && (
                           <button
-                            className="catalogue-open"
-                            onClick={() => {
-                              if (lesson) pickVideo(lesson);
-                              else window.open(`https://www.youtube.com/watch?v=${video.videoId}`, "_blank", "noopener");
-                            }}
+                            className="catalogue-more"
+                            onClick={() =>
+                              setExpanded((current) =>
+                                current.includes(group.channel)
+                                  ? current.filter((name) => name !== group.channel)
+                                  : [...current, group.channel],
+                              )
+                            }
                           >
-                            <span className="library-thumb" style={{ backgroundImage: `url(${video.thumbnail})` }}>
-                              {video.seconds > 0 && <em className="duration-badge">◷ {readableLength(video.seconds)}</em>}
-                              {video.ready && <em className="level-badge">Có phụ đề</em>}
-                            </span>
-                            <span className="library-card-copy">
-                              <b>{video.title}</b>
-                              <small>{video.channel}</small>
-                              {/* Phụ đề chỉ lấy được từ trong trang YouTube: Google không
-                                  cho tải phụ đề bằng khoá API. Nói rõ để khỏi tưởng hỏng. */}
-                              <strong>{video.ready ? "Vào học →" : "Mở trên YouTube rồi bấm Lexilo để lấy phụ đề"}</strong>
-                            </span>
+                            {open ? "Thu gọn" : "Xem thêm"}
                           </button>
-                          <button
-                            className="catalogue-remove"
-                            onClick={() => setCatalogue(removeFromCatalogue(video.videoId) as CatalogueVideo[])}
-                            aria-label={`Bỏ ${video.title} khỏi danh mục`}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
+                        )}
+                      </div>
+                      <div className="catalogue-row">
+                        {videos.map((video) => {
+                          const lesson = lessons.find((item) => item.videoId === video.videoId);
+                          const state = watchState(video, lesson, progress);
+                          return (
+                            <div key={video.videoId} className="catalogue-card">
+                              <button
+                                className="catalogue-open"
+                                onClick={() => {
+                                  if (lesson) pickVideo(lesson);
+                                  else window.open(`https://www.youtube.com/watch?v=${video.videoId}`, "_blank", "noopener");
+                                }}
+                              >
+                                <span className="catalogue-thumb" style={{ backgroundImage: `url(${video.thumbnail})` }}>
+                                  {video.seconds > 0 && <em className="duration-badge">◷ {readableLength(video.seconds)}</em>}
+                                </span>
+                                <b>{video.title}</b>
+                                {/* Phụ đề chỉ lấy được từ trong trang YouTube — Google
+                                    không cho tải phụ đề bằng khoá API. Nói rõ trạng thái
+                                    để khỏi tưởng bài bị hỏng. */}
+                                <small className={state.tone}>{state.label}</small>
+                              </button>
+                              <button
+                                className="catalogue-remove"
+                                onClick={() => setCatalogue(removeFromCatalogue(video.videoId) as CatalogueVideo[])}
+                                aria-label={`Bỏ ${video.title} khỏi danh mục`}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </section>
       )}
