@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "./Icon";
 import { groupByLesson, readSaved, removeSentence } from "../lib/saved-sentences.mjs";
-import { addToCatalogue, countNew, groupByChannel, readCatalogue, removeFromCatalogue, withLessonState } from "../lib/catalogue.mjs";
+import { addToCatalogue, countNew, groupByChannel, readCatalogue, removeFromCatalogue, shelves, withLessonState } from "../lib/catalogue.mjs";
 import { readableLength } from "../lib/youtube-list.mjs";
-import { doneSentences, readLessonProgress } from "../lib/lessons.mjs";
+import { readLessonProgress } from "../lib/lessons.mjs";
 import { DEFAULT_CHANNEL, SUGGESTED_CHANNELS, alreadyAdded, channelUrl } from "../lib/suggested-channels.mjs";
 
 // Màn hình vào của Dictation và Shadowing.
@@ -31,6 +31,7 @@ export type VideoLessonCard = {
 type Filter = "all" | "video" | "builtin" | "saved";
 type CatalogueVideo = { videoId: string; title: string; channel: string; seconds: number; thumbnail: string; ready?: boolean };
 type ChannelGroup = { channel: string; videos: CatalogueVideo[] };
+type ShelfVideo = CatalogueVideo & { lesson: VideoLessonCard | null; done: number; total: number; percent: number };
 type Suggested = { handle: string; name: string; levels: string; blurb: string; added?: boolean };
 type Saved = { key: string; lessonId: string; lessonTitle: string; index: number; text: string; translation: string };
 type SavedGroup = { lessonId: string; title: string; items: Saved[] };
@@ -44,27 +45,22 @@ const FILTERS: { value: Filter; label: string }[] = [
 
 const SEEDED = "lexilo:catalogue-seeded:v1";
 
-// Mỗi khối mở sẵn năm thẻ, đúng một hàng. Một kênh có thể có hàng trăm bài; đổ
-// hết ra thì phải cuộn rất lâu mới tới kênh tiếp theo.
-const PER_ROW = 5;
+// Thứ tự kệ: việc đang dở lên trước, việc chưa làm được đẩy xuống cuối.
+const SHELVES = [
+  { key: "doing", title: "Tiếp tục học", hint: "Bài bạn đang làm dở" },
+  { key: "fresh", title: "Bài học mới", hint: "Đã có phụ đề, chưa bắt đầu" },
+  { key: "noCaption", title: "Cần lấy phụ đề", hint: "Mở trên YouTube rồi bấm Lexilo" },
+  { key: "finished", title: "Đã hoàn thành", hint: "Xem lại bất cứ lúc nào" },
+] as const;
 
-/**
- * Trạng thái học của một video, để hiện ngay trên thẻ.
- *
- * Bốn mức tách bạch: chưa có phụ đề thì chưa học được, có rồi mà chưa đụng tới
- * là chưa bắt đầu, đang dở thì cho biết đã qua bao nhiêu câu.
- */
-function watchState(
-  video: { ready?: boolean },
-  lesson: VideoLessonCard | undefined,
-  progress: Record<string, unknown>,
-) {
-  if (!video.ready || !lesson) return { label: "Chưa có phụ đề", tone: "waiting" };
-  const total = lesson.sentences.length;
-  const done = (doneSentences(progress, lesson.id, "shadowing") as number[]).length;
-  if (!done) return { label: "Chưa bắt đầu", tone: "" };
-  if (done >= total) return { label: "Đã xong", tone: "done" };
-  return { label: `${done}/${total} câu`, tone: "doing" };
+type ShelfKey = (typeof SHELVES)[number]["key"];
+
+/** Dòng chữ dưới mỗi thẻ, nói đúng việc tiếp theo của thẻ đó. */
+function shelfLabel(key: ShelfKey, video: { percent: number; done: number; total: number }) {
+  if (key === "noCaption") return "Chưa có phụ đề";
+  if (key === "finished") return "Đã xong · học lại";
+  if (key === "doing") return `${video.percent}% hoàn thành`;
+  return video.total ? `${video.total} phân đoạn` : "Sẵn sàng học";
 }
 
 function minutes(seconds: number) {
@@ -92,8 +88,14 @@ export default function LessonLibrary({
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState("");
   const [channelFilter, setChannelFilter] = useState("");
-  const [expanded, setExpanded] = useState<string[]>([]);
   const [progress, setProgress] = useState<Record<string, unknown>>({});
+  const rows = useRef<Record<string, HTMLDivElement | null>>({});
+
+  /** Cuộn một kệ đi đúng một màn. Băng chuyền dài thì kéo tay rất mỏi. */
+  function slide(key: string, direction: number) {
+    const row = rows.current[key];
+    if (row) row.scrollBy({ left: direction * row.clientWidth * 0.9, behavior: "smooth" });
+  }
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
@@ -159,10 +161,10 @@ export default function LessonLibrary({
     () => groupByChannel(withLessonState(catalogue, lessons)) as ChannelGroup[],
     [catalogue, lessons],
   );
-  const shownGroups = useMemo(
-    () => (channelFilter ? allGroups.filter((group) => group.channel === channelFilter) : allGroups),
-    [allGroups, channelFilter],
-  );
+  const shelf = useMemo(() => {
+    const list = channelFilter ? catalogue.filter((item) => item.channel === channelFilter) : catalogue;
+    return shelves(list, lessons, progress, mode) as Record<ShelfKey, ShelfVideo[]>;
+  }, [catalogue, lessons, progress, channelFilter, mode]);
   // Chỉ còn một nguồn video: video bạn tự thêm. Kho bài "hệ thống" cũ đã bỏ —
   // nó gắn nhãn "Video hệ thống" nhưng không có video nào, chỉ là từng câu chữ
   // lẻ kèm icon micro, nhại một câu rời như vậy không luyện được gì.
@@ -282,8 +284,7 @@ export default function LessonLibrary({
 
           {catalogue.length > 0 && (
             <>
-              {/* Thanh lọc theo nhóm, kèm số lượng — nhìn là biết nhóm nào có
-                  nhiều bài, không phải cuộn hết mới biết. */}
+              {/* Thanh lọc theo kênh, kèm số lượng — nhìn là biết kênh nào nhiều bài. */}
               <div className="catalogue-filter" role="group" aria-label="Lọc theo kênh">
                 <button className={channelFilter ? "" : "active"} onClick={() => setChannelFilter("")}>
                   Tất cả <em>{catalogue.length}</em>
@@ -299,69 +300,54 @@ export default function LessonLibrary({
                 ))}
               </div>
 
-              <div className="catalogue-groups">
-                {shownGroups.map((group) => {
-                  const open = expanded.includes(group.channel);
-                  // Mỗi khối chỉ mở năm thẻ đầu. Một kênh có thể có hàng trăm bài;
-                  // đổ hết ra thì phải cuộn rất lâu mới tới kênh tiếp theo.
-                  const videos = open ? group.videos : group.videos.slice(0, PER_ROW);
-                  return (
-                    <div key={group.channel} className="catalogue-group">
-                      <div className="catalogue-group-head">
-                        <b>{group.channel}</b>
-                        <em>{group.videos.length}</em>
-                        {group.videos.length > PER_ROW && (
-                          <button
-                            className="catalogue-more"
-                            onClick={() =>
-                              setExpanded((current) =>
-                                current.includes(group.channel)
-                                  ? current.filter((name) => name !== group.channel)
-                                  : [...current, group.channel],
-                              )
-                            }
-                          >
-                            {open ? "Thu gọn" : "Xem thêm"}
-                          </button>
-                        )}
-                      </div>
-                      <div className="catalogue-row">
-                        {videos.map((video) => {
-                          const lesson = lessons.find((item) => item.videoId === video.videoId);
-                          const state = watchState(video, lesson, progress);
-                          return (
-                            <div key={video.videoId} className="catalogue-card">
-                              <button
-                                className="catalogue-open"
-                                onClick={() => {
-                                  if (lesson) pickVideo(lesson);
-                                  else window.open(`https://www.youtube.com/watch?v=${video.videoId}`, "_blank", "noopener");
-                                }}
-                              >
-                                <span className="catalogue-thumb" style={{ backgroundImage: `url(${video.thumbnail})` }}>
-                                  {video.seconds > 0 && <em className="duration-badge">◷ {readableLength(video.seconds)}</em>}
-                                </span>
-                                <b>{video.title}</b>
-                                {/* Phụ đề chỉ lấy được từ trong trang YouTube — Google
-                                    không cho tải phụ đề bằng khoá API. Nói rõ trạng thái
-                                    để khỏi tưởng bài bị hỏng. */}
-                                <small className={state.tone}>{state.label}</small>
-                              </button>
-                              <button
-                                className="catalogue-remove"
-                                onClick={() => setCatalogue(removeFromCatalogue(video.videoId) as CatalogueVideo[])}
-                                aria-label={`Bỏ ${video.title} khỏi danh mục`}
-                              >
-                                ×
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
+              {/* Xếp theo TRẠNG THÁI HỌC chứ không theo kênh: mở lên là thấy ngay
+                  việc cần làm tiếp, không phải tự nhớ hôm qua đang dở bài nào. */}
+              {SHELVES.map(({ key, title, hint }) => {
+                const videos = shelf[key];
+                if (!videos.length) return null;
+                return (
+                  <div key={key} className="catalogue-shelf">
+                    <div className="catalogue-shelf-head">
+                      <b>{title}</b>
+                      <em>{videos.length}</em>
+                      <small>{hint}</small>
+                      <span className="catalogue-arrows">
+                        <button onClick={() => slide(key, -1)} aria-label="Lùi lại">←</button>
+                        <button onClick={() => slide(key, 1)} aria-label="Tiếp theo">→</button>
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
+                    <div className="catalogue-row" ref={(node) => { rows.current[key] = node; }}>
+                      {videos.map((video) => (
+                        <div key={video.videoId} className="catalogue-card">
+                          <button
+                            className="catalogue-open"
+                            onClick={() => {
+                              if (video.lesson) pickVideo(video.lesson);
+                              else window.open(`https://www.youtube.com/watch?v=${video.videoId}`, "_blank", "noopener");
+                            }}
+                          >
+                            <span className="catalogue-thumb" style={{ backgroundImage: `url(${video.thumbnail})` }}>
+                              {video.seconds > 0 && <em className="duration-badge">◷ {readableLength(video.seconds)}</em>}
+                              {/* Thanh tiến độ nằm ngay trên ảnh: lướt mắt là thấy
+                                  còn bao nhiêu, không phải đọc số. */}
+                              {video.percent > 0 && <i className="catalogue-bar"><i style={{ width: `${video.percent}%` }} /></i>}
+                            </span>
+                            <b>{video.title}</b>
+                            <small className={key}>{shelfLabel(key, video)}</small>
+                          </button>
+                          <button
+                            className="catalogue-remove"
+                            onClick={() => setCatalogue(removeFromCatalogue(video.videoId) as CatalogueVideo[])}
+                            aria-label={`Bỏ ${video.title} khỏi danh mục`}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </>
           )}
         </section>

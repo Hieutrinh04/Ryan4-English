@@ -66,3 +66,47 @@ test("withLessonState: đánh dấu video đã có phụ đề để mở học 
   assert.equal(marked[1].ready, false);
   assert.deepEqual(withLessonState(null, null), []);
 });
+
+const { shelves, videoProgress } = await import("../lib/catalogue.mjs");
+
+const bai = (videoId, count) => ({ id: `yt-${videoId}`, videoId, sentences: Array.from({ length: count }, (_, i) => ({ index: i + 1 })) });
+
+test("videoProgress: đếm câu đã xong và làm tròn xuống", () => {
+  const progress = { "yt-axxxxxxxxxx": { shadowing: [1, 2] } };
+  assert.deepEqual(videoProgress(bai("axxxxxxxxxx", 3), progress), { done: 2, total: 3, percent: 66 });
+  // Chưa có phụ đề thì không có gì để đếm.
+  assert.deepEqual(videoProgress(null, progress), { done: 0, total: 0, percent: 0 });
+});
+
+test("videoProgress: đếm riêng theo cách luyện", () => {
+  const progress = { "yt-axxxxxxxxxx": { shadowing: [1], dictation: [1, 2, 3] } };
+  assert.equal(videoProgress(bai("axxxxxxxxxx", 3), progress, "shadowing").done, 1);
+  assert.equal(videoProgress(bai("axxxxxxxxxx", 3), progress, "dictation").done, 3);
+});
+
+test("shelves: chia theo trạng thái học, không theo kênh", () => {
+  const videos = [video("a"), video("b"), video("c"), video("d")];
+  const lessons = [bai("axxxxxxxxxx", 4), bai("bxxxxxxxxxx", 4), bai("cxxxxxxxxxx", 4)];
+  const progress = {
+    "yt-axxxxxxxxxx": { shadowing: [1, 2] },
+    "yt-cxxxxxxxxxx": { shadowing: [1, 2, 3, 4] },
+  };
+  const kệ = shelves(videos, lessons, progress);
+  assert.deepEqual(kệ.doing.map((item) => item.videoId), ["axxxxxxxxxx"]);
+  assert.deepEqual(kệ.fresh.map((item) => item.videoId), ["bxxxxxxxxxx"]);
+  assert.deepEqual(kệ.finished.map((item) => item.videoId), ["cxxxxxxxxxx"]);
+  // Chưa có phụ đề để riêng: bấm vào không học được mà mở YouTube.
+  assert.deepEqual(kệ.noCaption.map((item) => item.videoId), ["dxxxxxxxxxx"]);
+});
+
+test("shelves: bài gần xong nhất lên đầu kệ đang học", () => {
+  const videos = [video("a"), video("b")];
+  const lessons = [bai("axxxxxxxxxx", 10), bai("bxxxxxxxxxx", 10)];
+  const progress = { "yt-axxxxxxxxxx": { shadowing: [1] }, "yt-bxxxxxxxxxx": { shadowing: [1, 2, 3, 4, 5, 6, 7, 8] } };
+  assert.deepEqual(shelves(videos, lessons, progress).doing.map((item) => item.percent), [80, 10]);
+});
+
+test("shelves: dữ liệu sai kiểu trả về bốn kệ rỗng", () => {
+  const kệ = shelves(null, null, null);
+  assert.deepEqual([kệ.doing, kệ.fresh, kệ.finished, kệ.noCaption], [[], [], [], []]);
+});

@@ -2216,3 +2216,34 @@ html,body{
 .catalogue-open>small.doing{color:var(--purple-dark);font-weight:700}
 .catalogue-open>small.done{color:var(--mark-ok);font-weight:700}
 .catalogue-open>small.waiting{color:var(--muted)}
+
+/* ── Danh mục xếp theo kệ, mỗi kệ là một băng chuyền ngang ─────────────────── */
+.catalogue-shelf{margin-top:22px}
+.catalogue-shelf-head{display:flex;align-items:center;gap:10px;margin-bottom:11px}
+.catalogue-shelf-head b{font-size:16px;letter-spacing:-.2px}
+.catalogue-shelf-head em{font-style:normal;background:var(--surface-2);color:var(--muted);
+  border-radius:20px;padding:3px 9px;font-size:10.5px;font-weight:700}
+.catalogue-shelf-head small{color:var(--text-3);font-size:11px}
+.catalogue-arrows{margin-left:auto;display:flex;gap:6px}
+.catalogue-arrows button{width:30px;height:30px;border:1px solid var(--line);background:var(--surface);
+  color:var(--text-2);border-radius:50%;font-size:14px;line-height:1;display:grid;place-items:center}
+.catalogue-arrows button:hover{border-color:var(--purple);color:var(--purple-dark)}
+
+/* Băng chuyền: cuộn ngang, dừng đúng mép thẻ. Ghi đè lưới cũ. */
+.catalogue-row{
+  display:flex;gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;
+  padding-bottom:4px;scrollbar-width:thin;
+}
+.catalogue-row>*{flex:0 0 clamp(190px,19vw,250px);scroll-snap-align:start}
+.catalogue-row::-webkit-scrollbar{height:6px}
+.catalogue-row::-webkit-scrollbar-thumb{background:var(--line-accent);border-radius:3px}
+
+/* Thanh tiến độ nằm trên ảnh bìa: lướt mắt là thấy còn bao nhiêu. */
+.catalogue-bar{position:absolute;left:0;right:0;bottom:0;height:4px;background:#0b0812a8;
+  border-radius:0 0 11px 11px;overflow:hidden;display:block}
+.catalogue-bar>i{display:block;height:100%;background:var(--purple)}
+
+.catalogue-open>small.doing{color:var(--purple-dark);font-weight:700}
+.catalogue-open>small.finished{color:var(--mark-ok);font-weight:700}
+.catalogue-open>small.noCaption{color:var(--muted)}
+.catalogue-open>small.fresh{color:var(--text-3)}
