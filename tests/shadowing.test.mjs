@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildShadowingLessons, minutesOf, paceOf, scoreShadowing, shadowingAdvice } from "../lib/shadowing.mjs";
+import { paceOf, scoreShadowing, shadowingAdvice } from "../lib/shadowing.mjs";
 
 test("nói đúng nguyên câu thì độ rõ lời đạt 100", () => {
   const result = scoreShadowing("The train leaves the station.", "the train leaves the station");
@@ -65,25 +65,6 @@ test("không thu được tiếng nào thì báo kiểm tra micro, không phán 
 test("luôn kèm câu nói rõ máy không chấm được giọng", () => {
   const notes = shadowingAdvice(scoreShadowing("Hello there.", "hello there"), paceOf(2, 1));
   assert.match(notes.map((note) => note.text).join(" "), /không chấm được giọng/);
-});
-
-test("buildShadowingLessons: gom các câu cùng bài thành một đoạn", () => {
-  const lessons = buildShadowingLessons([
-    { id: "a1", topic: "VOA", title: "Welcome!", level: "A1", sentence: "Hi! Are you Anna?", sourceName: "VOA" },
-    { id: "a2", topic: "VOA", title: "Welcome!", level: "B1", sentence: "Yes! Hi there!", sourceName: "VOA" },
-    { id: "b1", topic: "Du lịch", title: "Nhà ga", level: "A1", sentence: "The train leaves." },
-  ]);
-  assert.equal(lessons.length, 2);
-  assert.equal(lessons[0].lines.length, 2);
-  // Trình độ cả bài lấy theo câu khó nhất, nếu không người học chọn A1 lại gặp câu B1.
-  assert.equal(lessons[0].level, "B1");
-  assert.equal(lessons[0].sourceName, "VOA");
-});
-
-test("minutesOf: một lượt ngắn vẫn được ghi nhận là một phút", () => {
-  assert.equal(minutesOf(12), 1);
-  assert.equal(minutesOf(90), 2);
-  assert.equal(minutesOf(0), 1);
 });
 
 test("marks: giữ nguyên thứ tự nói, từ thừa nằm đúng chỗ nó chen vào", () => {

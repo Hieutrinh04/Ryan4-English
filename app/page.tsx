@@ -2,9 +2,7 @@
 
 import { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, type ReactNode, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { aiFetch, supabase } from "../lib/supabase";
-import { dictationLessons, dictationLevels, dictationTopics, type DictationLesson, type DictationLevel } from "../lib/dictation-lessons";
 import ieltsAreaData from "../lib/ielts-areas.json";
-import ShadowingPractice from "../components/Shadowing";
 import VocabPractice from "../components/VocabPractice";
 import Dictionary, { type NewWord } from "../components/Dictionary";
 import Icon, { type IconName } from "../components/Icon";
@@ -3063,7 +3061,6 @@ type PracticeShellSession = {
   pendingMode: Exclude<PracticeMode, "menu"> | null;
   practiceWordIds: string[];
   lessonVideoId: string | null;
-  builtIn: import("../components/LessonLibrary").BuiltInLessonSelection | null;
   translating: boolean;
 };
 
@@ -3082,8 +3079,6 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
     value === "shadow" || value === "dictation" || value === "vocab" || value === "translate" || value === "speak";
   const [mode, setMode] = useState<PracticeMode>(skipsFolder(intent) ? (intent as PracticeMode) : intent ? "menu" : "vocab");
   const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(skipsFolder(intent) ? null : intent ?? null);
-  // Đang mở thư viện bài có sẵn (VOA…) thay vì một bài video.
-  const [builtIn, setBuiltIn] = useState<import("../components/LessonLibrary").BuiltInLessonSelection | null>(null);
   const [practiceWords, setPracticeWords] = useState<WordCard[]>([]);
   const [sessionReady, setSessionReady] = useState(false);
   const handledLaunch = useRef(launch);
@@ -3100,7 +3095,6 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
         setPendingMode(validModes.includes(saved.pendingMode as PracticeMode) ? (saved.pendingMode as Exclude<PracticeMode, "menu">) : null);
         setPracticeWords(words.filter((word) => saved.practiceWordIds?.includes(word.id)));
         setLesson(lessons.find((item) => item.videoId === saved.lessonVideoId) ?? null);
-        setBuiltIn(saved.builtIn ?? null);
         setTranslating(!!saved.translating);
       }
     } catch {
@@ -3119,7 +3113,6 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
     setPendingMode(skipsFolder(intent) ? null : intent);
     setPracticeWords([]);
     setLesson(null);
-    setBuiltIn(null);
     setTranslating(false);
   }, [intent, launch]);
 
@@ -3131,7 +3124,6 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
       pendingMode,
       practiceWordIds: practiceWords.map((word) => word.id),
       lessonVideoId: lesson?.videoId ?? null,
-      builtIn,
       translating,
     };
     try {
@@ -3139,7 +3131,7 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
     } catch {
       // Chế độ riêng tư có thể chặn localStorage; phiên hiện tại vẫn tiếp tục.
     }
-  }, [sessionReady, intent, mode, pendingMode, practiceWords, lesson, builtIn, translating]);
+  }, [sessionReady, intent, mode, pendingMode, practiceWords, lesson, translating]);
   // Đếm giờ luyện tập cho biểu đồ trang chủ. Đặt ở đây nên mọi chế độ đều được
   // tính mà không phải sửa từng chế độ. Chỉ ghi vào localStorage, không đụng state.
   useEffect(() => {
@@ -3222,17 +3214,12 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
           onMode={(next) => setMode(next === "shadowing" ? "shadow" : "dictation")}
         />
       );
-    if (builtIn)
-      return mode === "dictation"
-        ? <DictationPractice words={words} close={() => setBuiltIn(null)} initialTopic={builtIn.topic} initialLevel={builtIn.level} initialTitle={builtIn.title} />
-        : <ShadowingPractice close={() => setBuiltIn(null)} onPractised={onStudied} initialTopic={builtIn.topic} initialLevel={builtIn.level} initialTitle={builtIn.title} />;
     return (
       <LessonLibrary
         mode={listening}
         lessons={lessons}
         addVideo={onAddVideo}
         pickVideo={setLesson}
-        pickBuiltIn={(selection) => selection && setBuiltIn(selection)}
         close={returnToModes}
       />
     );
@@ -4725,361 +4712,6 @@ function MatchGame({ words, close, onResult }: { words: WordCard[]; close: () =>
             </button>
           ))}
         </div>
-      )}
-    </div>
-  );
-}
-
-function DictationPractice({ words, close, initialTopic, initialLevel, initialTitle }: { words: WordCard[]; close: () => void; initialTopic?: string; initialLevel?: DictationLevel; initialTitle?: string }) {
-  const openedFromLibrary = Boolean(initialTopic && initialLevel);
-  const [selectedTopic, setSelectedTopic] = useState(initialTopic ?? dictationTopics[0]);
-  const [selectedLevel, setSelectedLevel] = useState<DictationLevel>(initialLevel ?? "A1");
-  const [selectedTitle, setSelectedTitle] = useState(initialTitle ?? "");
-  const [started, setStarted] = useState(Boolean(initialTopic && initialLevel));
-  const [index, setIndex] = useState(0);
-  const [typed, setTyped] = useState("");
-  const [checked, setChecked] = useState(false);
-  const [rate, setRate] = useState(0.85);
-  const [plays, setPlays] = useState(0);
-  const [hintCount, setHintCount] = useState(0);
-  const [showTranscript, setShowTranscript] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [autoReplay, setAutoReplay] = useState(0);
-  const [replayDelay, setReplayDelay] = useState(1);
-  const personal: DictationLesson[] = words
-    .filter((w) => w.example && w.example.length > 8)
-    .map((w, i) => ({
-      id: `personal-${i}`,
-      topic: "Từ vựng của tôi",
-      level: (w.example.split(/\s+/).length < 9 ? "A1" : w.example.split(/\s+/).length < 14 ? "A2" : "B1") as DictationLevel,
-      title: w.term,
-      sentence: w.example,
-    }));
-  const allLessons: DictationLesson[] = [...dictationLessons, ...personal];
-  const sentences = allLessons.filter((item) => item.topic === selectedTopic && item.level === selectedLevel && (!selectedTitle || item.title === selectedTitle));
-  const current = sentences[index % Math.max(1, sentences.length)];
-  useEffect(() => {
-    if (!started || !current) return;
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === "`" && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
-        event.preventDefault();
-        speak();
-      }
-      if (event.ctrlKey && event.key === "Enter") {
-        event.preventDefault();
-        speak();
-      }
-      if (event.key === "Enter" && event.target instanceof HTMLTextAreaElement && !event.shiftKey) {
-        event.preventDefault();
-        if (typed.trim()) setChecked(true);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [started, current?.id, typed, rate, autoReplay, replayDelay]);
-  if (!started) {
-    const topics = [...dictationTopics, "Từ vựng của tôi"];
-    return (
-      <div className="page dictation-library">
-        <button className="back" onClick={close}>
-          ← Chọn chế độ khác
-        </button>
-        <div className="eyebrow">THƯ VIỆN CHÉP CHÍNH TẢ</div>
-        <h1>Chọn chủ đề và trình độ</h1>
-        <p className="page-sub">Luyện với bài riêng của Lexilo và transcript được phép sử dụng từ các nguồn mở. Mỗi bài bên ngoài đều hiển thị nguồn và giấy phép.</p>
-        <h3>1. Chủ đề</h3>
-        <div className="dictation-topics">
-          {topics.map((topic) => (
-            <button className={selectedTopic === topic ? "active" : ""} onClick={() => { setSelectedTopic(topic); setSelectedTitle(""); }} key={topic}>
-              <span>{topic === "Đời sống hằng ngày" ? "⌂" : topic === "Du lịch" ? "✈" : topic === "Công nghệ" ? "⌘" : topic === "Công việc" ? "▣" : topic === "Truyện ngắn" ? "▤" : topic === "Hội thoại" ? "◌" : topic === "Số & thời gian" ? "#" : topic === "Từ vựng của tôi" ? "★" : "◇"}</span>
-              <b>{topic}</b>
-              <small>{allLessons.filter((x) => x.topic === topic).length} câu</small>
-            </button>
-          ))}
-        </div>
-        <h3>2. Trình độ</h3>
-        <div className="level-picker">
-          {dictationLevels.map((level) => (
-            <button className={selectedLevel === level ? "active" : ""} onClick={() => { setSelectedLevel(level); setSelectedTitle(""); }} key={level}>
-              <b>{level}</b>
-              <span>{level === "A1" ? "Cơ bản" : level === "A2" ? "Sơ cấp" : level === "B1" ? "Trung cấp" : level === "B2" ? "Trên trung cấp" : "Nâng cao"}</span>
-              <small>{allLessons.filter((x) => x.topic === selectedTopic && x.level === level).length} bài</small>
-            </button>
-          ))}
-        </div>
-        <div className="library-start">
-          <div>
-            <b>
-              {selectedTopic} · {selectedLevel}
-            </b>
-            <span>{sentences.length} câu phù hợp</span>
-          </div>
-          <button
-            className="primary"
-            disabled={!sentences.length}
-            onClick={() => {
-              setStarted(true);
-              setIndex(0);
-            }}
-          >
-            {sentences.length ? "Bắt đầu chép chính tả →" : "Chưa có bài ở mức này"}
-          </button>
-        </div>
-      </div>
-    );
-  }
-  if (!current)
-    return (
-      <div className="page">
-        <button className="back" onClick={close}>
-          ← Chọn chế độ khác
-        </button>
-        <div className="panel">Hãy bổ sung câu ví dụ cho từ vựng trước khi luyện chép chính tả.</div>
-      </div>
-    );
-  function speak() {
-    window.speechSynthesis?.cancel();
-    let remaining = autoReplay;
-    const play = () => {
-      const voice = new SpeechSynthesisUtterance(current.sentence);
-      voice.lang = "en-US";
-      voice.rate = rate;
-      voice.onend = () => {
-        if (remaining > 0) {
-          remaining--;
-          setTimeout(play, replayDelay * 1000);
-        }
-      };
-      window.speechSynthesis?.speak(voice);
-      setPlays((v) => v + 1);
-    };
-    play();
-  }
-  function goTo(nextIndex: number) {
-    setIndex((nextIndex + sentences.length) % sentences.length);
-    setTyped("");
-    setChecked(false);
-    setPlays(0);
-    setHintCount(0);
-  }
-  function next() {
-    goTo(index + 1);
-  }
-  const expected = current.sentence.trim().split(/\s+/);
-  const actual = typed.trim().split(/\s+/);
-  const correct = normalizeAnswer(typed) === normalizeAnswer(current.sentence);
-  const percent = Math.round((expected.filter((word, i) => normalizeAnswer(word) === normalizeAnswer(actual[i] || "")).length / expected.length) * 100);
-  return (
-    <div className="page dictation-page">
-      <button className="back" onClick={() => openedFromLibrary ? close() : setStarted(false)}>
-        ← Đổi chủ đề hoặc trình độ
-      </button>
-      <div className="dictation-head">
-        <div>
-          <div className="eyebrow">
-            {selectedTopic} · {selectedLevel}
-          </div>
-          <h1>{current.title}</h1>
-          <p>Thực hiện đủ 4 bước để luyện nghe, chính tả và phát âm.</p>
-          {current.sourceName && current.sourceUrl && (
-            <p className="dictation-source">
-              Nguồn:{" "}
-              <a href={current.sourceUrl} target="_blank" rel="noreferrer">
-                {current.sourceName}
-              </a>
-              {current.license && <span> · {current.license}</span>}
-            </p>
-          )}
-        </div>
-        <div className="dictation-score">{checked ? `${percent}%` : "—"}</div>
-      </div>
-      <div className="dictation-view-tabs">
-        <button className={!showTranscript ? "active" : ""} onClick={() => setShowTranscript(false)}>
-          Chép chính tả
-        </button>
-        <button className={showTranscript ? "active" : ""} onClick={() => setShowTranscript(true)}>
-          Toàn bộ transcript
-        </button>
-      </div>
-      {showTranscript ? (
-        <section className="panel full-transcript">
-          <div className="transcript-head">
-            <div>
-              <h3>
-                {selectedTopic} · {selectedLevel}
-              </h3>
-              <p>{sentences.length} câu trong bài</p>
-            </div>
-            <button
-              onClick={() => {
-                window.speechSynthesis?.cancel();
-                const full = new SpeechSynthesisUtterance(sentences.map((x) => x.sentence).join(" "));
-                full.lang = "en-US";
-                full.rate = rate;
-                window.speechSynthesis?.speak(full);
-              }}
-            >
-              ▶ Nghe toàn bài
-            </button>
-          </div>
-          {sentences.map((item, i) => (
-            <button
-              key={item.id}
-              onClick={() => {
-                goTo(i);
-                setShowTranscript(false);
-              }}
-            >
-              <span>{i + 1}</span>
-              <p>{item.sentence}</p>
-            </button>
-          ))}
-        </section>
-      ) : (
-        <>
-          <div className="sentence-nav">
-            <button onClick={() => goTo(index - 1)}>‹</button>
-            <b>
-              {index + 1} / {sentences.length}
-            </b>
-            <button onClick={() => goTo(index + 1)}>›</button>
-            <button className="settings-button" onClick={() => setShowSettings((v) => !v)}>
-              ⚙ Cài đặt
-            </button>
-          </div>
-          {showSettings && (
-            <div className="dictation-settings">
-              <label>
-                Tự động phát lại
-                <select value={autoReplay} onChange={(e) => setAutoReplay(Number(e.target.value))}>
-                  <option value={0}>Không</option>
-                  <option value={1}>1 lần</option>
-                  <option value={2}>2 lần</option>
-                  <option value={3}>3 lần</option>
-                </select>
-              </label>
-              <label>
-                Khoảng nghỉ
-                <select value={replayDelay} onChange={(e) => setReplayDelay(Number(e.target.value))}>
-                  <option value={0.5}>0.5 giây</option>
-                  <option value={1}>1 giây</option>
-                  <option value={1.5}>1.5 giây</option>
-                  <option value={2}>2 giây</option>
-                </select>
-              </label>
-              <p>
-                <kbd>`</kbd> phát/ngừng · <kbd>Ctrl + Enter</kbd> nghe lại · <kbd>Enter</kbd> kiểm tra
-              </p>
-            </div>
-          )}
-          <div className="dictation-steps">
-            <span className="active">
-              <b>1</b> Nghe
-            </span>
-            <span className={plays ? "active" : ""}>
-              <b>2</b> Gõ lại
-            </span>
-            <span className={checked ? "active" : ""}>
-              <b>3</b> Kiểm tra
-            </span>
-            <span className={checked ? "active" : ""}>
-              <b>4</b> Đọc to
-            </span>
-          </div>
-          <section className="panel dictation-card">
-            <div className="audio-control">
-              <button className="dictation-play" onClick={speak}>
-                ▶
-              </button>
-              <div>
-                <b>Nghe câu tiếng Anh</b>
-                <small>
-                  {current.sourceName ? "Transcript mở · giọng đọc trình duyệt" : "Giọng đọc trình duyệt"} · Đã nghe {plays} lần
-                </small>
-              </div>
-              <label>
-                Tốc độ
-                <select value={rate} onChange={(e) => setRate(Number(e.target.value))}>
-                  <option value={0.65}>0.65×</option>
-                  <option value={0.85}>0.85×</option>
-                  <option value={1}>1.0×</option>
-                </select>
-              </label>
-            </div>
-            <textarea
-              value={typed}
-              onChange={(e) => {
-                setTyped(e.target.value);
-                setChecked(false);
-              }}
-              placeholder="Gõ chính xác câu bạn nghe được…"
-            />
-            {!checked && (
-              <div className="hint-panel">
-                <div className="hint-words" aria-label="Gợi ý câu">
-                  {expected.map((word, i) => (
-                    <span className={i < hintCount ? "shown" : "hidden"} key={i}>
-                      {i < hintCount ? word : "_".repeat(Math.min(8, Math.max(2, word.replace(/[^a-z]/gi, "").length)))}
-                    </span>
-                  ))}
-                </div>
-                <button disabled={hintCount >= expected.length} onClick={() => setHintCount((value) => Math.min(expected.length, value + 1))}>
-                  💡 {hintCount ? "Gợi ý từ tiếp theo" : "Gợi ý một từ"}
-                </button>
-                <small>
-                  Đã dùng {hintCount}/{expected.length} gợi ý
-                </small>
-              </div>
-            )}
-            <div className="dictation-actions">
-              <button onClick={speak}>↻ Nghe lại</button>
-              <button
-                onClick={() => {
-                  setChecked(true);
-                }}
-              >
-                Bỏ qua
-              </button>
-              <button className="primary" disabled={!typed.trim()} onClick={() => setChecked(true)}>
-                Kiểm tra
-              </button>
-            </div>
-            {checked && (
-              <div className={correct ? "correction correct" : "correction"}>
-                <div className="correction-title">
-                  <b>{correct ? "✓ Chính xác!" : "Xem và sửa những chỗ khác nhau"}</b>
-                  <span>
-                    {percent}% đúng · {hintCount} gợi ý
-                  </span>
-                </div>
-                <div className="word-diff">
-                  {expected.map((word, i) => (
-                    <span className={normalizeAnswer(word) === normalizeAnswer(actual[i] || "") ? "ok" : "wrong"} key={i}>
-                      {word}
-                    </span>
-                  ))}
-                </div>
-                {typed && !correct && (
-                  <p>
-                    Bạn viết: <del>{typed}</del>
-                  </p>
-                )}
-                <div className="read-aloud">
-                  <span>④</span>
-                  <p>
-                    <b>Đọc câu này thành tiếng</b>
-                    <br />
-                    Đọc chậm một lần, sau đó nhấn nghe mẫu và đọc theo đúng nhịp.
-                  </p>
-                  <button onClick={speak}><Icon name="volume" size={14} /> Nghe mẫu</button>
-                </div>
-                <button className="primary next-dictation" onClick={next}>
-                  Câu tiếp theo →
-                </button>
-              </div>
-            )}
-          </section>
-        </>
       )}
     </div>
   );
