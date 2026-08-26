@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   catalogueEntry,
   channelRefFrom,
+  looksLikeShort,
   groupByChannel,
   playlistIdFrom,
   readableLength,
@@ -86,4 +87,26 @@ test("readableLength: đọc thời lượng cho người xem", () => {
   assert.equal(readableLength(4320), "1 giờ 12 phút");
   assert.equal(readableLength(3600), "1 giờ");
   assert.equal(readableLength(0), "");
+});
+
+test("looksLikeShort: nhận Shorts qua thẻ trong tiêu đề", () => {
+  assert.equal(looksLikeShort({ title: "'Tip is unusual' - Fix this sentence! #shorts", seconds: 300 }), true);
+  assert.equal(looksLikeShort({ title: "Bài dài #short", seconds: 900 }), true);
+  // Chữ "short" nằm trong câu bình thường thì không tính.
+  assert.equal(looksLikeShort({ title: "A short history of English", seconds: 600 }), false);
+});
+
+test("looksLikeShort: nhận Shorts qua thời lượng từ 60 giây trở xuống", () => {
+  assert.equal(looksLikeShort({ title: "How do you take your coffee?", seconds: 58 }), true);
+  assert.equal(looksLikeShort({ title: "Bài thường", seconds: 60 }), true);
+  assert.equal(looksLikeShort({ title: "Bài thường", seconds: 61 }), false);
+  // Chưa đọc được thời lượng thì đừng vội kết luận.
+  assert.equal(looksLikeShort({ title: "Bài thường", seconds: 0 }), false);
+});
+
+test("usableForPractice: loại Shorts khỏi danh mục", () => {
+  assert.equal(usableForPractice({ title: "Trend #shorts", seconds: 372 }), false);
+  assert.equal(usableForPractice({ title: "Clip dọc", seconds: 45 }), false);
+  assert.equal(usableForPractice({ title: "6 Minute English", seconds: 372 }), true);
+  assert.equal(usableForPractice({ title: "Bài rất dài", seconds: 7200 }), false);
 });
