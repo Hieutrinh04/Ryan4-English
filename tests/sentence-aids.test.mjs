@@ -8,6 +8,7 @@ globalThis.localStorage = {
   removeItem: (key) => store.delete(key),
 };
 
+import { spellOut } from "../lib/number-words.mjs";
 const { NO_IPA, ipaCacheKey, lookupWords, missingWords, readIpaCache, readTranslationCache, saveIpa, saveTranslation, withIpa, wordKey } =
   await import("../lib/sentence-aids.mjs");
 
@@ -19,10 +20,25 @@ test("lookupWords: giữ dấu nháy và gạch nối giữa từ", () => {
   assert.deepEqual(lookupWords("It's a well-known fact."), ["it's", "a", "well-known", "fact"]);
 });
 
-test("lookupWords: bỏ số và ký tự không phải chữ cái", () => {
-  assert.deepEqual(lookupWords("I got 5 apples & 3 pears."), ["i", "got", "apples", "pears"]);
+test("lookupWords: số được tra theo cách đọc, ký tự lạ thì bỏ", () => {
+  // Trước đây số bị loại thẳng nên "6" trong "6 Minute English" không bao giờ có
+  // phiên âm. Nay tra theo cách đọc nó ra chữ.
+  assert.deepEqual(lookupWords("I got 5 apples & 3 pears."), ["i", "got", "five", "apples", "three", "pears"]);
+  assert.deepEqual(lookupWords("6 Minute English"), ["six", "minute", "english"]);
   assert.deepEqual(lookupWords(""), []);
   assert.deepEqual(lookupWords(null), []);
+});
+
+test("withIpa: chữ có số lấy phiên âm của cách đọc, ghép lại thành một", () => {
+  const cache = { six: "/sˈɪks/", twenty: "/twˈɛnti/", nineteen: "/nˌaɪntˈin/" };
+  const rows = withIpa("6 and 2019", cache);
+  assert.equal(rows[0].ipa, "/sˈɪks/");
+  assert.equal(rows[2].ipa, "/twˈɛnti nˌaɪntˈin/");
+});
+
+test("withIpa: thiếu một phần của số thì để trống, không hiện nửa vời", () => {
+  const rows = withIpa("2019", { twenty: "/twˈɛnti/" });
+  assert.equal(rows[0].ipa, "");
 });
 
 test("missingWords: chỉ trả về từ chưa có trong bộ nhớ", () => {
@@ -105,9 +121,23 @@ test("lookupWords và withIpa luôn dùng cùng một khoá", () => {
   ];
   for (const cau of cauThu) {
     const guiDi = new Set(lookupWords(cau));
-    const hienRa = withIpa(cau, {}).map((row) => wordKey(row.word)).filter(Boolean);
+    const hienRa = withIpa(cau, {})
+      // Chữ có số tra theo cách đọc, nên khoá của nó là các chữ số đọc ra —
+      // kiểm riêng ở bài trên, ở đây chỉ xét chữ thường.
+      .filter((row) => !/\d/.test(row.word))
+      .map((row) => wordKey(row.word))
+      .filter(Boolean);
     const lech = hienRa.filter((key) => !guiDi.has(key));
     assert.deepEqual(lech, [], `chữ không bao giờ tra được trong "${cau}": ${lech.join(", ")}`);
+  }
+  // Và chữ có số cũng phải tra được: mọi phần đọc ra đều nằm trong danh sách gửi đi.
+  for (const cau of ["We met in 2019", "at 7:30 sharp", "6 Minute English"]) {
+    const guiDi = new Set(lookupWords(cau));
+    for (const token of cau.split(/\s+/).filter((item) => /\d/.test(item))) {
+      for (const part of spellOut(token)) {
+        assert.ok(guiDi.has(part), `"${part}" của "${token}" không được gửi đi tra`);
+      }
+    }
   }
 });
 
