@@ -1989,3 +1989,99 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 
 /* Ít thẻ thì đừng để lưới bốn cột: hai thẻ nhỏ nép một góc trông như lỗi. */
 .vocab-set-grid.few{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+
+/* ══ Lớp nhìn: cho mắt có chỗ bám ════════════════════════════════════════════
+   Trước đây mọi thứ trên màn cùng một sức nặng — chữ nhỏ đều nhau, thẻ phẳng
+   như nhau, hàng không phản hồi gì khi rê chuột. Nhìn vào không biết bắt đầu từ
+   đâu. Phần dưới đây chỉ làm ba việc: cho tiêu đề nặng hơn phần phụ, cho thứ
+   bấm được ra dáng bấm được, và cho thứ quan trọng có màu. */
+
+/* ── Nút chính: có khối, có ánh, bấm là lún ────────────────────────────────── */
+/* Chữ trắng trên nền --purple đặc chỉ đạt 3.21 — dưới ngưỡng 4.5, và đó là nút
+   quan trọng nhất của app. Lỗi này có sẵn từ trước. Neo cả dải màu vào vùng đủ
+   tối để chữ trắng đạt chuẩn ở MỌI điểm trên nút, không chỉ ở một đầu. */
+.primary{
+  background:linear-gradient(135deg,color-mix(in srgb,var(--purple) 50%,var(--accent-solid)),var(--accent-solid));
+  color:var(--on-accent);
+  box-shadow:0 6px 18px -4px color-mix(in srgb,var(--accent-solid) 65%,transparent);
+}
+.primary:not(:disabled):hover{
+  box-shadow:0 10px 26px -5px color-mix(in srgb,var(--accent-solid) 80%,transparent);
+  filter:brightness(1.12);
+}
+
+/* ── Tiêu đề trang: to hơn, và có một vạch màu dẫn mắt ─────────────────────── */
+.section-head h1,.greeting h1{font-size:34px;letter-spacing:-.6px}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;
+  color:var(--purple);letter-spacing:1.6px;
+}
+.eyebrow::before{
+  content:"";width:18px;height:2px;border-radius:2px;background:var(--purple);
+}
+
+/* ── Bảng từ vựng: hàng phải ra hàng ───────────────────────────────────────
+   Đây là màn người dùng mở nhiều nhất mà lại phẳng nhất: 174 hàng chữ 12px
+   giống hệt nhau. Cho từ to lên, cho hàng sáng lên khi rê, và đánh dấu hàng
+   đang tới hạn bằng một vạch màu bên trái để lướt mắt là thấy. */
+.word-tr{transition:background-color var(--t-base) var(--ease);position:relative}
+.word-tr:not(.word-th):hover{background:var(--surface-2)}
+.word-main b{font-size:15.5px;letter-spacing:-.2px}
+.word-th{letter-spacing:1px;text-transform:uppercase}
+
+/* Vạch màu bên trái theo trạng thái, chỉ trên hàng dữ liệu. */
+.word-tr:not(.word-th)::before{
+  content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:transparent;transition:background-color var(--t-base) var(--ease);
+}
+.word-tr.state-due::before{background:var(--pink)}
+.word-tr.state-mastered::before{background:var(--mark-ok)}
+.word-tr.state-new::before{background:var(--line-accent)}
+
+/* ── Thẻ số liệu: số phải nổi hơn nhãn ─────────────────────────────────────── */
+.stat{transition:transform var(--t-base) var(--ease),border-color var(--t-base) var(--ease),box-shadow var(--t-base) var(--ease)}
+.stat:hover{transform:translateY(-2px);border-color:var(--line-accent);box-shadow:0 10px 24px #0000002e}
+.stat strong{font-size:25px;letter-spacing:-.5px}
+.vocab-stat b{font-size:28px;letter-spacing:-.6px}
+
+/* ── Chip lọc: chip đang chọn phải nổi hẳn ─────────────────────────────────── */
+.library-chip-row button,.vocab-tabs button,.speaking-levels button,.library-filters button{
+  transition:background-color var(--t-base) var(--ease),border-color var(--t-base) var(--ease),color var(--t-base) var(--ease),transform var(--t-fast) var(--ease);
+}
+.library-chip-row button.active,.vocab-tabs button.active,
+.speaking-levels button.active,.library-filters button.active{
+  background:linear-gradient(135deg,color-mix(in srgb,var(--purple) 50%,var(--accent-solid)),var(--accent-solid));
+  border-color:transparent;color:var(--on-accent);
+  box-shadow:0 5px 14px -4px color-mix(in srgb,var(--accent-solid) 60%,transparent);
+}
+
+/* ── Thẻ bấm được: nhấc rõ hơn ─────────────────────────────────────────────── */
+.speaking-card:hover,.vocab-set:hover,.library-card:hover,.writing-paths button:hover{
+  transform:translateY(-3px);
+  border-color:var(--purple);
+  box-shadow:0 14px 32px -10px color-mix(in srgb,var(--purple) 45%,transparent);
+}
+
+/* ── Danh sách hiện dần theo thứ tự ────────────────────────────────────────
+   Mỗi thẻ chậm hơn thẻ trước 40ms. Mắt bắt được thứ tự đọc thay vì bị đổ ập
+   cả mảng vào một lúc. Chỉ làm với 12 thẻ đầu — sau đó thì độ trễ dài quá
+   thành ra phải ngồi chờ. */
+@keyframes rise-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.vocab-set-grid>*,.speaking-grid>*,.library-grid>*,.writing-paths>*,.stats-grid>*{
+  animation:rise-in var(--t-base) var(--ease) both;
+}
+.vocab-set-grid>*:nth-child(1),.speaking-grid>*:nth-child(1),.library-grid>*:nth-child(1),.writing-paths>*:nth-child(1),.stats-grid>*:nth-child(1){animation-delay:0ms}
+.vocab-set-grid>*:nth-child(2),.speaking-grid>*:nth-child(2),.library-grid>*:nth-child(2),.writing-paths>*:nth-child(2),.stats-grid>*:nth-child(2){animation-delay:40ms}
+.vocab-set-grid>*:nth-child(3),.speaking-grid>*:nth-child(3),.library-grid>*:nth-child(3),.writing-paths>*:nth-child(3),.stats-grid>*:nth-child(3){animation-delay:80ms}
+.vocab-set-grid>*:nth-child(4),.speaking-grid>*:nth-child(4),.library-grid>*:nth-child(4),.stats-grid>*:nth-child(4){animation-delay:120ms}
+.vocab-set-grid>*:nth-child(n+5),.speaking-grid>*:nth-child(n+5),.library-grid>*:nth-child(n+5){animation-delay:160ms}
+
+/* ── Thanh bên: mục đang mở rõ hơn ─────────────────────────────────────────── */
+.nav-item.active{font-weight:800}
+.nav-item.active::before{height:22px;width:3px}
+
+/* ── Ô nhập: viền sáng lên khi đang gõ ─────────────────────────────────────── */
+.word-tools label:focus-within,.paragraph-toolbar label:focus-within{
+  border-color:var(--purple);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--purple) 18%,transparent);
+}
