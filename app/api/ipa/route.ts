@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { dictionary } from "cmu-pronouncing-dictionary";
+import { generateJson, hasLlm } from "../../../lib/llm";
+import { identify, refund, spend } from "../../../lib/ai-guard";
 
 // Tra phiên âm quốc tế cho một lô từ.
 //
@@ -16,6 +18,10 @@ type Entry = { phonetic?: string; phonetics?: { text?: string }[] };
 // lần vào bài. Phần lớn chữ nằm sẵn trong CMU nên tra cục bộ, nâng mức này gần
 // như không tốn gì.
 const MAX_WORDS = 120;
+
+// Số chữ tối đa hỏi mô hình trong một lượt. Tên riêng trong một đoạn rất ít, mà
+// kết quả thì được nhớ vĩnh viễn, nên mức này đủ rộng và không tốn hạn mức mấy.
+const MAX_GUESS = 8;
 
 const ARPA: Record<string, string> = {
   AA: "ɑ", AE: "æ", AH: "ʌ", AO: "ɔ", AW: "aʊ", AY: "aɪ", EH: "ɛ", ER: "ɝ", EY: "eɪ",
@@ -101,5 +107,45 @@ export async function POST(request: Request) {
     else if (result.kind === "missing") missing.push(word);
     // kind === "error": không nhắc tới trong câu trả lời, client sẽ hỏi lại sau.
   }
-  return NextResponse.json({ ipa, missing });
+
+  // Tầng cuối: hỏi mô hình. Chỉ dành cho chữ mà CẢ HAI từ điển đều không có —
+  // gần như luôn là tên riêng (Pippa, Sian). Đây đúng là chỗ quy tắc đọc theo
+  // mặt chữ sai nhiều nhất, nên tự suy ra từ chính tả còn tệ hơn là hỏi.
+  //
+  // Kết quả trả về ở khoá riêng "estimated" chứ không trộn vào "ipa": nó là
+  // phỏng đoán, và giao diện phải nói rõ điều đó với người học.
+  const estimated: Record<string, string> = {};
+  const askable = missing.slice(0, MAX_GUESS);
+  if (askable.length && hasLlm()) {
+    const caller = await identify(request);
+    if (!spend(caller)) {
+      try {
+        const data = await generateJson<{ ipa?: Record<string, string> }>(
+          `Cho biết phiên âm IPA kiểu Mỹ của các chữ sau. Phần lớn là tên riêng.
+Mỗi chữ một phiên âm, đặt giữa hai dấu gạch chéo, có dấu nhấn.
+Chữ nào bạn thực sự không biết cách đọc thì bỏ hẳn khỏi kết quả, đừng đoán bừa.
+
+Danh sách: ${askable.join(", ")}
+
+Trả về JSON thuần: {"ipa":{"chữ":"/phiên âm/"}}`,
+          { temperature: 0, timeoutMs: 20000 },
+        );
+        for (const [word, value] of Object.entries(data.ipa ?? {})) {
+          const key = String(word).trim().toLowerCase();
+          const clean = String(value ?? "").trim();
+          if (askable.includes(key) && /^\/.+\/$/.test(clean)) estimated[key] = clean;
+        }
+      } catch {
+        // Hỏi không được thì thôi: chữ đó vẫn nằm trong missing như trước.
+        refund(caller);
+      }
+    }
+  }
+
+  return NextResponse.json({
+    ipa,
+    // Chữ đã đoán được thì không còn là "chắc chắn không có" nữa.
+    missing: missing.filter((word) => !estimated[word]),
+    estimated,
+  });
 }

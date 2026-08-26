@@ -2137,3 +2137,7 @@ html,body{
    nét nhoè và dày hơn hẳn phần còn lại — đúng thứ làm chữ trông kém gọn. Kéo mọi
    mức 800 về 700, là mức đậm nhất font này thật sự có. */
 :where(*){font-synthesis-weight:none}
+
+/* Phiên âm do mô hình ước lượng (tên riêng không có trong từ điển): nhạt hơn và
+   nghiêng, để không bị nhầm với phiên âm tra được từ từ điển. */
+.video-lesson-v2 .lesson-word em.guessed,.shadowing-ipa em.guessed{opacity:.72;font-style:italic}

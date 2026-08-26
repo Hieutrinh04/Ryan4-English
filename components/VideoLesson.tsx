@@ -136,8 +136,10 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
         jobs.push(
           fetch("/api/ipa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ words: need }) })
             .then((response) => response.json())
-            .then((data: { ipa?: Record<string, string>; missing?: string[] }) => {
-              if (alive && (data.ipa || data.missing)) setIpaCache(saveIpa(data.ipa ?? {}, data.missing ?? []));
+            .then((data: { ipa?: Record<string, string>; missing?: string[]; estimated?: Record<string, string> }) => {
+              if (alive && (data.ipa || data.missing || data.estimated)) {
+                setIpaCache(saveIpa(data.ipa ?? {}, data.missing ?? [], data.estimated ?? {}));
+              }
             })
             .catch(() => {}),
         );
@@ -784,12 +786,17 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                   {showText ? (
                     <>
                       <p className={`shadowing-sentence${showIpa ? " with-ipa" : ""}`}>
-                        {(withIpa(target.text, ipaCache) as { word: string; ipa: string; isWord: boolean; checked: boolean }[]).map((row, position) => (
+                        {(withIpa(target.text, ipaCache) as { word: string; ipa: string; isWord: boolean; checked: boolean; estimated?: boolean }[]).map((row, position) => (
                           <button className="shadowing-token lesson-word" key={position} onClick={(event) => void lookUp(row.word, event.currentTarget)} title="Bấm để tra nghĩa">
                             <span>{row.word}</span>
                             {/* Tra rồi mà không nguồn nào có — thường là tên riêng — thì để trống,
                                 đừng treo dấu "…" như thể vẫn đang tra. */}
-                            {showIpa && row.isWord && (row.ipa ? <em>{row.ipa}</em> : !row.checked && <em className="loading">…</em>)}
+                            {/* Phiên âm ước lượng phải trông khác phiên âm tra được:
+                                tên riêng thì mô hình đoán, và người học có quyền biết
+                                cái nào chắc chắn cái nào không. */}
+                            {showIpa && row.isWord && (row.ipa
+                              ? <em className={row.estimated ? "guessed" : ""} title={row.estimated ? "Phiên âm ước lượng — chữ này không có trong từ điển" : undefined}>{row.ipa}</em>
+                              : !row.checked && <em className="loading">…</em>)}
                           </button>
                         ))}
                       </p>
