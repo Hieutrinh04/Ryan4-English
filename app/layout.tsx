@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
-import { Quicksand } from "next/font/google";
 import "./globals.css";
 import "./extras.css";
 
-// Tự host font thay vì gọi Google Fonts lúc chạy: bớt một vòng kết nối ra ngoài,
-// không nhảy chữ khi tải, và không gửi thông tin người dùng sang máy chủ thứ ba.
-const quicksand = Quicksand({ subsets: ["latin", "vietnamese"], weight: ["400", "500", "600", "700"], display: "swap", variable: "--font-quicksand" });
+// Font Quicksand tự host: bớt một vòng kết nối ra ngoài, không nhảy chữ khi tải,
+// và không gửi thông tin người dùng sang máy chủ thứ ba. Khai báo @font-face nằm
+// trong app/extras.css chứ không dùng next/font/google — dự án chạy trên vinext
+// chứ không phải Next, nên next/font chỉ sinh ra được tên lớp mà không sinh
+// @font-face nào, khiến font tải về mà chưa từng được vẽ ra màn hình.
 
 export const metadata: Metadata = {
   title: "Lexilo — Học từ vựng thông minh",
@@ -60,7 +61,7 @@ try{
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="vi" suppressHydrationWarning className={quicksand.variable}>
+    <html lang="vi" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: bootScript }} />
       </head>
