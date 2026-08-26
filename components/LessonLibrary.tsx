@@ -6,6 +6,7 @@ import { groupByLesson, readSaved, removeSentence } from "../lib/saved-sentences
 import { addToCatalogue, countNew, groupByChannel, readCatalogue, removeFromCatalogue, shelves, withLessonState } from "../lib/catalogue.mjs";
 import { readableLength } from "../lib/youtube-list.mjs";
 import { readLessonProgress } from "../lib/lessons.mjs";
+import { LEVELS, lessonLevel, matchesLevel } from "../lib/level-estimate.mjs";
 import { DEFAULT_CHANNEL, SUGGESTED_CHANNELS, alreadyAdded, channelUrl } from "../lib/suggested-channels.mjs";
 
 // Màn hình vào của Dictation và Shadowing.
@@ -88,6 +89,7 @@ export default function LessonLibrary({
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState("");
   const [channelFilter, setChannelFilter] = useState("");
+  const [levelFilter, setLevelFilter] = useState("");
   const [progress, setProgress] = useState<Record<string, unknown>>({});
   const rows = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -161,10 +163,19 @@ export default function LessonLibrary({
     () => groupByChannel(withLessonState(catalogue, lessons)) as ChannelGroup[],
     [catalogue, lessons],
   );
+  // Trình độ đo từ chính lời thoại của bài, nên chỉ có với video đã lấy được
+  // phụ đề. Tính một lần rồi dùng lại cho cả bộ lọc lẫn nhãn trên thẻ.
+  const levelOf = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const lesson of lessons) map.set(lesson.videoId, lessonLevel(lesson) as string | null);
+    return map;
+  }, [lessons]);
+
   const shelf = useMemo(() => {
-    const list = channelFilter ? catalogue.filter((item) => item.channel === channelFilter) : catalogue;
+    let list = channelFilter ? catalogue.filter((item) => item.channel === channelFilter) : catalogue;
+    if (levelFilter) list = list.filter((item) => matchesLevel(levelOf.get(item.videoId) ?? null, levelFilter));
     return shelves(list, lessons, progress, mode) as Record<ShelfKey, ShelfVideo[]>;
-  }, [catalogue, lessons, progress, channelFilter, mode]);
+  }, [catalogue, lessons, progress, channelFilter, levelFilter, levelOf, mode]);
   // Chỉ còn một nguồn video: video bạn tự thêm. Kho bài "hệ thống" cũ đã bỏ —
   // nó gắn nhãn "Video hệ thống" nhưng không có video nào, chỉ là từng câu chữ
   // lẻ kèm icon micro, nhại một câu rời như vậy không luyện được gì.
@@ -182,7 +193,7 @@ export default function LessonLibrary({
             <p>{mode === "dictation" ? "Chọn chủ đề để luyện kỹ năng nghe" : "Chọn chủ đề để luyện kỹ năng nói"}</p>
           </div>
         </div>
-        <div className="library-summary"><span>▣ <b>{lessons.length}</b> video của bạn</span><i /> <span className="complete">✓ <b>0</b> đã hoàn thành</span></div>
+        <div className="library-summary"><span>▣ <b>{shelf.doing.length}</b> đang học</span><i /> <span className="complete">✓ <b>{shelf.finished.length}</b> đã hoàn thành</span></div>
       </header>
 
       <div className="library-filter-panel">
@@ -300,8 +311,35 @@ export default function LessonLibrary({
                 ))}
               </div>
 
+              {/* Cấp độ đo từ chính lời thoại nên chỉ video đã có phụ đề mới có.
+                  Lọc theo mức sẽ bỏ qua video chưa đo được — đó là chủ ý, chứ xếp
+                  đại vào một mức thì bộ lọc thành vô nghĩa. */}
+              <div className="catalogue-filter levels" role="group" aria-label="Lọc theo cấp độ">
+                <button className={levelFilter ? "" : "active"} onClick={() => setLevelFilter("")}>
+                  Tất cả cấp độ
+                </button>
+                {(LEVELS as string[]).map((item) => (
+                  <button
+                    key={item}
+                    className={levelFilter === item ? "active" : ""}
+                    onClick={() => setLevelFilter(item)}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+
               {/* Xếp theo TRẠNG THÁI HỌC chứ không theo kênh: mở lên là thấy ngay
                   việc cần làm tiếp, không phải tự nhớ hôm qua đang dở bài nào. */}
+              {/* Lọc ra rỗng thì nói rõ, đừng để một mảng trống bên dưới bộ lọc
+                  khiến người dùng tưởng màn hình bị lỗi. */}
+              {SHELVES.every(({ key }) => !shelf[key].length) && (
+                <p className="catalogue-empty">
+                  Không có video nào khớp bộ lọc này.
+                  {levelFilter && " Cấp độ chỉ đo được ở video đã lấy phụ đề."}
+                </p>
+              )}
+
               {SHELVES.map(({ key, title, hint }) => {
                 const videos = shelf[key];
                 if (!videos.length) return null;
@@ -327,6 +365,11 @@ export default function LessonLibrary({
                             }}
                           >
                             <span className="catalogue-thumb" style={{ backgroundImage: `url(${video.thumbnail})` }}>
+                              {levelOf.get(video.videoId) && (
+                                <em className="level-badge" title="Cấp độ ước lượng từ độ dài câu và độ dài từ trong lời thoại">
+                                  {levelOf.get(video.videoId)}
+                                </em>
+                              )}
                               {video.seconds > 0 && <em className="duration-badge">◷ {readableLength(video.seconds)}</em>}
                               {/* Thanh tiến độ nằm ngay trên ảnh: lướt mắt là thấy
                                   còn bao nhiêu, không phải đọc số. */}
