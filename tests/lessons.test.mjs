@@ -248,3 +248,31 @@ test("báo phụ đề sai: dữ liệu hỏng không làm sập phần đọc",
   assert.deepEqual(readReports(), {});
   assert.deepEqual(reportedSentences(null, "yt-a"), []);
 });
+
+test("vá lại câu bị bản cũ cắt ngang: nối rồi cắt lại cho trọn", () => {
+  // Đúng dữ liệu bản cũ sinh ra: một câu nằm vắt qua hai mục.
+  const lesson = sanitiseLesson({
+    videoId: "arj7oStGLkU",
+    sentences: [
+      { start: 9.6, end: 21, text: "Many people say they wouldn't feel safe in a car without a human" },
+      { start: 21, end: 31, text: "driver, but there are concerns from other road users. How will they interact?" },
+    ],
+  });
+  for (const item of lesson.sentences) {
+    assert.ok(/[.!?]["')\]]?$/.test(item.text), `còn cụt: "${item.text}"`);
+  }
+  assert.ok(lesson.sentences[0].text.includes("human driver"), "hai mảnh phải được nối lại");
+});
+
+test("vá câu cắt ngang: KHÔNG nối hai câu thật đứng cạnh nhau", () => {
+  // Mục trước kết trọn vẹn thì dù mục sau viết thường cũng không được nối.
+  const lesson = sanitiseLesson({
+    videoId: "arj7oStGLkU",
+    sentences: [
+      { start: 0, end: 2, text: "He left." },
+      { start: 2, end: 4, text: "and then she arrived" },
+    ],
+  });
+  assert.equal(lesson.sentences.length, 1);
+  assert.ok(lesson.sentences[0].text.startsWith("He left."));
+});
