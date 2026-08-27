@@ -14,6 +14,7 @@ const el = {
   meta: document.getElementById("meta"),
   track: document.getElementById("track"),
   send: document.getElementById("send"),
+  listen: document.getElementById("listen"),
   note: document.getElementById("note"),
   settings: document.getElementById("settings"),
 };
@@ -73,7 +74,10 @@ async function load() {
 
   if (!page.tracks.length) {
     el.track.innerHTML = "<option>Video này không có phụ đề</option>";
-    say("Video không có phụ đề nào. Chọn video khác, hoặc dán lời thoại thẳng trong Lexilo.", "bad");
+    // Không có phụ đề KHÔNG có nghĩa là hết đường: nhờ AI nghe hộ, rồi Lexilo
+    // ước lượng mốc giờ. Báo lỗi rồi thôi là bỏ rơi người dùng ngay tại đây.
+    el.listen.hidden = false;
+    say("Video không có phụ đề nào. Nhờ AI nghe hộ, hoặc dán lời thoại thẳng trong Lexilo.");
     return;
   }
 
@@ -91,6 +95,59 @@ async function load() {
   el.track.disabled = false;
   el.send.disabled = false;
   say(`Tìm thấy ${page.tracks.length} bản phụ đề.`);
+}
+
+async function lexiloOrigin() {
+  const { lexiloUrl } = await chrome.storage.sync.get({ lexiloUrl: DEFAULT_LEXILO });
+  return lexiloUrl.replace(/\/$/, "");
+}
+
+/**
+ * Đưa bài qua phần neo của địa chỉ: không cần máy chủ giữ trạng thái, và dữ liệu
+ * không đi qua bên thứ ba nào.
+ */
+async function openInLexilo(lesson) {
+  const payload = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(lesson))));
+  await chrome.tabs.create({ url: `${await lexiloOrigin()}/#lesson=${encodeURIComponent(payload)}` });
+}
+
+/**
+ * Video không có phụ đề thì nhờ Lexilo cho AI nghe hộ.
+ *
+ * Câu do máy chủ cắt luôn, không cắt ở đây: tiện ích không mang theo hàm căn
+ * giờ, mà cắt ở hai nơi thì sớm muộn hai bên ra kết quả khác nhau.
+ *
+ * Mốc giờ là ƯỚC LƯỢNG — đánh dấu estimated để Lexilo nói rõ điều đó với người
+ * học, đừng để họ tưởng đây là mốc thật của phụ đề.
+ */
+async function listen() {
+  el.listen.disabled = true;
+  say("Đang nhờ AI nghe video… video dài thì mất một lúc.");
+  try {
+    const response = await fetch(`${await lexiloOrigin()}/api/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${page.videoId}`, seconds: page.seconds }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error ?? "Không đọc được lời thoại.");
+    const sentences = data.sentences ?? [];
+    if (!sentences.length) throw new Error("Không cắt được câu nào từ lời thoại.");
+
+    await openInLexilo({
+      videoId: page.videoId,
+      title: page.title,
+      author: page.author,
+      seconds: page.seconds,
+      source: "extension",
+      estimated: true,
+      sentences,
+    });
+    say(`AI đã nghe xong — ${sentences.length} đoạn. Mốc giờ là ước lượng, đọc lại một lượt nhé.`, "good");
+  } catch (error) {
+    say(String(error?.message ?? error), "bad");
+    el.listen.disabled = false;
+  }
 }
 
 async function send() {
@@ -114,11 +171,7 @@ async function send() {
       sentences,
     };
 
-    const { lexiloUrl } = await chrome.storage.sync.get({ lexiloUrl: DEFAULT_LEXILO });
-    // Đưa bài qua phần neo của địa chỉ: không cần máy chủ giữ trạng thái, và dữ
-    // liệu không đi qua bên thứ ba nào.
-    const payload = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(lesson))));
-    await chrome.tabs.create({ url: `${lexiloUrl.replace(/\/$/, "")}/#lesson=${encodeURIComponent(payload)}` });
+    await openInLexilo(lesson);
     say(`Đã gửi ${sentences.length} câu sang Lexilo.`, "good");
   } catch (error) {
     say(String(error?.message ?? error), "bad");
@@ -127,6 +180,7 @@ async function send() {
 }
 
 el.send.addEventListener("click", () => void send());
+el.listen.addEventListener("click", () => void listen());
 el.settings.addEventListener("click", (event) => {
   event.preventDefault();
   chrome.runtime.openOptionsPage();

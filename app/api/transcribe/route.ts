@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { identify, logUsage, refund, spend } from "../../../lib/ai-guard";
-import { videoIdFrom } from "../../../lib/youtube.mjs";
+import { alignTranscript, videoIdFrom } from "../../../lib/youtube.mjs";
 
 // Đọc lời thoại của một video YouTube KHÔNG CÓ PHỤ ĐỀ.
 //
@@ -94,7 +94,10 @@ export async function POST(request: Request) {
       provider: "gemini",
       model,
     });
-    return NextResponse.json({ videoId, transcript, estimated: true });
+    // Trả luôn câu đã cắt: tiện ích trình duyệt không mang theo alignTranscript,
+    // và cắt ở hai nơi thì sớm muộn hai bên ra kết quả khác nhau.
+    const sentences = alignTranscript(transcript, length || 0) as unknown[];
+    return NextResponse.json({ videoId, transcript, sentences, estimated: true });
   } catch (problem) {
     // Hỏng vì phía chúng ta hoặc phía Gemini thì trả lại lượt — người học không
     // bấm sai gì cả.
