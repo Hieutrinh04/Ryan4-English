@@ -386,6 +386,57 @@ export default function Home() {
   // kiểm từng trường trước khi lưu; ở đây chỉ lo phần đọc neo và dọn neo đi.
   useEffect(() => {
     const decode = (value: string) => new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
+    /**
+     * Tiện ích gửi sang một video KHÔNG CÓ PHỤ ĐỀ để nhờ AI nghe hộ.
+     *
+     * Tiện ích không gọi thẳng API được: nó chạy ở origin chrome-extension://…
+     * nên bị chặn chéo nguồn. Ở đây thì cùng origin, gọi thoải mái.
+     */
+    const takeTranscribe = async () => {
+      const match = window.location.hash.match(/[#&]transcribe=([^&]+)/);
+      if (!match) return false;
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      let video: { videoId?: string; title?: string; author?: string; seconds?: number };
+      try {
+        video = JSON.parse(decode(decodeURIComponent(match[1])));
+      } catch {
+        setImported("Không đọc được video tiện ích gửi sang.");
+        return true;
+      }
+      setImported(`Đang nhờ AI nghe "${video.title || "video"}"… video dài thì mất một lúc.`);
+      try {
+        const response = await fetch("/api/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${video.videoId}`, seconds: video.seconds }),
+        });
+        const data = (await response.json()) as { sentences?: unknown[]; error?: string };
+        if (!response.ok || data.error) throw new Error(data.error ?? "Không đọc được lời thoại.");
+        const lesson = {
+          videoId: video.videoId,
+          title: video.title,
+          author: video.author,
+          seconds: video.seconds,
+          source: "extension",
+          // Mốc giờ là ước lượng, không phải mốc thật của phụ đề. Đánh dấu để
+          // app nói rõ điều đó và không nhắc "bắt lại phụ đề" — video này làm
+          // gì có phụ đề mà bắt lại.
+          estimated: true,
+          sentences: data.sentences ?? [],
+        };
+        addLessonsToCatalogue([lesson]);
+        const list = saveLesson(lesson) as { id: string; sentences: unknown[] }[];
+        setLessons(list as VideoLesson[]);
+        // Đếm theo bài ĐÃ LƯU, không theo số đoạn AI trả về: bước lưu còn gộp
+        // các mẩu ngắn lại, nên hai con số lệch nhau và người học thấy sai.
+        const saved = list.find((item) => item.id === `yt-${lesson.videoId}`);
+        setImported(`AI đã nghe xong "${lesson.title}" · ${saved?.sentences.length ?? 0} câu · mốc giờ là ước lượng.`);
+      } catch (problem) {
+        setImported(problem instanceof Error ? problem.message : "Không đọc được lời thoại.");
+      }
+      return true;
+    };
+
     const take = () => {
       const lesson = lessonFromHash(window.location.hash, decode) as { title: string; sentences: unknown[] } | null;
       if (!lesson) return;
@@ -397,7 +448,9 @@ export default function Home() {
     };
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
     setLessons(readLessons());
-    take();
+    void takeTranscribe().then((done) => {
+      if (!done) take();
+    });
     // Tiện ích mở thẻ mới thì nhánh trên đủ. Nhưng nếu nó rơi vào thẻ Lexilo đang
     // mở sẵn, chỉ neo đổi chứ trang không dựng lại — thiếu nhánh này là bài rơi mất.
     window.addEventListener("hashchange", take);

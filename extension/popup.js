@@ -114,36 +114,26 @@ async function openInLexilo(lesson) {
 /**
  * Video không có phụ đề thì nhờ Lexilo cho AI nghe hộ.
  *
- * Câu do máy chủ cắt luôn, không cắt ở đây: tiện ích không mang theo hàm căn
- * giờ, mà cắt ở hai nơi thì sớm muộn hai bên ra kết quả khác nhau.
+ * KHÔNG gọi thẳng /api/transcribe từ đây. Tiện ích chạy ở origin
+ * chrome-extension://… nên đó là một yêu cầu chéo nguồn, và máy chủ dev trả 403
+ * "Forbidden" TRƯỚC khi tới route — đo rồi, mọi origin lạ đều bị chặn như vậy.
  *
- * Mốc giờ là ƯỚC LƯỢNG — đánh dấu estimated để Lexilo nói rõ điều đó với người
- * học, đừng để họ tưởng đây là mốc thật của phụ đề.
+ * Nên chỉ chuyển việc: mở Lexilo kèm mã video, rồi để chính trang Lexilo gọi API
+ * của nó. Cùng origin thì không có CORS nào để vướng, và người dùng nhìn thấy
+ * tiến trình trên một trang đàng hoàng thay vì trong một bảng nhỏ.
  */
 async function listen() {
   el.listen.disabled = true;
-  say("Đang nhờ AI nghe video… video dài thì mất một lúc.");
   try {
-    const response = await fetch(`${await lexiloOrigin()}/api/transcribe`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${page.videoId}`, seconds: page.seconds }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) throw new Error(data.error ?? "Không đọc được lời thoại.");
-    const sentences = data.sentences ?? [];
-    if (!sentences.length) throw new Error("Không cắt được câu nào từ lời thoại.");
-
-    await openInLexilo({
-      videoId: page.videoId,
-      title: page.title,
-      author: page.author,
-      seconds: page.seconds,
-      source: "extension",
-      estimated: true,
-      sentences,
-    });
-    say(`AI đã nghe xong — ${sentences.length} đoạn. Mốc giờ là ước lượng, đọc lại một lượt nhé.`, "good");
+    const payload = btoa(
+      String.fromCharCode(
+        ...new TextEncoder().encode(
+          JSON.stringify({ videoId: page.videoId, title: page.title, author: page.author, seconds: page.seconds }),
+        ),
+      ),
+    );
+    await chrome.tabs.create({ url: `${await lexiloOrigin()}/#transcribe=${encodeURIComponent(payload)}` });
+    say("Đã mở Lexilo. AI đang nghe video ở đó — video dài thì mất một lúc.", "good");
   } catch (error) {
     say(String(error?.message ?? error), "bad");
     el.listen.disabled = false;
