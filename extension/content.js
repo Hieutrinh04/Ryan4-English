@@ -213,6 +213,51 @@ async function readPage() {
   };
 }
 
+/**
+ * Lấy phụ đề qua chính trình phát của trang.
+ *
+ * YouTube trả mã 200 kèm THÂN RỖNG khi địa chỉ timedtext thiếu token pot, và
+ * token đó chỉ trình phát mới sinh ra được — nên gọi thẳng baseUrl thường về tay
+ * không. Nhưng địa chỉ mà trình phát vừa gọi thì nằm ngay trong bảng đo hiệu
+ * năng của trang, và tham số lang KHÔNG nằm trong phần được ký (sparams) nên
+ * đổi được sang đúng bản phụ đề người dùng chọn.
+ */
+async function readViaPlayer(baseUrl) {
+  const withToken = () =>
+    performance
+      .getEntriesByType("resource")
+      .map((entry) => entry.name)
+      .filter((name) => name.includes("/api/timedtext") && name.includes("pot="))
+      .pop();
+
+  let source = withToken();
+  const button = document.querySelector(".ytp-subtitles-button");
+  const wasOn = button?.getAttribute("aria-pressed") === "true";
+  if (!source && button instanceof HTMLElement && !wasOn) {
+    // Bật phụ đề để trình phát tự gọi. Bật xong trả lại đúng trạng thái cũ, đừng
+    // để người dùng quay lại thấy phụ đề tự nhiên hiện lên.
+    button.click();
+    for (let step = 0; step < 25 && !source; step += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      source = withToken();
+    }
+    button.click();
+  }
+  if (!source) return null;
+
+  const target = new URL(source);
+  const want = new URL(baseUrl, location.origin);
+  target.searchParams.set("fmt", "json3");
+  const lang = want.searchParams.get("lang");
+  if (lang) target.searchParams.set("lang", lang);
+  const kind = want.searchParams.get("kind");
+  if (kind) target.searchParams.set("kind", kind);
+  else target.searchParams.delete("kind");
+
+  const body = await fetch(target, { credentials: "include" }).then((response) => response.text());
+  return body.trim().startsWith("{") ? JSON.parse(body) : null;
+}
+
 /** Tải một bản phụ đề. Chỉ chạy được ở đây, không chạy được từ máy chủ. */
 async function readCaptions(baseUrl) {
   try {
@@ -221,6 +266,12 @@ async function readCaptions(baseUrl) {
     const response = await fetch(url, { credentials: "include" });
     const body = await response.text();
     if (body.trim().startsWith("{")) return JSON.parse(body);
+  } catch {
+    // Thử hai đường dưới.
+  }
+  try {
+    const viaPlayer = await readViaPlayer(baseUrl);
+    if (viaPlayer?.events?.length) return viaPlayer;
   } catch {
     // Chuyển sang endpoint Bản chép lời ở dưới.
   }
