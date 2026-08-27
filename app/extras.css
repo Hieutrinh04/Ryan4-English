@@ -1206,7 +1206,7 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 .resume-bar .primary{display:flex;align-items:center;gap:8px}
 @media(max-width:900px){.video-lesson-v2 .lesson-title{max-width:55vw}.video-lesson-v2 .lesson-mode-tabs{order:5;width:100%;margin-left:0}.video-lesson-v2 .lesson-top{height:auto;min-height:64px;flex-wrap:wrap;padding:10px 8px}.shadowing-layout .lesson-work{border-left:1px solid #2b2235}}
 
-.shadowing-groups{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:-6px;color:#7e7488}.shadowing-groups>span{font-size:9px;text-transform:uppercase;letter-spacing:.8px;margin-right:2px}.shadowing-groups b{font-size:10px;font-weight:600;color:#b8adbf;background:#17111f;border:1px solid #2d2337;border-radius:7px;padding:6px 9px}.shadowing-groups b:not(:last-child)::after{content:" /";color:#8053a0;margin-left:6px}
+.shadowing-groups{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:-6px;color:#7e7488}.shadowing-groups>span{font-size:9px;text-transform:uppercase;letter-spacing:.8px;margin-right:2px}.shadowing-groups b{font-size:10px;font-weight:600;color:#a99eaf;background:#17111f;border:1px solid #2d2337;border-radius:7px;padding:6px 9px}.shadowing-groups b em{font:inherit;font-style:normal;color:inherit}.shadowing-groups b em.stress{color:#f1d6ff;font-weight:850;text-shadow:0 0 10px #ad66d966;border-bottom:2px solid #9c56c8}.shadowing-groups b:not(:last-child)::after{content:" /";color:#8053a0;margin-left:6px}
 .shadowing-own-recording{display:grid;gap:10px;border:1px solid #33273e;background:#120d19;border-radius:11px;padding:13px}.shadowing-own-recording>div{display:flex;align-items:center;gap:9px;color:#a865de}.shadowing-own-recording>div>span{display:grid;gap:2px}.shadowing-own-recording b{font-size:11px;color:#e0d8e6}.shadowing-own-recording small{font-size:9px;color:#8f8499}.shadowing-own-recording audio{width:100%;height:36px;filter:invert(.88) hue-rotate(210deg) saturate(.65)}
 
 /* ── Bài video: sắp lại theo đúng bố cục màn luyện nghe ────────────────────── */
@@ -1653,7 +1653,11 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 
 /* Chỉ nghe: thu khung hình về 0 nhưng GIỮ trình phát trong trang — gỡ ra là mất
    tiếng và phải nạp lại video từ đầu. */
-.video-lesson-v2.audio-only .yt-player{height:0;min-height:0;overflow:hidden;opacity:0;pointer-events:none}
+/* Kèm cả tên bố cục để đủ mạnh hơn luật đặt chiều cao khung — luật đó nằm
+   trong @media, mà cùng độ ưu tiên thì thứ tự trong tệp quyết định, và thứ tự
+   ấy vỡ ngay khi có người chèn thêm một khối @media ở dưới. */
+.video-lesson-v2.audio-only.dictation-layout .yt-player,
+.video-lesson-v2.audio-only.shadowing-layout .yt-player{height:0;min-height:0;overflow:hidden;opacity:0;pointer-events:none}
 .video-lesson-v2.audio-only .lesson-main::before{content:"Đang tắt hình — chỉ nghe tiếng";
   display:block;text-align:center;color:var(--muted);font-size:11.5px;font-weight:700;
   background:var(--surface-2);border:1px dashed var(--line-accent);border-radius:12px;padding:22px 12px}
@@ -1879,6 +1883,9 @@ body{font-family:var(--font-quicksand),Quicksand,Inter,"Segoe UI",Arial,sans-ser
 .video-url-row button{border:0;border-radius:10px;padding:0 18px}.video-url-row button:disabled{opacity:.5}
 .video-import-error{margin:12px 20px 0;padding:9px 11px;border:1px solid #6f343f;border-radius:8px;
   background:#2a1118;color:#f3a5ae;font-size:10.5px;line-height:1.5}
+.video-import-status{display:flex;align-items:center;gap:9px;margin:12px 20px 0;color:#b9a9c5;font-size:10.5px}
+.video-import-status span{width:14px;height:14px;border:2px solid #543866;border-top-color:#b960f2;border-radius:50%;
+  animation:video-import-spin .75s linear infinite}@keyframes video-import-spin{to{transform:rotate(360deg)}}
 .video-import-preview{display:grid;grid-template-columns:150px 1fr;gap:13px;margin:16px 20px 0;padding:10px;
   border:1px solid #30243b;border-radius:11px;background:#17101f}.video-import-preview img{width:150px;aspect-ratio:16/9;
   object-fit:cover;border-radius:7px;background:#09060d}.video-import-preview>div{display:grid;align-content:center;gap:5px}
@@ -2397,3 +2404,33 @@ html,body{
 /* Lời nhắc bài cắt bằng bản cũ. Không phải lỗi của người dùng nên nói nhẹ,
    nhưng phải đủ rõ vì họ đang ngồi nghe một mốc lệch mà không biết vì sao. */
 .lesson-stale{margin:10px 0 0;padding:10px 12px;border:1px solid var(--line-accent);background:var(--tint-purple,var(--surface-2));border-radius:10px;font-size:12px;line-height:1.55;color:var(--text-2)}
+
+/* ── Chủ đề của thư viện nghe ──────────────────────────────────────────────── */
+.topic-block{margin-top:6px}
+.topic-head{margin-bottom:16px}
+.topic-head h2{margin:0 0 5px;font-size:19px}
+.topic-head p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.6}
+.topic-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+.topic-card{position:relative;display:grid}
+.topic-open{width:100%;display:grid;gap:8px;align-content:start;padding:18px;border:1px solid var(--line);background:var(--surface);border-radius:14px;text-align:left;transition:border-color var(--t-fast) var(--ease),transform var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease)}
+.topic-open:hover:not(:disabled){border-color:var(--purple);transform:translateY(-2px);box-shadow:var(--shadow-md)}
+/* Chủ đề chưa có bài thì mờ đi, nhưng nút "Nạp bài" bên dưới vẫn bấm được. */
+.topic-open:disabled{opacity:.6;cursor:default}
+.topic-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--soft);color:var(--purple)}
+.topic-open>b{font-size:16px;font-weight:700}
+.topic-levels{font-style:normal;font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--purple-dark);background:var(--soft);border-radius:9999px;padding:3px 9px;justify-self:start}
+.topic-open>p{margin:2px 0 0;font-size:12.5px;line-height:1.55;color:var(--text-2);min-height:38px}
+.topic-foot{margin-top:8px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted);font-size:11.5px}
+.topic-foot strong{color:var(--ink);font-size:14px;margin-right:4px}
+.topic-foot i{font-style:normal}
+.topic-load{position:absolute;right:12px;bottom:12px;padding:6px 13px;font-size:11.5px;font-weight:600;border:1px solid var(--line-accent);background:var(--surface-2);color:var(--purple-dark);border-radius:9999px}
+.topic-load:hover:not(:disabled){border-color:var(--purple);background:var(--soft)}
+
+.topic-trail{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-bottom:16px;font-size:14px}
+.topic-trail button{border:0;background:none;padding:0;color:var(--muted);font-size:14px}
+.topic-trail button:hover{color:var(--purple)}
+.topic-trail span{color:var(--text-3)}
+.topic-trail b{color:var(--ink);font-weight:700}
+.topic-trail em{font-style:normal;font-size:10px;font-weight:700;color:var(--purple-dark);background:var(--soft);border-radius:9999px;padding:3px 9px}
+
+@media(max-width:520px){.topic-grid{grid-template-columns:1fr}}
