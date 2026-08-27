@@ -2405,26 +2405,22 @@ html,body{
    nhưng phải đủ rõ vì họ đang ngồi nghe một mốc lệch mà không biết vì sao. */
 .lesson-stale{margin:10px 0 0;padding:10px 12px;border:1px solid var(--line-accent);background:var(--tint-purple,var(--surface-2));border-radius:10px;font-size:12px;line-height:1.55;color:var(--text-2)}
 
+
 /* ── Chủ đề của thư viện nghe ──────────────────────────────────────────────── */
-.topic-block{margin-top:6px}
-.topic-head{margin-bottom:16px}
-.topic-head h2{margin:0 0 5px;font-size:19px}
-.topic-head p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.6}
-.topic-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
-.topic-card{position:relative;display:grid}
-.topic-open{width:100%;display:grid;gap:8px;align-content:start;padding:18px;border:1px solid var(--line);background:var(--surface);border-radius:14px;text-align:left;transition:border-color var(--t-fast) var(--ease),transform var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease)}
-.topic-open:hover:not(:disabled){border-color:var(--purple);transform:translateY(-2px);box-shadow:var(--shadow-md)}
-/* Chủ đề chưa có bài thì mờ đi, nhưng nút "Nạp bài" bên dưới vẫn bấm được. */
-.topic-open:disabled{opacity:.6;cursor:default}
-.topic-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--soft);color:var(--purple)}
-.topic-open>b{font-size:16px;font-weight:700}
-.topic-levels{font-style:normal;font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--purple-dark);background:var(--soft);border-radius:9999px;padding:3px 9px;justify-self:start}
-.topic-open>p{margin:2px 0 0;font-size:12.5px;line-height:1.55;color:var(--text-2);min-height:38px}
-.topic-foot{margin-top:8px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted);font-size:11.5px}
-.topic-foot strong{color:var(--ink);font-size:14px;margin-right:4px}
-.topic-foot i{font-style:normal}
-.topic-load{position:absolute;right:12px;bottom:12px;padding:6px 13px;font-size:11.5px;font-weight:600;border:1px solid var(--line-accent);background:var(--surface-2);color:var(--purple-dark);border-radius:9999px}
-.topic-load:hover:not(:disabled){border-color:var(--purple);background:var(--soft)}
+/* Hàng chip, đúng lối S English: chọn mảng nội dung ngay trên đầu chứ không
+   phải bấm vào một thẻ rồi mới thấy bài. */
+.topic-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.topic-chips button{display:inline-flex;align-items:center;gap:7px;padding:8px 15px;border:1px solid var(--line);background:var(--surface);border-radius:9999px;font-size:13px;transition:border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
+.topic-chips button:hover:not(:disabled){border-color:var(--purple)}
+.topic-chips button.active{border-color:var(--purple);background:var(--purple);color:#fff}
+.topic-chips em{font-style:normal;font-size:11px;font-weight:700;color:var(--muted)}
+.topic-chips button.active em{color:#fff}
+/* Chủ đề chưa nạp bài: vẫn hiện để người học biết có, dấu ＋ nói rõ bấm là nạp. */
+.topic-chip-empty{color:var(--muted);border-style:dashed}
+.topic-chip-empty em{color:var(--purple)}
+
+.shelf-more{margin-left:auto;padding:0;border:0;background:none;color:var(--purple);font-size:12.5px;font-weight:600}
+.shelf-more:hover{text-decoration:underline}
 
 .topic-trail{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-bottom:16px;font-size:14px}
 .topic-trail button{border:0;background:none;padding:0;color:var(--muted);font-size:14px}
@@ -2432,5 +2428,3 @@ html,body{
 .topic-trail span{color:var(--text-3)}
 .topic-trail b{color:var(--ink);font-weight:700}
 .topic-trail em{font-style:normal;font-size:10px;font-weight:700;color:var(--purple-dark);background:var(--soft);border-radius:9999px;padding:3px 9px}
-
-@media(max-width:520px){.topic-grid{grid-template-columns:1fr}}

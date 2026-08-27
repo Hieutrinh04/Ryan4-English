@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Icon, { type IconName } from "./Icon";
+import Icon from "./Icon";
 import { groupByLesson, readSaved, removeSentence } from "../lib/saved-sentences.mjs";
 import { addLessonsToCatalogue, addToCatalogue, countNew, groupByChannel, readCatalogue, removeFromCatalogue, shelves, withLessonState } from "../lib/catalogue.mjs";
 import { readableLength } from "../lib/youtube-list.mjs";
@@ -66,6 +66,56 @@ function shelfLabel(key: ShelfKey, video: { percent: number; done: number; total
   if (key === "finished") return "Đã xong · học lại";
   if (key === "doing") return `${video.percent}% hoàn thành`;
   return video.total ? `${video.total} phân đoạn` : "Sẵn sàng học";
+}
+
+/** Nhãn trạng thái khi bày theo chủ đề, chưa xếp theo tiến độ. */
+function topicLabel(video: { percent: number; total: number; lesson: unknown }) {
+  if (!video.lesson) return "Chưa có phụ đề";
+  if (video.percent >= 100) return "Đã xong · học lại";
+  if (video.percent > 0) return `${video.percent}% hoàn thành`;
+  return "Chưa bắt đầu";
+}
+
+/** Một thẻ video. Dùng chung cho mọi dãy trong thư viện. */
+function VideoCard({
+  video,
+  level,
+  label,
+  tone,
+  onOpen,
+  onRemove,
+}: {
+  video: ShelfVideo;
+  level: string | null;
+  label: string;
+  tone?: string;
+  onOpen: () => void;
+  onRemove?: () => void;
+}) {
+  return (
+    <div className="catalogue-card">
+      <button className="catalogue-open" onClick={onOpen}>
+        <span className="catalogue-thumb" style={{ backgroundImage: `url(${video.thumbnail})` }}>
+          {level && (
+            <em className="level-badge" title="Cấp độ ước lượng từ độ dài câu và độ dài từ trong phụ đề">
+              {level}
+            </em>
+          )}
+          {video.seconds > 0 && <em className="duration-badge">◷ {readableLength(video.seconds)}</em>}
+          {/* Thanh tiến độ nằm ngay trên ảnh: lướt mắt là thấy còn bao nhiêu,
+              không phải đọc số. */}
+          {video.percent > 0 && <i className="catalogue-bar"><i style={{ width: `${video.percent}%` }} /></i>}
+        </span>
+        <b>{video.title}</b>
+        <small className={tone}>{label}</small>
+      </button>
+      {onRemove && (
+        <button className="catalogue-remove" onClick={onRemove} aria-label={`Bỏ ${video.title} khỏi danh mục`}>
+          ×
+        </button>
+      )}
+    </div>
+  );
 }
 
 export default function LessonLibrary({
@@ -206,6 +256,18 @@ export default function LessonLibrary({
     [catalogue, lessons],
   );
   const openTopic = topic ? (shelfTopics.find((item) => item.id === topic) ?? null) : null;
+  // Mỗi dãy chỉ lấy vài thẻ đầu; xem hết thì bấm "Xem thêm" để vào hẳn chủ đề.
+  const ROW_SIZE = 8;
+  const topicRows = useMemo(() => {
+    const map = new Map<string, ShelfVideo[]>();
+    const withState = withLessonState(catalogue, lessons) as ShelfVideo[];
+    for (const item of shelfTopics) {
+      let list = (videosInTopic(withState, item.id) as ShelfVideo[]);
+      if (levelFilter) list = list.filter((video) => matchesLevel(levelOf.get(video.videoId) ?? null, levelFilter));
+      if (list.length) map.set(item.id, list.slice(0, ROW_SIZE));
+    }
+    return map;
+  }, [catalogue, lessons, shelfTopics, levelFilter, levelOf]);
 
   const shelf = useMemo(() => {
     let list = topic ? (videosInTopic(catalogue, topic) as CatalogueVideo[]) : catalogue;
@@ -243,6 +305,30 @@ export default function LessonLibrary({
       </header>
 
       <div className="library-filter-panel">
+        {/* Hàng chip chủ đề. Chủ đề chưa có bài nào vẫn hiện, kèm nút nạp — ẩn đi
+            thì người học tưởng app không có chủ đề đó. */}
+        {mode === "dictation" && (
+          <div className="topic-chips" role="group" aria-label="Lọc theo chủ đề">
+            <button className={topic ? "" : "active"} onClick={() => { setTopic(""); setChannelFilter(""); }}>
+              Tất cả <em>{catalogue.length}</em>
+            </button>
+            {shelfTopics.map((item) =>
+              item.count ? (
+                <button
+                  key={item.id}
+                  className={topic === item.id ? "active" : ""}
+                  onClick={() => { setTopic(item.id); setChannelFilter(""); }}
+                >
+                  {item.name} <em>{item.count}</em>
+                </button>
+              ) : (
+                <button key={item.id} className="topic-chip-empty" disabled={loading} onClick={() => void loadTopic(item.id)}>
+                  {item.name} <em>{loading ? "…" : "＋"}</em>
+                </button>
+              ),
+            )}
+          </div>
+        )}
         {mode === "dictation" ? (
           <div className="library-filters" role="group" aria-label="Lọc nguồn bài">
             {FILTERS.map((item) => (
@@ -278,7 +364,14 @@ export default function LessonLibrary({
                     ))}
                   </div>
 
-                  {/* Cấp độ đo từ chính lời thoại nên chỉ video đã có phụ đề mới có.
+                  </>
+                )}
+                {catalogue.length > 0 && (
+                  <>
+                  {/* Cấp độ luôn hiện, kể cả ở mức Tất cả: nó là thứ người học
+                      lọc trước khi chọn mảng nội dung, không phải sau.
+
+                      Đo từ chính lời thoại nên chỉ video đã có phụ đề mới có mức.
                       Lọc theo mức sẽ bỏ qua video chưa đo được — đó là chủ ý, chứ xếp
                       đại vào một mức thì bộ lọc thành vô nghĩa. */}
                   <div className="catalogue-filter levels" role="group" aria-label="Lọc theo cấp độ">
@@ -300,41 +393,39 @@ export default function LessonLibrary({
       </div>
 
 
-      {/* Ở chế độ Nghe chép, mở ra là các CHỦ ĐỀ chứ không phải một đống video
-          trộn lẫn — chọn chủ đề rồi mới tới bài, giống lối dailydictation xếp. */}
-      {showVideo && mode === "dictation" && !topic && (
-        <section className="library-block topic-block">
-          <div className="topic-head">
-            <h2>Chọn chủ đề</h2>
-            <p>Mỗi chủ đề là một nhóm kênh đã chọn sẵn. Video phát trực tiếp từ YouTube, kênh gốc ghi trên từng thẻ.</p>
-          </div>
-          <div className="topic-grid">
-            {shelfTopics.map((item) => (
-              <div className="topic-card" key={item.id}>
-                <button className="topic-open" onClick={() => setTopic(item.id)} disabled={!item.count}>
-                  <span className="topic-icon"><Icon name={item.icon as IconName} size={18} /></span>
+      {/* Chưa chọn chủ đề nào thì bày theo CHỦ ĐỀ, mỗi chủ đề một dãy ngang.
+          Chọn rồi thì mới xếp theo trạng thái học (đang dở / mới / đã xong), vì
+          lúc đó người học đã biết mình muốn nghe mảng nào. */}
+      {showVideo && mode === "dictation" && !topic && catalogue.length > 0 && (
+        <section className="library-block library-catalogue">
+          {shelfTopics.map((item) => {
+            const videos = topicRows.get(item.id) ?? [];
+            if (!videos.length) return null;
+            return (
+              <div key={item.id} className="catalogue-shelf">
+                <div className="catalogue-shelf-head">
                   <b>{item.name}</b>
-                  {item.levels && <em className="topic-levels">{item.levels}</em>}
-                  <p>{item.blurb}</p>
-                  <span className="topic-foot">
-                    {item.count ? (
-                      <>
-                        <strong>{item.count}</strong> video
-                        {item.ready > 0 && <i> · {item.ready} đã có phụ đề</i>}
-                      </>
-                    ) : (
-                      <i>Chưa nạp bài nào</i>
-                    )}
-                  </span>
-                </button>
-                {!item.count && topicById(item.id) && (
-                  <button className="topic-load" disabled={loading} onClick={() => void loadTopic(item.id)}>
-                    {loading ? "Đang nạp…" : "Nạp bài"}
-                  </button>
-                )}
+                  <em>{item.count}</em>
+                  <small>{item.levels}</small>
+                  <button className="shelf-more" onClick={() => setTopic(item.id)}>Xem thêm</button>
+                </div>
+                <div className="catalogue-row">
+                  {videos.map((video) => (
+                    <VideoCard
+                      key={video.videoId}
+                      video={video}
+                      level={levelOf.get(video.videoId) ?? null}
+                      label={topicLabel(video)}
+                      onOpen={() => {
+                        if (video.lesson) pickVideo(video.lesson);
+                        else window.open(`https://www.youtube.com/watch?v=${video.videoId}`, "_blank", "noopener");
+                      }}
+                    />
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
         </section>
       )}
 
@@ -342,7 +433,7 @@ export default function LessonLibrary({
         <section className="library-block library-catalogue">
           {mode === "dictation" && openTopic && (
             <nav className="topic-trail" aria-label="Đường dẫn chủ đề">
-              <button onClick={() => { setTopic(""); setChannelFilter(""); setLevelFilter(""); }}>Chọn chủ đề</button>
+              <button onClick={() => { setTopic(""); setChannelFilter(""); setLevelFilter(""); }}>Tất cả chủ đề</button>
               <span aria-hidden="true">›</span>
               <b aria-current="page">{openTopic.name}</b>
               {openTopic.levels && <em>{openTopic.levels}</em>}
@@ -377,37 +468,18 @@ export default function LessonLibrary({
                     </div>
                     <div className="catalogue-row" ref={(node) => { rows.current[key] = node; }}>
                       {videos.map((video) => (
-                        <div key={video.videoId} className="catalogue-card">
-                          <button
-                            className="catalogue-open"
-                            onClick={() => {
-                              if (video.lesson) pickVideo(video.lesson);
-                              else window.open(`https://www.youtube.com/watch?v=${video.videoId}`, "_blank", "noopener");
-                            }}
-                          >
-                            <span className="catalogue-thumb" style={{ backgroundImage: `url(${video.thumbnail})` }}>
-                              {levelOf.get(video.videoId) && (
-                                <em className="level-badge" title="Cấp độ ước lượng từ độ dài câu và độ dài từ trong lời thoại">
-                                  {levelOf.get(video.videoId)}
-                                </em>
-                              )}
-                              {video.seconds > 0 && <em className="duration-badge">◷ {readableLength(video.seconds)}</em>}
-                              {/* Thanh tiến độ nằm ngay trên ảnh: lướt mắt là thấy
-                                  còn bao nhiêu, không phải đọc số. */}
-                              {video.percent > 0 && <i className="catalogue-bar"><i style={{ width: `${video.percent}%` }} /></i>}
-                            </span>
-                            <b>{video.title}</b>
-                            <small className={key}>{shelfLabel(key, video)}</small>
-                          </button>
-                          <button
-                            className="catalogue-remove"
-                            onClick={() => setCatalogue(removeFromCatalogue(video.videoId) as CatalogueVideo[])}
-                            aria-label={`Bỏ ${video.title} khỏi danh mục`}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
+                        <VideoCard
+                          key={video.videoId}
+                          video={video}
+                          level={levelOf.get(video.videoId) ?? null}
+                          label={shelfLabel(key, video)}
+                          tone={key}
+                          onOpen={() => {
+                            if (video.lesson) pickVideo(video.lesson);
+                            else window.open(`https://www.youtube.com/watch?v=${video.videoId}`, "_blank", "noopener");
+                          }}
+                          onRemove={() => setCatalogue(removeFromCatalogue(video.videoId) as CatalogueVideo[])}
+                        />                      ))}
                     </div>
                   </div>
                 );
