@@ -2347,13 +2347,7 @@ html,body{
 .folder-empty{margin:0;padding:26px;border:1px dashed var(--line);border-radius:14px;color:var(--muted);font-size:13px;text-align:center;line-height:1.6}
 .folder-empty b{color:var(--ink)}
 
-/* Nút cất từ vào danh sách, nằm cạnh nút sao trong từng hàng. Mờ khi chưa dùng
-   để không tranh chỗ với nội dung của từ, rõ hẳn khi từ đã nằm trong danh sách. */
-.folder-pin{border:0;background:none;padding:0;margin-left:-5px;font-size:13px;line-height:1;color:var(--muted);opacity:.4;transition:opacity var(--t-fast) var(--ease),color var(--t-fast) var(--ease)}
-.word-tr:hover .folder-pin,.folder-pin:focus-visible{opacity:1}
-.folder-pin.in-folder{opacity:1;color:var(--purple)}
 
-.folder-picker{width:min(420px,92vw);display:grid;gap:14px}
 .folder-check-list{list-style:none;margin:0;padding:0;display:grid;gap:6px;max-height:46vh;overflow-y:auto}
 .folder-check-list button{width:100%;display:grid;grid-template-columns:24px 1fr auto;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);background:var(--surface-2);border-radius:11px;text-align:left;transition:border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
 .folder-check-list i{font-style:normal;width:22px;height:22px;border-radius:7px;display:grid;place-items:center;background:var(--soft);color:var(--purple);font-size:12px}
@@ -2392,3 +2386,10 @@ html,body{
 .wordlist-create{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;font-size:14px;border-radius:12px}
 .wordlist-create svg{width:16px;height:16px}
 @media(max-width:520px){.wordlist-create{flex:1;justify-content:center}}
+
+/* Phần cất từ vào danh sách, nằm trong thẻ từ đầy đủ. Trước đây đây là một nút
+   ▤ không nhãn nhét vào từng hàng của bảng — không ai đoán ra nó làm gì. Ở đây
+   có chỗ để ghi rõ tên việc, và mắt đã dừng lại sẵn ở thẻ này rồi. */
+.detail-lists{display:grid;gap:10px;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
+.detail-lists>b{font-size:13px;font-weight:700}
+.detail-lists .folder-check-list{max-height:34vh}

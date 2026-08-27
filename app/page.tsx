@@ -1361,7 +1361,7 @@ export default function Home() {
           }}
         />
       )}
-      {detailWord && <WordDetail word={detailWord} close={() => setDetailWord(null)} study={() => { const selected = detailWord; setDetailWord(null); launchReview(words.filter((word) => word.id === selected.id)); }} speak={speak} />}
+      {detailWord && <WordDetail word={detailWord} close={() => setDetailWord(null)} study={() => { const selected = detailWord; setDetailWord(null); launchReview(words.filter((word) => word.id === selected.id)); }} speak={speak} folders={folders} updateFolders={updateFolders} />}
       {showAuth && <AuthModal close={() => setShowAuth(false)} signedInEmail={userEmail} />}
     </main>
   );
@@ -2145,9 +2145,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
   const [draftName, setDraftName] = useState("");
   const [draftNote, setDraftNote] = useState("");
   const [formError, setFormError] = useState("");
-  const [pickerDraft, setPickerDraft] = useState("");
   const [folderToDelete, setFolderToDelete] = useState<Folder | null>(null);
-  const [folderPicker, setFolderPicker] = useState<WordCard | null>(null);
   // Gom khoảng trắng y như lib/folders làm, để so tên mà không cần biểu thức chính quy.
   const tidy = (value: string) => value.split(" ").filter(Boolean).join(" ");
   // Lấy đường dẫn thay vì tra thẳng mã: danh sách vừa bị xoá thì đường dẫn rỗng,
@@ -2190,24 +2188,12 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
     updateFolders(added);
     closeFolderForm();
   }
-  // Tạo nhanh ngay trong bảng chọn, không có ghi chú — chỗ này người dùng đang
-  // cất một từ, bắt điền thêm ghi chú là chặn đường họ.
-  function createFromPicker(wordId: string) {
-    const name = tidy(pickerDraft);
-    if (!name) return;
-    const added = addFolder(folders, name);
-    if (added.list.length === folders.list.length) return setFormError("Đã có danh sách tên " + name + ".");
-    updateFolders(addWords(added, added.list[added.list.length - 1].id, [wordId]));
-    setPickerDraft("");
-    setFormError("");
-  }
   function dropFolder(id: string) {
     updateFolders(removeFolder(folders, id));
     // Đang mở đúng danh sách vừa xoá thì lùi về cha, đừng để màn hình trống.
     if (openId === id) setFolderFilter(openFolder && openFolder.parentId ? openFolder.parentId : null);
     setFolderToDelete(null);
   }
-  useEscape(() => setFolderPicker(null), Boolean(folderPicker));
   useEscape(() => setFolderToDelete(null), Boolean(folderToDelete));
   useEscape(closeFolderForm, Boolean(creating || editing));
   const [pdfTopic, setPdfTopic] = useState<string | null>(null);
@@ -2582,14 +2568,6 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
               <button onClick={(event) => { event.stopPropagation(); toggleStar(w.id); }} aria-label="Gắn sao">
                 {w.starred ? "★" : "☆"}
               </button>
-              <button
-                className={`folder-pin${foldersOf(folders, w.id).length ? " in-folder" : ""}`}
-                aria-label={`Cất ${w.term} vào danh sách từ`}
-                title="Cất vào danh sách từ"
-                onClick={(event) => { event.stopPropagation(); setFormError(""); setPickerDraft(""); setFolderPicker(w); }}
-              >
-                ▤
-              </button>
               <span>
                 <b>
                   {w.term} {w.partOfSpeech && <em>({w.partOfSpeech})</em>}
@@ -2679,43 +2657,6 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
                 <button className="primary" type="submit" disabled={!tidy(draftName)}>{editing ? "Lưu" : "Tạo"}</button>
               </div>
             </form>
-          </section>
-        </div>
-      )}
-      {folderPicker && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFolderPicker(null); }}>
-          <section className="modal folder-picker" role="dialog" aria-modal="true" aria-labelledby="folder-picker-title">
-            <div className="modal-head">
-              <div>
-                <span className="eyebrow">CẤT VÀO DANH SÁCH</span>
-                <h2 id="folder-picker-title">{folderPicker.term}</h2>
-              </div>
-              <button onClick={() => setFolderPicker(null)} aria-label="Đóng">×</button>
-            </div>
-            {folders.list.length === 0 ? (
-              <p className="folder-empty">Chưa có danh sách nào. Đặt tên một cái ở dưới, từ này sẽ vào đó luôn.</p>
-            ) : (
-              <ul className="folder-check-list">
-                {folders.list.map((folder) => {
-                  const inside = foldersOf(folders, folderPicker.id).includes(folder.id);
-                  const parent = folder.parentId ? folderPath(folders, folder.id).slice(0, -1).map((step) => step.name).join(" › ") : "";
-                  return (
-                    <li key={folder.id}>
-                      <button className={inside ? "active" : ""} aria-pressed={inside} onClick={() => updateFolders(toggleWord(folders, folder.id, folderPicker.id))}>
-                        <i aria-hidden="true">{inside ? "✓" : "＋"}</i>
-                        <b>{folder.name}</b>
-                        <small>{parent || "Danh sách gốc"}</small>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            <form className="folder-new" onSubmit={(event) => { event.preventDefault(); createFromPicker(folderPicker.id); }}>
-              <input value={pickerDraft} onChange={(event) => { setPickerDraft(event.target.value); setFormError(""); }} placeholder="Tên danh sách mới" aria-label="Tên danh sách mới" maxLength={60} />
-              <button className="primary" type="submit" disabled={!tidy(pickerDraft)}>Tạo và cất vào</button>
-            </form>
-            {formError && <p className="folder-note" role="status">{formError}</p>}
           </section>
         </div>
       )}
@@ -3027,8 +2968,24 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
 }
 
 // study không bắt buộc: ở màn luyện tập không có chỗ để mở phiên ôn cho một từ lẻ.
-function WordDetail({ word, close, study, speak }: { word: WordCard; close: () => void; study?: () => void; speak: (text: string) => void }) {
+function WordDetail({ word, close, study, speak, folders, updateFolders }: { word: WordCard; close: () => void; study?: () => void; speak: (text: string) => void; folders?: FolderStore; updateFolders?: (next: FolderStore) => void }) {
   useEscape(close);
+  const [listDraft, setListDraft] = useState("");
+  const [listError, setListError] = useState("");
+  // Chỉ hiện phần danh sách khi nơi gọi thật sự đưa kho xuống. Ba nơi gọi khác
+  // của thẻ này là màn hình học, ở đó cất từ vào danh sách không có nghĩa gì.
+  const canFile = Boolean(folders && updateFolders);
+  const inside = folders ? foldersOf(folders, word.id) : [];
+  function makeList() {
+    if (!folders || !updateFolders) return;
+    const name = listDraft.split(" ").filter(Boolean).join(" ");
+    if (!name) return;
+    const added = addFolder(folders, name);
+    if (added.list.length === folders.list.length) return setListError("Đã có danh sách tên " + name + ".");
+    updateFolders(addWords(added, added.list[added.list.length - 1].id, [word.id]));
+    setListDraft("");
+    setListError("");
+  }
   const usageFields = [
     ["Đồng nghĩa", word.synonyms, word.synonymDetails],
     ["Trái nghĩa", word.antonyms, word.antonymDetails],
@@ -3078,6 +3035,33 @@ function WordDetail({ word, close, study, speak }: { word: WordCard; close: () =
             </section>
           ))}
         </div>
+        {canFile && folders && updateFolders && (
+          <section className="detail-lists">
+            <b>Cất vào danh sách</b>
+            {folders.list.length > 0 && (
+              <ul className="folder-check-list">
+                {folders.list.map((folder) => {
+                  const ticked = inside.includes(folder.id);
+                  const parent = folder.parentId ? folderPath(folders, folder.id).slice(0, -1).map((step) => step.name).join(" › ") : "";
+                  return (
+                    <li key={folder.id}>
+                      <button className={ticked ? "active" : ""} aria-pressed={ticked} onClick={() => updateFolders(toggleWord(folders, folder.id, word.id))}>
+                        <i aria-hidden="true">{ticked ? "✓" : "＋"}</i>
+                        <b>{folder.name}</b>
+                        <small>{parent || "Danh sách gốc"}</small>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <form className="folder-new" onSubmit={(event) => { event.preventDefault(); makeList(); }}>
+              <input value={listDraft} onChange={(event) => { setListDraft(event.target.value); setListError(""); }} placeholder="Tên danh sách mới" aria-label="Tên danh sách mới" maxLength={60} />
+              <button className="primary" type="submit" disabled={!listDraft.trim()}>Tạo và cất vào</button>
+            </form>
+            {listError && <p className="folder-note" role="status">{listError}</p>}
+          </section>
+        )}
         <footer><button onClick={close}>Đóng</button>{study && <button className="primary" onClick={study}>Học từ này →</button>}</footer>
       </article>
     </div>
