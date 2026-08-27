@@ -33,8 +33,10 @@ function round(value) {
  *     số từ, làm hỏng chính những mốc mà bản 2 vừa tính đúng.
  * 4 — chỉ cắt Ở RANH GIỚI DÒNG PHỤ ĐỀ. Cắt giữa dòng thì mốc chỉ là số chia đều
  *     theo từ, nên đoạn hụt mấy chữ cuối còn đoạn sau ôm thêm phần đầu câu trước.
+ * 5 — đoạn phải đủ dài mới đóng. Đủ số câu thôi thì chưa: hội thoại nhiều câu
+ *     rất ngắn, đóng ngay ở đó ra đoạn năm chữ, nhại chưa vào nhịp đã hết.
  */
-export const CAPTION_VERSION = 4;
+export const CAPTION_VERSION = 5;
 
 /** Chậm hơn mức này thì gần như chắc chắn là khoảng lặng, không phải nói chậm. */
 export const MIN_WORDS_PER_SECOND = 1.2;
@@ -298,7 +300,7 @@ export function cuesFromJson3(payload) {
  * maxWords chặn trường hợp cả đoạn không có dấu chấm nào — thường gặp ở phụ đề
  * máy tự nghe — để không sinh ra một "câu" dài sáu dòng không ai chép nổi.
  */
-export function sentencesFrom(cues, { maxWords = 30, maxSentences = 2 } = {}) {
+export function sentencesFrom(cues, { maxWords = 30, maxSentences = 2, minWords = 10 } = {}) {
   const wordsOf = (value) => String(value ?? "").split(/\s+/).filter(Boolean);
   const endersIn = (value) => (String(value ?? "").match(/[.!?]["')\]]?(?:\s|$)/g) ?? []).length;
 
@@ -351,7 +353,10 @@ export function sentencesFrom(cues, { maxWords = 30, maxSentences = 2 } = {}) {
     group.push(cue);
     words += count;
     enders += endersIn(cue.text);
-    if (enders >= maxSentences || words >= maxWords) flush();
+    // Đủ số câu THÔI thì chưa đóng — phải đủ dài nữa. Hội thoại có nhiều câu rất
+    // ngắn ("Hi Neil. How are you?" là hai câu, năm chữ); đóng ngay ở đó thì
+    // người học được một đoạn vụn, nhại xong chưa kịp vào nhịp đã hết.
+    if (words >= maxWords || (enders >= maxSentences && words >= minWords)) flush();
   }
   flush();
   return sentences;

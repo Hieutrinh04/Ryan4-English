@@ -267,3 +267,35 @@ test("sentencesFrom: một dòng dài quá trần từ thì vẫn phải cắt b
   assert.equal(cau[0].start, 0);
   assert.equal(cau[cau.length - 1].end, 20, "cắt xong vẫn phủ trọn dòng");
 });
+
+test("sentencesFrom: hội thoại câu ngắn được gộp cho đủ dài, không chia vụn", () => {
+  // "Hi Neil. How are you?" đã là hai câu nhưng chỉ năm chữ. Đóng đoạn ngay ở đó
+  // thì nhại xong chưa kịp vào nhịp đã hết.
+  const cues = [
+    { start: 0, end: 1.4, text: "Hi Neil. How are you?" },
+    { start: 1.4, end: 3.6, text: "I'm very well thank you, Georgie." },
+    { start: 3.6, end: 5.2, text: "Are you enjoying your coffee?" },
+    { start: 5.2, end: 8.1, text: "I am, but it's got a bit cool now." },
+  ];
+  const cau = sentencesFrom(cues);
+  assert.ok(cau[0].text.split(/\s+/).length >= 10, `đoạn đầu chỉ ${cau[0].text.split(/\s+/).length} chữ, vẫn còn vụn`);
+  // Gộp rồi thì mốc vẫn phải là mốc thật của dòng phụ đề.
+  const that = new Set(cues.flatMap((c) => [c.start, c.end]));
+  for (const s of cau) assert.ok(that.has(s.start) && that.has(s.end));
+});
+
+test("sentencesFrom: đoạn cuối ngắn thì chấp nhận, không có gì để gộp thêm", () => {
+  const cau = sentencesFrom([{ start: 0, end: 2, text: "Oh, that's a shame." }]);
+  assert.equal(cau.length, 1);
+  assert.equal(cau[0].end, 2);
+});
+
+test("sentencesFrom: minWords không được phá trần maxWords", () => {
+  const cues = Array.from({ length: 8 }, (_, i) => ({
+    start: i * 2, end: i * 2 + 2,
+    text: "One two three four five six seven eight.",
+  }));
+  for (const s of sentencesFrom(cues, { maxWords: 20, minWords: 18 })) {
+    assert.ok(s.text.split(/\s+/).length <= 20, `đoạn ${s.text.split(/\s+/).length} chữ vượt trần 20`);
+  }
+});
