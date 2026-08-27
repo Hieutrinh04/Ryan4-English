@@ -13,6 +13,7 @@ import WritingPractice from "../components/WritingPractice";
 import SpeakingPractice from "../components/SpeakingPractice";
 import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
 import { lessonFromHash, readLessons, saveLesson } from "../lib/lessons.mjs";
+import { addLessonsToCatalogue } from "../lib/catalogue.mjs";
 import { MAX_FOLDERS, addFolder, addWords, editFolder, folderDate, folderPath,
   commitFolders, foldersOf, foldersServerSnapshot, foldersSnapshot, foldersWithCounts,
   removeFolder, subscribeFolders, toggleWord,
@@ -388,6 +389,7 @@ export default function Home() {
     const take = () => {
       const lesson = lessonFromHash(window.location.hash, decode) as { title: string; sentences: unknown[] } | null;
       if (!lesson) return;
+      addLessonsToCatalogue([lesson]);
       setLessons(saveLesson(lesson));
       setImported(`Đã thêm bài "${lesson.title}" · ${lesson.sentences.length} câu`);
       // Dọn neo đi để tải lại trang không thêm bài lần nữa.
@@ -1354,6 +1356,7 @@ export default function Home() {
         <VideoImportModal
           close={() => setShowVideoAdd(false)}
           save={(lesson) => {
+            addLessonsToCatalogue([lesson]);
             const next = saveLesson(lesson) as VideoLesson[];
             setLessons(next);
             setImported(`Đã thêm video “${lesson.title || "YouTube"}” · ${lesson.sentences.length} đoạn`);
@@ -3271,15 +3274,64 @@ function AddMenu({ onManual, onPaste, onDictionary }: { onManual: () => void; on
 }
 
 /** Một bài nghe lấy từ video. Kho bài nằm ở lib/lessons.mjs. */
-type VideoLesson = { id: string; videoId: string; title: string; author: string; seconds: number; source: string; sentences: { index: number; start: number; end: number; text: string }[] };
+type VideoLesson = { id: string; videoId: string; title: string; author: string; seconds: number; source: string; captionVersion?: number; sentences: { index: number; start: number; end: number; text: string }[] };
 type VideoDraft = Omit<VideoLesson, "id"> & { estimated?: boolean };
+type VideoImport = Omit<VideoDraft, "sentences"> & {
+  thumbnail?: string;
+  sentences: VideoDraft["sentences"];
+  error?: string;
+};
+
+/**
+ * Nhờ tiện ích Chrome lấy phụ đề trong chính phiên YouTube của người dùng.
+ * Máy chủ thường nhận thân rỗng từ timedtext; trình duyệt đang mở YouTube thì
+ * có đủ token/cookie để lấy timestamp thật. Bridge chỉ tồn tại trên localhost.
+ */
+function lessonFromExtension(url: string): Promise<VideoImport> {
+  return new Promise((resolve, reject) => {
+    const requestId = crypto.randomUUID();
+    let acknowledged = false;
+    let noExtension = 0;
+    let timedOut = 0;
+
+    const finish = (error?: Error, lesson?: VideoImport) => {
+      window.clearTimeout(noExtension);
+      window.clearTimeout(timedOut);
+      window.removeEventListener("message", receive);
+      if (error) reject(error);
+      else if (lesson) resolve(lesson);
+      else reject(new Error("Tiện ích không trả về bài học."));
+    };
+    const receive = (event: MessageEvent) => {
+      if (event.source !== window || event.data?.source !== "lexilo-extension" || event.data?.requestId !== requestId) return;
+      if (event.data.type === "LEXILO_IMPORT_YOUTUBE_ACK") {
+        acknowledged = true;
+        window.clearTimeout(noExtension);
+        return;
+      }
+      if (event.data.type !== "LEXILO_IMPORT_YOUTUBE_RESULT") return;
+      const result = event.data.result as { ok?: boolean; lesson?: VideoImport; error?: string } | undefined;
+      if (!result?.ok || !result.lesson) finish(new Error(result?.error || "Tiện ích không lấy được phụ đề."));
+      else finish(undefined, result.lesson);
+    };
+
+    window.addEventListener("message", receive);
+    noExtension = window.setTimeout(() => {
+      if (!acknowledged) finish(new Error("Chưa kết nối được tiện ích Lexilo 0.2.0."));
+    }, 900);
+    timedOut = window.setTimeout(() => finish(new Error("Lấy phụ đề quá lâu. Hãy thử lại sau khi tải lại trang YouTube.")), 30000);
+    window.postMessage({ source: "lexilo-web", type: "LEXILO_IMPORT_YOUTUBE", requestId, url }, window.location.origin);
+  });
+}
 
 function VideoImportModal({ close, save }: { close: () => void; save: (lesson: VideoDraft) => void }) {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [transcript, setTranscript] = useState("");
-  const [video, setVideo] = useState<{ videoId: string; title: string; author: string; seconds: number; thumbnail?: string; sentences: VideoDraft["sentences"]; error?: string } | null>(null);
+  const [listening, setListening] = useState(false);
+  const [video, setVideo] = useState<VideoImport | null>(null);
 
   useEffect(() => {
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
@@ -3291,17 +3343,45 @@ function VideoImportModal({ close, save }: { close: () => void; save: (lesson: V
     event.preventDefault();
     if (!url.trim() || loading) return;
     setLoading(true);
+    setStatus("Đang đọc thông tin video…");
     setError("");
     setVideo(null);
+    let fallback: VideoImport | null = null;
+    let apiError = "";
     try {
       const response = await fetch("/api/youtube", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: url.trim() }) });
-      const data = await response.json() as { videoId?: string; title?: string; author?: string; seconds?: number; thumbnail?: string; sentences?: VideoDraft["sentences"]; error?: string };
-      if (!response.ok || !data.videoId) throw new Error(data.error || "Không đọc được video YouTube này.");
-      setVideo({ videoId: data.videoId, title: data.title || "Video YouTube", author: data.author || "", seconds: data.seconds || 0, thumbnail: data.thumbnail, sentences: data.sentences || [], error: data.error });
+      const data = await response.json() as { videoId?: string; title?: string; author?: string; seconds?: number; thumbnail?: string; captionVersion?: number; sentences?: VideoDraft["sentences"]; error?: string };
+      if (response.ok && data.videoId) {
+        fallback = {
+          videoId: data.videoId,
+          title: data.title || "Video YouTube",
+          author: data.author || "",
+          seconds: data.seconds || 0,
+          thumbnail: data.thumbnail,
+          source: data.sentences?.length ? "extension" : "paste",
+          captionVersion: data.captionVersion,
+          sentences: data.sentences || [],
+          error: data.error,
+        };
+        if (fallback.sentences.length) {
+          setVideo(fallback);
+          return;
+        }
+      } else apiError = data.error || "Không đọc được video YouTube này.";
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Không đọc được video YouTube này.");
+      apiError = reason instanceof Error ? reason.message : "Không đọc được video YouTube này.";
+    }
+
+    try {
+      setStatus("Đang lấy phụ đề và timestamp từ YouTube…");
+      setVideo(await lessonFromExtension(url.trim()));
+    } catch (reason) {
+      const extensionError = reason instanceof Error ? reason.message : "Tiện ích không lấy được phụ đề.";
+      if (fallback) setVideo({ ...fallback, error: `${extensionError} Bạn vẫn có thể dán transcript bên dưới.` });
+      else setError([apiError, extensionError].filter(Boolean).join(" "));
     } finally {
       setLoading(false);
+      setStatus("");
     }
   }
 
@@ -3314,17 +3394,27 @@ function VideoImportModal({ close, save }: { close: () => void; save: (lesson: V
       setError("Hãy dán lời thoại tiếng Anh để tạo các đoạn Shadowing.");
       return;
     }
-    save({ videoId: video.videoId, title: video.title, author: video.author, seconds: video.seconds, source: "paste", estimated: !video.sentences.length, sentences });
+    save({
+      videoId: video.videoId,
+      title: video.title,
+      author: video.author,
+      seconds: video.seconds,
+      source: video.sentences.length ? video.source : "paste",
+      captionVersion: video.captionVersion,
+      estimated: !video.sentences.length,
+      sentences,
+    });
   }
 
   return (
-    <div className="modal-backdrop video-import-backdrop" onMouseDown={close}>
+    <div className="modal-backdrop video-import-backdrop" role="presentation" onMouseDown={close}>
       <section className="video-import-modal" role="dialog" aria-modal="true" aria-labelledby="video-import-title" onMouseDown={(event) => event.stopPropagation()}>
         <header><i><Icon name="play" size={19} /></i><div><h2 id="video-import-title">Thêm video YouTube</h2><p>Tạo bài Dictation và Shadowing từ phụ đề tiếng Anh.</p></div><button onClick={close} aria-label="Đóng">×</button></header>
         <form onSubmit={inspect}>
           <label htmlFor="youtube-url">Liên kết YouTube</label>
-          <div className="video-url-row"><input id="youtube-url" type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." autoFocus /><button className="primary" disabled={loading || !url.trim()}>{loading ? "Đang đọc…" : "Lấy video"}</button></div>
+          <div className="video-url-row"><input id="youtube-url" type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." /><button className="primary" disabled={loading || !url.trim()}>{loading ? "Đang lấy…" : "Lấy video"}</button></div>
         </form>
+        {loading && status && <p className="video-import-status"><span aria-hidden="true" />{status}</p>}
         {error && <p className="video-import-error">{error}</p>}
         {video && (
           <div className="video-import-preview">
@@ -3333,7 +3423,49 @@ function VideoImportModal({ close, save }: { close: () => void; save: (lesson: V
           </div>
         )}
         {video && !video.sentences.length && (
-          <div className="video-transcript-field"><label htmlFor="video-transcript">Lời thoại tiếng Anh</label><p>{video.error || "Dán transcript; Lexilo sẽ tự chia câu và ước lượng mốc thời gian."}</p><textarea id="video-transcript" value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="Paste the English transcript here…" rows={7} /></div>
+          <div className="video-transcript-field">
+            <div className="transcript-head">
+              <label htmlFor="video-transcript">Lời thoại tiếng Anh</label>
+              {/* Video không có phụ đề thì trước đây phải tự gõ tay cả bài. Nhờ
+                  AI nghe hộ, còn mốc giờ vẫn để app ước lượng: mốc AI trả về đo
+                  ra sai hẳn, có video dài 121 giây mà mốc cuối chỉ 61,7. */}
+              <button
+                className="transcript-ai"
+                disabled={listening || loading}
+                onClick={async () => {
+                  setListening(true);
+                  setError("");
+                  setStatus("Đang nhờ AI nghe video… video dài thì mất một lúc.");
+                  try {
+                    const response = await fetch("/api/transcribe", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ url, seconds: video.seconds }),
+                    });
+                    const data = (await response.json()) as { transcript?: string; error?: string };
+                    if (!response.ok || data.error) throw new Error(data.error ?? "Không đọc được lời thoại.");
+                    setTranscript(data.transcript ?? "");
+                    setStatus("AI đã nghe xong. Đọc lại một lượt rồi sửa chỗ nào sai trước khi tạo bài.");
+                  } catch (problem) {
+                    setStatus("");
+                    setError(problem instanceof Error ? problem.message : "Không đọc được lời thoại.");
+                  } finally {
+                    setListening(false);
+                  }
+                }}
+              >
+                {listening ? "◌ AI đang nghe…" : "✦ Nhờ AI nghe hộ"}
+              </button>
+            </div>
+            <p>{video.error || "Dán transcript, hoặc nhờ AI nghe hộ khi video không có phụ đề. Lexilo tự chia câu và ước lượng mốc thời gian."}</p>
+            <textarea
+              id="video-transcript"
+              value={transcript}
+              onChange={(event) => setTranscript(event.target.value)}
+              placeholder="Paste the English transcript here…"
+              rows={7}
+            />
+          </div>
         )}
         {video && <footer><button onClick={close}>Hủy</button><button className="primary" onClick={commit} disabled={!video.sentences.length && !transcript.trim()}>Thêm vào thư viện</button></footer>}
       </section>
