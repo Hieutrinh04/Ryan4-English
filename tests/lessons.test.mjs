@@ -14,6 +14,7 @@ const {
   MAX_SENTENCES,
   lessonFromHash,
   lessonsKey,
+  needsRecapture,
   readLessonProgress,
   readLessons,
   readReports,
@@ -25,6 +26,7 @@ const {
   sentenceAt,
   toggleReport,
 } = await import("../lib/lessons.mjs");
+const { CAPTION_VERSION } = await import("../lib/caption-timing.mjs");
 
 const good = () => ({
   videoId: "arj7oStGLkU",
@@ -280,4 +282,22 @@ test("vá câu cắt ngang: KHÔNG nối hai câu thật đứng cạnh nhau", (
   });
   assert.equal(lesson.sentences.length, 1);
   assert.ok(lesson.sentences[0].text.startsWith("He left."));
+});
+
+test("needsRecapture: bài chưa có dấu phiên bản thì phải bắt lại", () => {
+  const cu = sanitiseLesson(good());
+  assert.equal(cu.captionVersion, 1, "bài cũ không có dấu thì coi như bản 1");
+  assert.equal(needsRecapture(cu), true);
+});
+
+test("needsRecapture: bài cắt bằng bản hiện hành thì thôi", () => {
+  const moi = sanitiseLesson({ ...good(), captionVersion: CAPTION_VERSION });
+  assert.equal(moi.captionVersion, CAPTION_VERSION);
+  assert.equal(needsRecapture(moi), false);
+});
+
+test("needsRecapture: bài mốc giờ ước lượng thì không nhắc", () => {
+  // Nó vốn không có phụ đề thật để mà bám, bắt lại cũng không khá hơn.
+  const uocLuong = sanitiseLesson({ ...good(), estimated: true });
+  assert.equal(needsRecapture(uocLuong), false);
 });

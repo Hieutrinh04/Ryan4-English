@@ -4,7 +4,7 @@
 // lib/youtube.mjs bằng `npm run build:extension`), để hai bên không bao giờ cắt câu
 // khác nhau.
 
-import { cuesFromJson3, pickEnglishTrack, sentencesFrom } from "./youtube.js";
+import { CAPTION_VERSION, cuesFromJson3, pickEnglishTrack, sentencesFrom } from "./youtube.js";
 
 const DEFAULT_LEXILO = "http://localhost:3000";
 
@@ -109,6 +109,8 @@ async function send() {
       author: page.author,
       seconds: page.seconds,
       source: "extension",
+      // Đóng dấu cách cắt để Lexilo nhận ra bài nào cắt bằng bản cũ.
+      captionVersion: CAPTION_VERSION,
       sentences,
     };
 

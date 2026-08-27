@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
 import Icon from "./Icon";
 import { createRecogniser, hasRecognition, micError, type Recognition } from "../lib/speech";
-import { clearLessonProgress, doneSentences, markSentence, readLessonProgress, readReports, reportedSentences, toggleReport } from "../lib/lessons.mjs";
+import { clearLessonProgress, doneSentences, needsRecapture, markSentence, readLessonProgress, readReports, reportedSentences, toggleReport } from "../lib/lessons.mjs";
 import { properNouns, scoreDictation, wordShapes } from "../lib/youtube.mjs";
 import { missingWords, readIpaCache, readTranslationCache, saveIpa, saveTranslation, withIpa } from "../lib/sentence-aids.mjs";
 import { scoreShadowing } from "../lib/shadowing.mjs";
@@ -970,6 +970,14 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
           <div className="lesson-list-tabs">
             <b className="active"><Icon name="list" size={15} /> Phụ đề</b>
           </div>
+
+          {/* Mốc câu của bài cũ không sửa lại được: lúc lưu, mốc của từng dòng
+              phụ đề đã bị gộp thành mốc câu. Chỉ còn cách bắt lại từ video. */}
+          {needsRecapture(lesson) && (
+            <p className="lesson-stale" role="status">
+              Bài này cắt bằng bản cũ nên mốc câu lệch khoảng một hai giây. Bắt lại phụ đề từ video để sửa — bài cũ sẽ được thay, không tạo bản trùng.
+            </p>
+          )}
 
           <div className="lesson-list-head">
             <span>{done.size}/{lesson.sentences.length}</span>

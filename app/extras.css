@@ -2393,3 +2393,7 @@ html,body{
 .detail-lists{display:grid;gap:10px;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
 .detail-lists>b{font-size:13px;font-weight:700}
 .detail-lists .folder-check-list{max-height:34vh}
+
+/* Lời nhắc bài cắt bằng bản cũ. Không phải lỗi của người dùng nên nói nhẹ,
+   nhưng phải đủ rõ vì họ đang ngồi nghe một mốc lệch mà không biết vì sao. */
+.lesson-stale{margin:10px 0 0;padding:10px 12px;border:1px solid var(--line-accent);background:var(--tint-purple,var(--surface-2));border-radius:10px;font-size:12px;line-height:1.55;color:var(--text-2)}
