@@ -34,6 +34,22 @@ test("hai bản cắt câu ra kết quả giống hệt nhau", async () => {
   assert.deepEqual(copy.sentencesFrom(copy.cuesFromJson3(payload)), app.sentencesFrom(app.cuesFromJson3(payload)));
 });
 
+test("hai bản cắt đuôi im lặng giống hệt nhau", async () => {
+  // Phụ đề mẫu ở trên đều khít nhau nên luật cắt đuôi không đụng tới gì — bản
+  // chép cũ thiếu luật đó vẫn qua được. Mẫu này có đuôi thật để bài kiểm bắt được.
+  const copy = await import(copyPath.href);
+  const payload = {
+    events: [
+      { tStartMs: 0, dDurationMs: 40000, segs: [{ utf8: "Goodbye everyone." }] },
+      { tStartMs: 45000, dDurationMs: 30000, segs: [{ utf8: "[Music]" }] },
+    ],
+  };
+  const cues = app.cuesFromJson3(payload);
+  assert.equal(cues.length, 1, "dòng [Music] không phải lời nói, phải bị bỏ hẳn");
+  assert.ok(cues[0].end < 5, `câu chào giữ ${cues[0].end} giây — đuôi im lặng chưa bị cắt`);
+  assert.deepEqual(copy.cuesFromJson3(payload), cues);
+});
+
 test("hai bản chọn cùng một bản phụ đề", async () => {
   const copy = await import(copyPath.href);
   const tracks = [{ languageCode: "vi" }, { languageCode: "en", kind: "asr" }, { languageCode: "en-GB" }];

@@ -105,11 +105,12 @@ export default function YouTubePlayer({
               playing: () => player.current?.getPlayerState() === api.PlayerState.PLAYING,
             };
             onReady?.(handle);
-            // Hỏi mốc thời gian bốn lần mỗi giây: đủ mượt để làm nổi câu đang
-            // phát, mà không làm trang giật.
+            // Mười lần mỗi giây. Bốn lần là đủ để làm nổi câu đang phát, nhưng
+            // bộ dừng cuối câu cũng đọc mốc này: trễ một nhịp 250ms là học viên
+            // nghe lố sang cả phần đầu của câu sau.
             ticker = window.setInterval(() => {
               if (player.current) onTime?.(player.current.getCurrentTime());
-            }, 250);
+            }, 100);
           },
           onError: () => alive && setFailed(true),
         },

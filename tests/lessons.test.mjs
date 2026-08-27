@@ -85,10 +85,15 @@ test("không có câu nào thì không phải là bài", () => {
   assert.equal(sanitiseLesson({ ...good(), sentences: [{ text: "   " }] }), null);
 });
 
-test("mốc giờ hỏng bị đưa về 0 thay vì thành NaN", () => {
+test("mốc giờ hỏng vẫn ra số dùng được, không thành NaN", () => {
   const lesson = sanitiseLesson({ ...good(), sentences: [{ start: "abc", end: -5, text: "Hi." }] });
-  assert.equal(lesson.sentences[0].start, 0);
-  assert.equal(lesson.sentences[0].end, 0);
+  const [câu] = lesson.sentences;
+  assert.equal(câu.start, 0);
+  // Mốc kết thúc hỏng thì suy từ tốc độ nói. Đưa về đúng 0 như trước sẽ tạo ra
+  // một câu dài 0 giây — bấm nghe là dừng ngay, không nghe được gì.
+  assert.ok(Number.isFinite(câu.end), "không được ra NaN");
+  assert.ok(câu.end > câu.start, "câu phải có độ dài nghe được");
+  assert.ok(câu.end < 3, `một chữ mà giữ ${câu.end} giây là quá dài`);
 });
 
 test("số câu và độ dài câu bị chặn, tránh nhồi dữ liệu khổng lồ", () => {

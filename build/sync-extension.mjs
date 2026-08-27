@@ -11,6 +11,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const SOURCE = "lib/youtube.mjs";
 const TARGET = "extension/youtube.js";
+const TIMING = "lib/caption-timing.mjs";
+const SPLIT = "lib/split-text.mjs";
 
 // Chỉ những hàm tiện ích thật sự cần. Không chép cả tệp: phần chấm chính tả và
 // căn giờ ước lượng là việc của app, tiện ích không dùng tới.
@@ -72,6 +74,21 @@ const helpers = [];
 const sentenceEnd = source.match(/^const SENTENCE_END = .+$/m);
 if (sentenceEnd && body.includes("SENTENCE_END")) helpers.push(sentenceEnd[0]);
 if (body.includes("round(")) helpers.push(takeFunction(source, "round"));
+
+// Module phụ nào được gọi tới thì chép NGUYÊN TỆP, không nhặt từng hàm.
+//
+// Nhặt từng hàm chính là cách bản chép cũ âm thầm lệch: nó giữ lối cắt câu từ
+// trước khi groupForPractice ra đời, vì hàm đó nằm ở tệp khác nên không ai chép
+// sang. Bài kiểm so hai bên lúc ấy dùng mẫu quá hiền nên không bắt được.
+//
+// Chép nguyên tệp chỉ an toàn khi tệp tự đứng được, nên kiểm luôn điều đó.
+for (const file of [TIMING, SPLIT]) {
+  const text = readFileSync(file, "utf8");
+  const name = file.split("/").pop().replace(".mjs", "");
+  if (/^import /m.test(text)) throw new Error(`${file} có import riêng — không chép nguyên tệp sang tiện ích được`);
+  if (!body.includes(name === "caption-timing" ? "trimSilentTails" : "groupForPractice")) continue;
+  helpers.push(text.trim());
+}
 
 const output = `// TỆP NÀY ĐƯỢC SINH RA TỰ ĐỘNG — ĐỪNG SỬA TAY.
 // Nguồn: ${SOURCE}. Sinh lại bằng: npm run build:extension
