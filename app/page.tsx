@@ -2354,8 +2354,13 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
           <h1>{collectionFilter === "folder" ? "Danh sách từ" : collectionFilter === "pdf" ? "Bộ từ vựng PDF" : "Kho từ vựng"}</h1>
           <p>{collectionFilter === "folder" ? (openFolder ? `${activeCollection.length} từ trong ${openFolder.name}.` : `${folders.list.length} danh sách từ bạn tự tạo.`) : collectionFilter === "pdf" ? (pdfTopic ? `${activeCollection.length} từ trong chủ đề ${pdfTopic}.` : `${pdfWords.length} từ trong ${pdfTopics.length} thư mục chủ đề.`) : `${personalWords.length} từ cá nhân · quản lý theo Leitner Box.`}</p>
         </div>
-        <div className="section-actions"><AddMenu onManual={add} onPaste={bulkAdd} onDictionary={openDictionary} /></div>
+        {/* Nút này thêm từ vào KHO, không thêm vào danh sách đang mở — để nó
+            đứng trên trang danh sách là hứa sai việc nó làm. */}
+        {collectionFilter !== "folder" && <div className="section-actions"><AddMenu onManual={add} onPaste={bulkAdd} onDictionary={openDictionary} /></div>}
       </div>
+      {/* Danh sách từ là một trang riêng, không phải một tab của kho từ vựng.
+          Hàng chip này chỉ thuộc về kho từ vựng. */}
+      {collectionFilter !== "folder" && (
       <div className="day-tabs">
         <button className={dayFilter === null && collectionFilter === "daily" ? "active" : ""} onClick={() => { setDayFilter(null); setCollectionFilter("daily"); setPdfTopic(null); setQuery(""); }}>
           Từ của tôi
@@ -2365,8 +2370,10 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
           Bộ từ vựng PDF
           <small>{pdfWords.length}</small>
         </button>
-        <button className={collectionFilter === "folder" ? "active" : ""} onClick={() => { setDayFilter(null); setCollectionFilter("folder"); setPdfTopic(null); setFolderFilter(null); setQuery(""); }}>
-          Danh sách từ
+        {/* Lối vào trang danh sách từ, để trên điện thoại vẫn tới được khi
+            sườn trái đang thu. Chip này không bao giờ sáng: bấm là rời trang này. */}
+        <button onClick={() => { setDayFilter(null); setCollectionFilter("folder"); setPdfTopic(null); setFolderFilter(null); setQuery(""); }}>
+          Danh sách từ →
           <small>{folders.list.length}</small>
         </button>
         {collectionFilter === "daily" && dayNames.map((name, index) => (
@@ -2376,6 +2383,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
           </button>
         ))}
       </div>
+      )}
       {collectionFilter === "pdf" && !pdfTopic && (
         <section className="topic-folders">
           <div className="topic-folders-head">

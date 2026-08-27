@@ -2372,3 +2372,14 @@ html,body{
   .folder-new button{width:100%}
   .folder-card-actions{opacity:1}
 }
+
+/* ── Sườn trái: mười mục phải vừa một màn hình ─────────────────────────────── */
+/* Nhãn là một nút văn bản trần nằm giữa icon và số đếm, nên nó là một ô co giãn
+   vô danh và tự xuống dòng khi hẹp. "Kho từ vựng 1157" xuống hai dòng, đẩy hai
+   mục cuối ra khỏi vùng nhìn thấy — và mục bị đẩy đi chính là mục vừa thêm. */
+.nav-item{white-space:nowrap;overflow:hidden}
+.nav-count{flex-shrink:0}
+/* Bớt chỗ thừa để cả mười mục cùng nằm gọn, khỏi phải cuộn mới thấy mục cuối. */
+.sidebar nav{margin-top:16px}
+.nav-item{padding:9px 13px}
+.nav-group{margin:13px 0 3px}
