@@ -215,14 +215,55 @@ test("sentencesFrom: mốc cắt bám giờ thật của dòng phụ đề, khô
   assert.equal(sau.end, 11);
 });
 
-test("sentencesFrom: dòng vắt qua ranh giới câu thì chia trong phạm vi dòng đó", () => {
+test("sentencesFrom: không cắt giữa một dòng phụ đề, dù câu dứt ở giữa dòng", () => {
   // Dòng thứ hai chứa cuối câu một VÀ đầu câu hai — chuyện thường của phụ đề.
+  // Cắt ở đó thì mốc chỉ là số chia đều theo từ, nghe ra đoạn hụt mấy chữ cuối.
+  // Thà đoạn dài hơn một chút nhưng mốc là giờ thật.
   const cues = [
     { start: 0, end: 2, text: "Hello, this is 6 Minute English" },
     { start: 2, end: 6, text: "from BBC Learning English. I'm Phil." },
   ];
-  const [cau] = sentencesFrom(cues, { maxWords: 30, maxSentences: 1 });
-  // "from BBC Learning English." là 4 trong 6 từ của dòng dài 4 giây.
-  assert.equal(cau.end, 4.67);
-  assert.ok(cau.end < 6, "không được ôm trọn cả dòng khi câu đã dứt giữa dòng");
+  const cau = sentencesFrom(cues, { maxWords: 30, maxSentences: 1 });
+  assert.equal(cau.length, 1);
+  assert.equal(cau[0].end, 6, "phải dứt đúng chỗ dòng phụ đề dứt");
+  assert.match(cau[0].text, /I'm Phil\./, "không được bỏ rơi phần cuối của dòng");
+});
+
+test("sentencesFrom: mọi mốc đều là giờ có thật của phụ đề", () => {
+  const cues = [
+    { start: 18.24, end: 21.68, text: "One of the most controversial technologies of recent years" },
+    { start: 21.68, end: 26.32, text: "is driverless cars, also known as self-driving cars," },
+    { start: 26.32, end: 29.32, text: "autonomous cars or robotaxis." },
+    { start: 29.32, end: 34.16, text: "Many people say they wouldn't feel safe in a car without a human driver," },
+    { start: 34.16, end: 37.44, text: "but there are concerns from other road users too –" },
+    { start: 37.44, end: 40.2, text: "pedestrians, runners and cyclists." },
+  ];
+  const that = new Set(cues.flatMap((c) => [c.start, c.end]));
+  for (const cau of sentencesFrom(cues)) {
+    assert.ok(that.has(cau.start), `mốc bắt đầu ${cau.start} không có trong phụ đề`);
+    assert.ok(that.has(cau.end), `mốc kết thúc ${cau.end} không có trong phụ đề`);
+  }
+});
+
+test("sentencesFrom: dừng ở chỗ câu vừa dứt thay vì nuốt luôn dòng sau", () => {
+  // Không nhìn trước một dòng thì cụm ôm thêm cả câu kế tiếp rồi mới chịu dừng,
+  // và đoạn luyện dài gấp đôi mức cần.
+  const cues = [
+    { start: 0, end: 3, text: "One of the most controversial technologies of recent years" },
+    { start: 3, end: 6, text: "is driverless cars, also known as robotaxis." },
+    { start: 6, end: 10, text: "Many people say they wouldn't feel safe in a car without a human driver here," },
+  ];
+  const cau = sentencesFrom(cues, { maxWords: 30, maxSentences: 2 });
+  assert.equal(cau[0].end, 6, "phải dừng ngay sau câu vừa dứt");
+  assert.match(cau[0].text, /robotaxis\.$/);
+});
+
+test("sentencesFrom: một dòng dài quá trần từ thì vẫn phải cắt bên trong nó", () => {
+  // Phụ đề máy tự nghe hay cho ra một dòng dài không có dấu chấm nào. Không cắt
+  // thì sinh ra một câu không ai chép nổi.
+  const dai = Array.from({ length: 40 }, (_, i) => `word${i + 1}`).join(" ");
+  const cau = sentencesFrom([{ start: 0, end: 20, text: dai }], { maxWords: 12, maxSentences: 2 });
+  assert.ok(cau.length > 1, "dòng quá dài phải được cắt nhỏ");
+  assert.equal(cau[0].start, 0);
+  assert.equal(cau[cau.length - 1].end, 20, "cắt xong vẫn phủ trọn dòng");
 });
