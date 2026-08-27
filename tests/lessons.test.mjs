@@ -301,3 +301,33 @@ test("needsRecapture: bài mốc giờ ước lượng thì không nhắc", () =
   const uocLuong = sanitiseLesson({ ...good(), estimated: true });
   assert.equal(needsRecapture(uocLuong), false);
 });
+
+test("bài cắt bằng bản hiện hành giữ NGUYÊN mốc, không bị gom lại", async () => {
+  // Bước gom lúc nhập từng nối câu rồi cắt theo tỉ lệ số từ, sinh ra ranh giới
+  // không có thật trong phụ đề — đúng cái làm tiếng chạy sang câu sau.
+  const { cuesFromJson3, sentencesFrom } = await import("../lib/youtube.mjs");
+  const payload = { events: [
+    { tStartMs: 29320, dDurationMs: 4840, segs: [{ utf8: "Many people say they wouldn't feel safe in a car without a human driver," }] },
+    { tStartMs: 34160, dDurationMs: 3280, segs: [{ utf8: "but there are concerns from other road users too –" }] },
+    { tStartMs: 37440, dDurationMs: 2760, segs: [{ utf8: "pedestrians, runners and cyclists." }] },
+    { tStartMs: 40200, dDurationMs: 2920, segs: [{ utf8: "How will driverless cars interact with them?" }] },
+  ]};
+  const cues = cuesFromJson3(payload);
+  const cat = sentencesFrom(cues);
+  const nhap = sanitiseLesson({ ...good(), sentences: cat, captionVersion: CAPTION_VERSION }).sentences;
+
+  assert.equal(nhap.length, cat.length, "không được gom lại số câu");
+  assert.deepEqual(nhap.map((s) => [s.start, s.end]), cat.map((s) => [s.start, s.end]));
+  // Mọi mốc phải là một mốc CÓ THẬT trong phụ đề, không phải số nội suy.
+  const mocThat = new Set(cues.flatMap((c) => [c.start, c.end]));
+  for (const s of nhap) {
+    assert.ok(mocThat.has(s.start), `mốc bắt đầu ${s.start} không có trong phụ đề`);
+    assert.ok(mocThat.has(s.end), `mốc kết thúc ${s.end} không có trong phụ đề`);
+  }
+});
+
+test("bài bản cũ thì VẪN gom lại, vì mốc của chúng vốn đã là ước lượng", () => {
+  const vun = Array.from({ length: 4 }, (_, i) => ({ start: i * 2, end: i * 2 + 2, text: "Hi there." }));
+  const cu = sanitiseLesson({ ...good(), sentences: vun });
+  assert.ok(cu.sentences.length < vun.length, "mẩu vụn của bài cũ phải được gộp lại");
+});
