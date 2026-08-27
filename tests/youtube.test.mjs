@@ -199,3 +199,30 @@ test("secondsFromIso: giá trị hỏng thì trả 0, không ra NaN", () => {
   assert.equal(secondsFromIso(""), 0);
   assert.equal(secondsFromIso(null), 0);
 });
+
+test("sentencesFrom: mốc cắt bám giờ thật của dòng phụ đề, không trải đều trên cụm", () => {
+  // Hai dòng cùng 10 từ nhưng nhịp khác hẳn: dòng đầu đọc nhanh trong 1 giây,
+  // dòng sau đọc chậm trong 10 giây.
+  const cues = [
+    { start: 0, end: 1, text: "Alpha bravo charlie delta echo foxtrot golf hotel india juliet." },
+    { start: 1, end: 11, text: "Kilo lima mike november oscar papa quebec romeo sierra tango." },
+  ];
+  const [dau, sau] = sentencesFrom(cues, { maxWords: 12, maxSentences: 2 });
+  // Trải đều số từ trên cả cụm sẽ ra 5.5 — tức là câu đầu còn chạy thêm 4,5 giây
+  // sang tận giữa câu sau, đúng cái lỗi "nhảy qua đầu câu hai".
+  assert.equal(dau.end, 1, "câu đầu phải dứt đúng chỗ dòng phụ đề đầu dứt");
+  assert.equal(sau.start, 1, "câu sau phải bắt đầu đúng chỗ dòng phụ đề sau bắt đầu");
+  assert.equal(sau.end, 11);
+});
+
+test("sentencesFrom: dòng vắt qua ranh giới câu thì chia trong phạm vi dòng đó", () => {
+  // Dòng thứ hai chứa cuối câu một VÀ đầu câu hai — chuyện thường của phụ đề.
+  const cues = [
+    { start: 0, end: 2, text: "Hello, this is 6 Minute English" },
+    { start: 2, end: 6, text: "from BBC Learning English. I'm Phil." },
+  ];
+  const [cau] = sentencesFrom(cues, { maxWords: 30, maxSentences: 1 });
+  // "from BBC Learning English." là 4 trong 6 từ của dòng dài 4 giây.
+  assert.equal(cau.end, 4.67);
+  assert.ok(cau.end < 6, "không được ôm trọn cả dòng khi câu đã dứt giữa dòng");
+});
