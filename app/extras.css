@@ -2382,27 +2382,13 @@ html,body{
 .nav-item{padding:9px 13px}
 .nav-group{margin:13px 0 3px}
 
-/* Dải danh sách nằm ngay trên hàng chip, trong cùng trang kho từ vựng. */
-.wordlists-strip{margin:18px 0 16px;padding:16px 18px;border:1px solid var(--line);background:var(--surface-2);border-radius:14px}
-.wordlists-strip-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
-.wordlists-strip-head .eyebrow{margin:0}
-.wordlist-new-small{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;font-size:12px;font-weight:600;border:1px solid var(--line-accent);background:var(--surface);color:var(--purple);border-radius:9999px}
-.wordlist-new-small svg{width:13px;height:13px}
-.wordlist-new-small:hover{border-color:var(--purple);background:var(--soft)}
-/* Cuộn ngang chứ không xuống dòng: năm mươi danh sách mà xuống dòng hết thì
-   bảng từ bị đẩy khỏi màn hình. */
-.wordlist-chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
-.wordlist-chips button{flex:0 0 auto;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:1px solid var(--line);background:var(--surface);border-radius:9999px;transition:border-color var(--t-fast) var(--ease),transform var(--t-fast) var(--ease)}
-.wordlist-chips button:hover{border-color:var(--purple);transform:translateY(-1px)}
-.wordlist-chips svg{width:14px;height:14px;color:var(--purple)}
-.wordlist-chips b{font-size:13px;font-weight:600;white-space:nowrap}
-.wordlist-chips small{font-size:10px;font-weight:700;color:var(--muted);background:var(--surface-2);border-radius:9999px;padding:2px 7px}
-.wordlists-strip-empty{margin:0;font-size:12.5px;color:var(--muted);line-height:1.6}
-
 /* Ghi chú của danh sách đang mở. */
 .wordlist-note-line{margin:0 0 14px;font-size:13px;line-height:1.6;color:var(--text-2)}
 
 /* Nhãn và nút của dải danh sách: đo được 3.85 và 4.17 trên nền sáng, dưới ngưỡng
    AA 4.5 cho cỡ chữ này. --text-2 và --purple-dark kéo cả hai lên trên ngưỡng. */
-.wordlists-strip .eyebrow{color:var(--text-2)}
-.wordlist-new-small{color:var(--purple-dark)}
+
+/* Nút mở đầu ở mức gốc: đây là việc chính của trang, nên nó to hơn các nút khác. */
+.wordlist-create{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;font-size:14px;border-radius:12px}
+.wordlist-create svg{width:16px;height:16px}
+@media(max-width:520px){.wordlist-create{flex:1;justify-content:center}}
