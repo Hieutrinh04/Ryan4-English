@@ -71,6 +71,7 @@ create table if not exists public.user_custom_words (
   antonym_details jsonb not null default '[]',
   related_details jsonb not null default '[]',
   enrichment_checked_at timestamptz,
+  cefr text, -- bậc CEFR ước lượng (A1–C2); xem lib/word-level.mjs
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -238,6 +239,59 @@ create table if not exists public.ai_usage (
 );
 create index if not exists ai_usage_user_day_idx on public.ai_usage (user_id, created_at desc);
 
+-- ── RAG: ký ức học tập có truy xuất ───────────────────────────────────────
+
+create extension if not exists vector with schema extensions;
+
+create table if not exists public.rag_chunks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  source_type text not null check (source_type in ('translation_error', 'lesson', 'speaking_feedback')),
+  source_id text not null,
+  chunk_index int not null default 0 check (chunk_index >= 0),
+  content text not null check (char_length(content) between 1 and 6000),
+  content_hash text not null,
+  metadata jsonb not null default '{}',
+  embedding extensions.vector(768) not null,
+  embedding_model text not null,
+  content_search tsvector generated always as (to_tsvector('simple', content)) stored,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, source_type, source_id, chunk_index)
+);
+create index if not exists rag_chunks_owner_source_idx on public.rag_chunks (user_id, source_type, updated_at desc);
+create index if not exists rag_chunks_content_search_idx on public.rag_chunks using gin (content_search);
+create index if not exists rag_chunks_embedding_hnsw_idx
+  on public.rag_chunks using hnsw (embedding extensions.vector_cosine_ops);
+
+create table if not exists public.rag_retrieval_logs (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  query_hash text not null,
+  source_types text[] not null default '{}',
+  results_count int not null default 0 check (results_count >= 0),
+  top_score real,
+  latency_ms int check (latency_ms >= 0),
+  created_at timestamptz not null default now()
+);
+create index if not exists rag_retrieval_logs_user_date_idx on public.rag_retrieval_logs (user_id, created_at desc);
+
+-- ── Bảng xếp hạng ─────────────────────────────────────────────────────────
+
+create table if not exists public.leaderboard_scores (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  period_type text not null check (period_type in ('week', 'month')),
+  period_start date not null,
+  display_name text not null check (char_length(display_name) between 1 and 32),
+  xp int not null default 0 check (xp >= 0),
+  minutes int not null default 0 check (minutes >= 0),
+  reviews int not null default 0 check (reviews >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, period_type, period_start)
+);
+create index if not exists leaderboard_scores_period_idx
+  on public.leaderboard_scores (period_type, period_start, xp desc, minutes desc);
+
 -- ── Row level security ─────────────────────────────────────────────────────
 
 alter table public.user_custom_words enable row level security;
@@ -249,9 +303,12 @@ alter table public.translation_attempts enable row level security;
 alter table public.error_events enable row level security;
 alter table public.dictation_attempts enable row level security;
 alter table public.ai_usage enable row level security;
+alter table public.rag_chunks enable row level security;
+alter table public.rag_retrieval_logs enable row level security;
 alter table public.decks enable row level security;
 alter table public.deck_words enable row level security;
 alter table public.vocabulary_catalog enable row level security;
+alter table public.leaderboard_scores enable row level security;
 
 do $$
 declare
@@ -261,7 +318,7 @@ begin
   foreach t in array array[
     'user_custom_words', 'user_word_states', 'review_logs', 'study_sessions',
     'translation_exercises', 'translation_attempts', 'error_events',
-    'dictation_attempts', 'ai_usage'
+    'dictation_attempts', 'ai_usage', 'rag_chunks', 'rag_retrieval_logs'
   ] loop
     execute format(
       'create policy %I on public.%I for all using (auth.uid() = user_id) with check (auth.uid() = user_id)',
@@ -269,6 +326,57 @@ begin
     );
   end loop;
 end $$;
+
+-- Lọc user ngay bên trong RPC để vector index và RLS đều cùng một phạm vi.
+create or replace function public.match_rag_chunks(
+  query_embedding extensions.vector(768),
+  filter_user_id uuid,
+  filter_source_types text[] default null,
+  query_text text default '',
+  match_count int default 5,
+  match_threshold real default 0.42
+)
+returns table (
+  id uuid,
+  source_type text,
+  source_id text,
+  content text,
+  metadata jsonb,
+  similarity real,
+  lexical_score real,
+  score real
+)
+language sql
+stable
+security invoker
+set search_path = public, extensions
+as $$
+  with semantic_candidates as (
+    select c.id, c.source_type, c.source_id, c.content, c.metadata, c.content_search,
+      (1 - (c.embedding <=> query_embedding))::real as similarity
+    from public.rag_chunks c
+    where c.user_id = filter_user_id
+      and auth.uid() = filter_user_id
+      and (filter_source_types is null or c.source_type = any(filter_source_types))
+      and (1 - (c.embedding <=> query_embedding)) >= match_threshold
+    order by c.embedding <=> query_embedding
+    limit least(greatest(match_count * 12, 24), 120)
+  ),
+  reranked as (
+    select s.*,
+      case when btrim(query_text) = '' then 0::real
+      else ts_rank_cd(s.content_search, plainto_tsquery('simple', query_text))::real end as lexical_score
+    from semantic_candidates s
+  )
+  select r.id, r.source_type, r.source_id, r.content, r.metadata, r.similarity, r.lexical_score,
+    (r.similarity * 0.84 + least(r.lexical_score * 5, 1) * 0.16)::real as score
+  from reranked r
+  order by score desc, similarity desc
+  limit least(greatest(match_count, 1), 10);
+$$;
+
+revoke all on function public.match_rag_chunks(extensions.vector, uuid, text[], text, int, real) from public;
+grant execute on function public.match_rag_chunks(extensions.vector, uuid, text[], text, int, real) to authenticated;
 
 -- Bộ từ dùng chung: ai đăng nhập cũng đọc được, chỉ service role mới ghi.
 create policy vocabulary_catalog_read on public.vocabulary_catalog
@@ -286,3 +394,11 @@ create policy deck_words_read on public.deck_words
 create policy deck_words_write on public.deck_words
   for all using (exists (select 1 from public.decks d where d.id = deck_id and d.user_id = auth.uid()))
   with check (exists (select 1 from public.decks d where d.id = deck_id and d.user_id = auth.uid()));
+
+-- Bảng điểm được đọc công khai; chỉ chủ tài khoản được ghi/cập nhật dòng của mình.
+create policy leaderboard_scores_read on public.leaderboard_scores
+  for select using (true);
+create policy leaderboard_scores_owner_insert on public.leaderboard_scores
+  for insert with check (auth.uid() = user_id);
+create policy leaderboard_scores_owner_update on public.leaderboard_scores
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);

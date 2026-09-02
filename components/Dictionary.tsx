@@ -1,25 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import Icon from "./Icon";
+import WordListPicker from "./WordListPicker";
+import { fetchGlance } from "../lib/glance.mjs";
+import { foldersOf } from "../lib/folders.mjs";
+import { accountStorageKey } from "../lib/storage";
 
-// Từ điển AI: tra một từ rồi lưu thẳng vào danh sách từ.
-//
-// Dùng lại /api/ai/glance — cùng route với phần rê chuột để xem nghĩa, nên không
-// thêm chi phí mạng nào mới. Route đó tra từ điển mở và dịch, KHÔNG gọi mô hình
-// ngôn ngữ, nên tra bao nhiêu lần cũng được và không bị giới hạn lượt.
-
-type Sense = { part: string; definition: string; synonyms: string[] };
-type Lookup = { term: string; ipa: string; meaningVi: string; senses: Sense[] };
-
+type Sense = { part: string; definition: string; meaningVi: string; synonyms: string[] };
+type Collocation = { en: string; vi: string };
+type Upgrade = { word: string; vi: string; level: string };
+type Lookup = { term: string; ipa: string; meaningVi: string; isPhrase: boolean; level: string | null; senses: Sense[]; collocations: Collocation[]; upgrades: Upgrade[] };
 export type NewWord = { term: string; ipa: string; meaning: string; partOfSpeech: string; definition: string };
+type FolderStore = Parameters<typeof foldersOf>[0];
 
 const historyKey = "lexilo:dictionary-history:v1";
 
+
 function readHistory(): string[] {
   try {
-    const raw = localStorage.getItem(historyKey);
-    const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+    const parsed = JSON.parse(localStorage.getItem(accountStorageKey(historyKey)) ?? "[]") as string[];
     return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string").slice(0, 12) : [];
   } catch {
     return [];
@@ -36,38 +37,84 @@ function speak(text: string, region: "US" | "UK") {
   window.speechSynthesis?.speak(utterance);
 }
 
-export default function Dictionary({ onSave, has }: { onSave: (word: NewWord) => void; has: (term: string) => boolean }) {
+export default function Dictionary({ onSave, wordId, collectionOf, studyDayOf, setStudyDay, folders, updateFolders, initialWord, legacyCollections = false }: {
+  onSave: (word: NewWord) => string;
+  wordId: (term: string) => string | null;
+  collectionOf: (term: string) => "mine" | "pdf";
+  studyDayOf: (term: string) => number | null;
+  setStudyDay: (wordId: string, day: number | null) => void;
+  folders: FolderStore;
+  updateFolders: (next: FolderStore) => void;
+  initialWord?: string;
+  legacyCollections?: boolean;
+}) {
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<Lookup | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState<string[]>([]);
-  const [saved, setSaved] = useState("");
+  const [savedWordId, setSavedWordId] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  // Bảng chọn danh sách phải bay ra khỏi thẻ: thẻ nằm trong .page (có animation nên
+  // tạo lớp xếp chồng riêng), để nguyên tại chỗ thì menu dài bị thanh điều hướng
+  // dưới cùng đè lên và cắt mất mấy dòng cuối. Neo theo nút 📖 và tự cuộn bên trong.
+  const listButtonRef = useRef<HTMLButtonElement>(null);
+  const [popStyle, setPopStyle] = useState<CSSProperties>({});
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc sau khi hydrate
     setHistory(readHistory());
   }, []);
 
+  const lastInitial = useRef("");
+  useEffect(() => {
+    const word = (initialWord ?? "").trim();
+    if (!word || word.toLowerCase() === lastInitial.current) return;
+    lastInitial.current = word.toLowerCase();
+    setQuery(word);
+    void lookup(word);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ chạy khi từ nạp sẵn đổi
+  }, [initialWord]);
+
+  useEffect(() => {
+    if (!listOpen) return;
+    function place() {
+      const anchor = listButtonRef.current;
+      if (!anchor) return;
+      const box = anchor.getBoundingClientRect();
+      const width = Math.min(320, window.innerWidth - 24);
+      const left = Math.max(12, Math.min(box.right - width, window.innerWidth - width - 12));
+      const top = Math.min(box.bottom + 8, window.innerHeight - 160);
+      setPopStyle({ position: "fixed", left, top, width, maxHeight: window.innerHeight - top - 16 });
+    }
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setListOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [listOpen]);
+
   async function lookup(term: string) {
-    const word = term.trim().toLowerCase();
+    const word = term.replace(/\s+/g, " ").trim().toLowerCase();
     if (!word) return;
     setLoading(true);
     setError("");
     setResult(null);
-    setSaved("");
+    setSavedWordId(null);
+    setListOpen(false);
+    setCopied(false);
     try {
-      const response = await fetch(`/api/ai/glance?q=${encodeURIComponent(word)}`);
-      const data = (await response.json()) as Lookup & { error?: string };
-      if (!response.ok || data.error) throw new Error(data.error ?? "Không tra được từ này.");
+      const data = (await fetchGlance(word)) as Lookup;
       setResult(data);
       const next = [word, ...history.filter((item) => item !== word)].slice(0, 12);
       setHistory(next);
-      try {
-        localStorage.setItem(historyKey, JSON.stringify(next));
-      } catch {
-        // Trình duyệt chặn lưu thì vẫn tra được, chỉ mất lịch sử.
-      }
+      try { localStorage.setItem(accountStorageKey(historyKey), JSON.stringify(next)); } catch { /* lịch sử là tùy chọn */ }
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "Không tra được từ này.");
     } finally {
@@ -75,104 +122,153 @@ export default function Dictionary({ onSave, has }: { onSave: (word: NewWord) =>
     }
   }
 
-  function save() {
+  const existingWordId = result ? wordId(result.term) : null;
+  // Mã trong kho là nguồn sự thật. `savedWordId` chỉ lấp khoảng trống trong một
+  // render ngay sau khi bấm lưu; không được lấn át mã thật sau khi kho cập nhật.
+  const activeWordId = existingWordId ?? savedWordId;
+
+  function save(openPicker = true) {
     if (!result) return;
-    onSave({
+    const id = onSave({
       term: result.term,
       ipa: result.ipa || "/…/",
       meaning: result.meaningVi || result.senses[0]?.definition || "Chưa bổ sung nghĩa",
       partOfSpeech: result.senses[0]?.part ?? "",
       definition: result.senses[0]?.definition ?? "",
     });
-    setSaved(result.term);
+    setSavedWordId(id);
+    setListOpen(openPicker);
   }
 
-  const already = result ? has(result.term) : false;
+  function openLists() {
+    if (activeWordId) setListOpen((open) => !open);
+    else save(true);
+  }
+
+  async function copyWord() {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(`${result.term}${result.ipa ? ` ${result.ipa}` : ""}`);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch { /* clipboard có thể bị trình duyệt chặn */ }
+  }
+
+  const parts = result ? [...new Set(result.senses.map((sense) => sense.part).filter(Boolean))] : [];
+  const synonymCount = result?.senses.reduce((count, sense) => count + sense.synonyms.length, 0) ?? 0;
+  const collocations = result?.collocations ?? [];
+  const upgrades = result?.upgrades ?? [];
+  const isPhrase = Boolean(result?.isPhrase);
 
   return (
     <div className="page dictionary-page">
-      <div className="eyebrow">THƯ VIỆN</div>
-      <h1>Từ điển AI</h1>
-      <p className="page-sub">Tra nghĩa, phiên âm và cách dùng của một từ tiếng Anh, rồi lưu thẳng vào danh sách từ của bạn.</p>
-
-      <form
-        className="dictionary-search"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void lookup(query);
-        }}
-      >
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Nhập một từ tiếng Anh…"
-          aria-label="Từ cần tra"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <button className="primary" type="submit" disabled={loading || !query.trim()}>
-          {loading ? "Đang tra…" : "Tra từ"}
-        </button>
+      <form className="dictionary-search" onSubmit={(event) => { event.preventDefault(); void lookup(query); }}>
+        <Icon name="search" size={18} />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm kiếm từ tiếng Anh…" aria-label="Từ cần tra" autoComplete="off" spellCheck={false} />
+        <button type="submit" disabled={loading || !query.trim()}>{loading ? "Đang tra…" : "Tra từ"}</button>
       </form>
 
       {error && <p className="dictionary-error">{error}</p>}
 
       {result && (
-        <section className="panel dictionary-card">
-          <div className="dictionary-head">
-            <div>
-              <h2>{result.term}</h2>
-              {result.ipa && <em>{result.ipa}</em>}
+        <div className="dictionary-results">
+          <section className="panel dictionary-word-card">
+            <div className="dictionary-word-main">
+              <div className="dictionary-title-line"><h2>{result.term}</h2>{result.ipa && <em>{result.ipa}</em>}</div>
+              <div className="dictionary-meta">
+                {isPhrase
+                  ? <i>cụm từ</i>
+                  : <>{result.level && <b className="dictionary-cefr" title="Cấp độ CEFR ước lượng">{result.level}</b>}<span aria-hidden="true">••</span>{parts.map((part) => <i key={part}>{part}</i>)}</>}
+              </div>
             </div>
-            <div className="dictionary-voices">
-              <button onClick={() => speak(result.term, "US")}><Icon name="volume" size={13} /> US</button>
-              <button onClick={() => speak(result.term, "UK")}><Icon name="volume" size={13} /> UK</button>
+            <div className="dictionary-actions">
+              <button onClick={() => speak(result.term, "US")} title="Nghe phát âm"><Icon name="volume" size={18} /></button>
+              <button className={activeWordId ? "active" : ""} onClick={() => activeWordId ? setListOpen((open) => !open) : save(false)} title="Lưu vào Kho từ vựng"><Icon name="star" size={18} /></button>
+              <button ref={listButtonRef} className={listOpen ? "active" : ""} onClick={openLists} title="Chọn danh sách từ"><Icon name="book" size={18} /></button>
+              <button onClick={() => void copyWord()} title="Sao chép"><Icon name={copied ? "check" : "cards"} size={18} /></button>
             </div>
-          </div>
+            <div className="dictionary-pronunciations">
+              <button onClick={() => speak(result.term, "US")}><b>US</b><Icon name="volume" size={13} /><span>{result.ipa || "/…/"}</span></button>
+              <button onClick={() => speak(result.term, "UK")}><b>UK</b><Icon name="volume" size={13} /><span>{result.ipa || "/…/"}</span></button>
+            </div>
+          </section>
 
-          {result.meaningVi && <p className="dictionary-meaning">{result.meaningVi}</p>}
-
-          {result.senses.length > 0 && (
-            <ul className="dictionary-senses">
-              {result.senses.map((sense) => (
-                <li key={sense.part}>
-                  <b>{sense.part}</b>
-                  <span>{sense.definition}</span>
-                  {sense.synonyms.length > 0 && <small>Đồng nghĩa: {sense.synonyms.join(", ")}</small>}
-                </li>
-              ))}
-            </ul>
+          {activeWordId && listOpen && typeof document !== "undefined" && createPortal(
+            <>
+              <div className="dictionary-list-overlay" role="presentation" onMouseDown={() => setListOpen(false)} />
+              <div className="dictionary-list-popover" style={popStyle} role="dialog" aria-label="Chọn danh sách trong Kho từ vựng">
+                <WordListPicker compact legacyCollections={legacyCollections} folders={folders} wordId={activeWordId} updateFolders={updateFolders} collection={collectionOf(result.term)} studyDay={studyDayOf(result.term)} onStudyDayChange={(day) => setStudyDay(activeWordId, day)} onDone={() => setListOpen(false)} />
+              </div>
+            </>,
+            document.body,
           )}
 
-          {/* Đã có trong danh sách thì nói rõ, thay vì lưu trùng một từ hai lần. */}
-          {already ? (
-            <p className="dictionary-note">Từ này đã có trong danh sách từ của bạn.</p>
-          ) : saved === result.term ? (
-            <p className="dictionary-note done">Đã thêm “{saved}” vào danh sách từ.</p>
-          ) : (
-            <button className="primary dictionary-save" onClick={save}>
-              ＋ Thêm vào danh sách từ
-            </button>
-          )}
-        </section>
+          <section className="panel dictionary-detail-card">
+            <div className="dictionary-section-title"><Icon name="swap" size={17} /><b>{isPhrase ? "Nghĩa cụm" : "Bản dịch"}</b>{!isPhrase && <span>({result.senses.length || 1})</span>}</div>
+            {result.meaningVi
+              ? <p className="dictionary-meaning">{result.meaningVi}</p>
+              : isPhrase && <p className="dictionary-meaning dictionary-meaning-empty">Chưa dịch được cụm này. Thử tra từng từ.</p>}
+            {result.senses.length > 0 && (
+              <ul className="dictionary-senses">
+                {result.senses.map((sense) => (
+                  <li key={`${sense.part}-${sense.definition}`}>
+                    <b>{sense.part}</b>
+                    <span>{sense.meaningVi || sense.definition}</span>
+                    {sense.meaningVi && sense.definition && <small>{sense.definition}</small>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {collocations.length > 0 && (
+              <details className="dictionary-detail-row" open={isPhrase}>
+                <summary><span>Cụm từ kết hợp</span><small>({collocations.length})</small></summary>
+                <ul className="dictionary-collocations">
+                  {collocations.map((item) => (
+                    <li key={item.en}>
+                      <button type="button" onClick={() => { setQuery(item.en); void lookup(item.en); }}>{item.en}</button>
+                      {item.vi && <em>{item.vi}</em>}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {!isPhrase && upgrades.length > 0 && (
+              <details className="dictionary-detail-row" open>
+                <summary><span>Nâng cấp từ vựng</span><small>({upgrades.length})</small></summary>
+                <p className="dictionary-upgrade-hint">Từ gần nghĩa ở cấp độ cao hơn{result.level ? ` ${result.level}` : ""} — dùng khi muốn viết/nói “nặng ký” hơn.</p>
+                <ul className="dictionary-collocations dictionary-upgrades">
+                  {upgrades.map((item) => (
+                    <li key={item.word}>
+                      <button type="button" onClick={() => { setQuery(item.word); void lookup(item.word); }}>{item.word}</button>
+                      <span className="dictionary-cefr" title="Cấp độ CEFR ước lượng">{item.level}</span>
+                      {item.vi && <em>{item.vi}</em>}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {!isPhrase && (
+              <>
+                <details className="dictionary-detail-row" open>
+                  <summary><span>Định nghĩa</span><small>({result.senses.length})</small></summary>
+                  <div>{result.senses.map((sense) => <p key={sense.definition}>{sense.definition}</p>)}</div>
+                </details>
+                {upgrades.length === 0 && (
+                  <details className="dictionary-detail-row">
+                    <summary><span>Từ đồng nghĩa</span><small>({synonymCount})</small></summary>
+                    <div>{result.senses.flatMap((sense) => sense.synonyms).join(", ") || "Chưa có dữ liệu đồng nghĩa."}</div>
+                  </details>
+                )}
+              </>
+            )}
+          </section>
+        </div>
       )}
 
       {history.length > 0 && (
         <section className="dictionary-history">
           <h3>Vừa tra</h3>
-          <div>
-            {history.map((word) => (
-              <button
-                key={word}
-                onClick={() => {
-                  setQuery(word);
-                  void lookup(word);
-                }}
-              >
-                {word}
-              </button>
-            ))}
-          </div>
+          <div>{history.map((word) => <button key={word} onClick={() => { setQuery(word); void lookup(word); }}>{word}</button>)}</div>
         </section>
       )}
     </div>

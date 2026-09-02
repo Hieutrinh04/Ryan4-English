@@ -54,11 +54,13 @@ function localIpa(word: string) {
   const key = word.toLowerCase();
   const direct = ipaFromArpabet(dictionary[key] ?? dictionary[key.replace(/’/g, "'")] ?? dictionary[plainLetters(key)]);
   if (direct) return direct;
-  // CMU lưu phần lớn từ đơn nhưng không có mọi tổ hợp gạch nối. Ghép các phần
-  // vẫn chính xác và hữu ích hơn trả rỗng cho self-driving/American-English.
-  if (key.includes("-")) {
-    const parts = key.split("-").filter(Boolean).map((part) => ipaFromArpabet(dictionary[part]));
-    if (parts.length > 1 && parts.every(Boolean)) return `/${parts.map((part) => part.slice(1, -1)).join(" · ")}/`;
+  // CMU lưu phần lớn từ đơn nhưng không có mọi tổ hợp gạch nối / cụm nhiều từ.
+  // Ghép phiên âm từng phần vẫn chính xác và hữu ích hơn trả rỗng.
+  const separator = key.includes(" ") ? " " : key.includes("-") ? "-" : "";
+  if (separator) {
+    const joiner = separator === " " ? " " : " · ";
+    const parts = key.split(separator).filter(Boolean).map((part) => ipaFromArpabet(dictionary[part] ?? dictionary[plainLetters(part)]));
+    if (parts.length > 1 && parts.every(Boolean)) return `/${parts.map((part) => part.slice(1, -1)).join(joiner)}/`;
   }
   return "";
 }
@@ -94,8 +96,8 @@ export async function POST(request: Request) {
   const { words } = (await request.json()) as { words?: string[] };
   // Nhận cả chữ có dấu (café) và có số (covid-19). Lọc theo bảng chữ a–z là loại
   // đúng những chữ mà giao diện vẫn hiện ra, nên chúng mắc kẹt không có phiên âm.
-  const list = [...new Set((words ?? []).map((item) => String(item ?? "").trim().toLowerCase()))]
-    .filter((word) => /^\p{L}[\p{L}\p{N}'-]{0,30}$/u.test(word))
+  const list = [...new Set((words ?? []).map((item) => String(item ?? "").replace(/\s+/g, " ").trim().toLowerCase()))]
+    .filter((word) => /^\p{L}[\p{L}\p{N}' -]{0,40}$/u.test(word))
     .slice(0, MAX_WORDS);
   if (!list.length) return NextResponse.json({ ipa: {} });
 

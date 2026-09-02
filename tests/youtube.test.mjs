@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   alignTranscript,
+  cleanCaptionText,
   cuesFromJson3,
   embedUrl,
   pickEnglishTrack,
@@ -13,6 +14,24 @@ import {
   videoIdFrom,
   wordShapes,
 } from "../lib/youtube.mjs";
+
+test("cleanCaptionText: bỏ ký hiệu người nói và âm thanh, giữ nguyên lời thật", () => {
+  assert.equal(cleanCaptionText("York City, >> [music] >> I just finished season 2."), "York City, I just finished season 2.");
+  assert.equal(cleanCaptionText("[Music]"), "");
+  assert.equal(cleanCaptionText("With season [music] 2, I felt like I really tried."), "With season 2, I felt like I really tried.");
+});
+
+test("cuesFromJson3: transcript mốc giây không cộng thêm nửa giây vào câu trước", () => {
+  const cues = cuesFromJson3({
+    timingPrecision: "second",
+    events: [
+      { tStartMs: 1000, dDurationMs: 4000, segs: [{ utf8: "Hello there. As you can see, I'm not in my usual setting." }] },
+      { tStartMs: 5000, dDurationMs: 6000, segs: [{ utf8: "Today we are in New York City." }] },
+    ],
+  });
+  assert.equal(cues[0].end, 5, "câu đầu phải dừng trước chữ Today ở giây 5");
+  assert.equal(cues[1].start, 5, "câu sau bắt đầu đúng mốc YouTube hiển thị");
+});
 
 test("videoIdFrom: nhận mọi dạng đường dẫn YouTube thường gặp", () => {
   const id = "dQw4w9WgXcQ";
@@ -92,11 +111,122 @@ test("sentencesFrom: gom các dòng và hai câu ngắn thành một đoạn luy
   assert.equal(sentences[0].index, 1);
 });
 
+test("sentencesFrom: không xé New York City khi dòng trước đã chứa hai câu hoàn chỉnh", () => {
+  const cues = cuesFromJson3({
+    timingPrecision: "second",
+    events: [
+      {
+        tStartMs: 1000,
+        dDurationMs: 5000,
+        segs: [{ utf8: "Hello there. As you can see, I'm not in my usual setting. Today we are in New" }],
+      },
+      {
+        tStartMs: 6000,
+        dDurationMs: 5000,
+        segs: [{ utf8: "York City, >> [music] >> I just finished season 2 on my channel." }],
+      },
+    ],
+  });
+  const sentences = sentencesFrom(cues);
+  assert.equal(sentences.length, 1);
+  assert.match(sentences[0].text, /New York City/);
+  assert.doesNotMatch(sentences[0].text, />>|\[music\]/i);
+});
+
+test("cuesFromJson3: bỏ cue lặp liên tiếp của phụ đề cuộn", () => {
+  const cues = cuesFromJson3({ events: [
+    { tStartMs: 0, dDurationMs: 1500, segs: [{ utf8: "Hello there." }] },
+    { tStartMs: 1500, dDurationMs: 1500, segs: [{ utf8: "Hello there." }] },
+    { tStartMs: 3000, dDurationMs: 1500, segs: [{ utf8: "How are you?" }] },
+  ] });
+  assert.deepEqual(cues.map((cue) => cue.text), ["Hello there.", "How are you?"]);
+});
+
 test("sentencesFrom: đoạn không có dấu chấm vẫn bị cắt, không thành câu dài vô tận", () => {
   const cues = Array.from({ length: 10 }, (_, i) => ({ start: i, end: i + 1, text: "word word word word word" }));
   const sentences = sentencesFrom(cues, { maxWords: 12 });
   assert.ok(sentences.length >= 4, `chỉ cắt được ${sentences.length} câu`);
   for (const sentence of sentences) assert.ok(sentence.text.split(" ").length <= 15);
+});
+
+test("sentencesFrom: không cắt ý ở dấu ba chấm trước phần bổ nghĩa tiếp theo", () => {
+  const sentences = sentencesFrom([
+    { start: 16, end: 17, text: '"I don\'t want to know."' },
+    { start: 17, end: 18, text: "So last week," },
+    { start: 18, end: 19, text: "I opened my LinkedIn and" },
+    { start: 19, end: 20, text: "the first thing I see was ..." },
+    { start: 20, end: 24, text: "Meta laid off 8,000 employees because of AI." },
+  ]);
+  assert.equal(sentences.length, 1);
+  assert.match(sentences[0].text, /was \.\.\. Meta laid off/);
+  assert.equal(sentences[0].start, 16);
+  assert.equal(sentences[0].end, 24);
+});
+
+test("cuesFromJson3: transcript mốc tròn dùng nguyên ranh giới YouTube, không chồng hai đoạn", () => {
+  const cues = cuesFromJson3({
+    timingPrecision: "second",
+    events: [
+      { tStartMs: 16000, dDurationMs: 4550, segs: [{ utf8: "The first thing I see was ..." }] },
+      { tStartMs: 20000, dDurationMs: 3550, segs: [{ utf8: "Meta laid off employees." }] },
+    ],
+  });
+  assert.equal(cues[0].start, 16, "không cắt phần mở đầu video");
+  assert.equal(cues[0].end, 20);
+  assert.equal(cues[1].start, 20);
+  assert.equal(cues[0].end, cues[1].start, "cuối đoạn trước và đầu đoạn sau phải là cùng một mốc");
+});
+
+test("cuesFromJson3: mốc mili-giây theo dòng không phát lấn câu kế tiếp", () => {
+  const cues = cuesFromJson3({
+    timingPrecision: "millisecond",
+    events: [
+      { tStartMs: 27000, dDurationMs: 4100, segs: [{ utf8: "compliments ever. So, thank you." }] },
+      { tStartMs: 30000, dDurationMs: 4000, segs: [{ utf8: "So today let's talk about filming." }] },
+    ],
+  });
+  assert.equal(cues[0].end, 30, "mốc của cả dòng phải dừng tại đầu dòng kế tiếp");
+  assert.equal(cues[1].start, 30);
+});
+
+test("cuesFromJson3: timestamp từng từ được giữ phần chồng nhỏ", () => {
+  const cues = cuesFromJson3({
+    timingPrecision: "word",
+    events: [
+      { tStartMs: 27000, dDurationMs: 4100, segs: [{ utf8: "compliments ever. So, thank you.", tOffsetMs: 0 }] },
+      { tStartMs: 30000, dDurationMs: 4000, segs: [{ utf8: "So today let's talk about filming.", tOffsetMs: 0 }] },
+    ],
+  });
+  assert.equal(cues[0].end, 31.1);
+});
+
+test("cuesFromJson3: dùng tOffsetMs để giữ timestamp theo từng từ", () => {
+  const cues = cuesFromJson3({
+    events: [
+      {
+        tStartMs: 16000,
+        dDurationMs: 8500,
+        segs: [
+          { utf8: "So last week, ", tOffsetMs: 0 },
+          { utf8: "I opened my LinkedIn ", tOffsetMs: 1200 },
+          { utf8: "and the first thing I see was ... ", tOffsetMs: 3500 },
+          { utf8: "Meta laid off 8,000 employees because of AI.", tOffsetMs: 6200 },
+        ],
+      },
+      {
+        tStartMs: 24500,
+        dDurationMs: 3500,
+        segs: [{ utf8: "And immediately, all my friends were freaking out.", tOffsetMs: 0 }],
+      },
+    ],
+  });
+  assert.deepEqual(cues.map((cue) => cue.start), [16, 17.2, 19.5, 22.2, 24.5]);
+  assert.equal(cues[3].end, 24.5);
+  assert.equal(cues[3].end, cues[4].start, "từ cuối đoạn 5 không được phát lại ở đầu đoạn 6");
+
+  const sentences = sentencesFrom(cues);
+  assert.equal(sentences[0].end, 24.5);
+  assert.equal(sentences[1].start, 24.5);
 });
 
 test("sentencesFrom: không có phụ đề thì trả về mảng rỗng", () => {

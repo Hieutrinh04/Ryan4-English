@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./extras.css";
+import "./workspace-redesign.css";
 
 // Font Quicksand tự host: bớt một vòng kết nối ra ngoài, không nhảy chữ khi tải,
 // và không gửi thông tin người dùng sang máy chủ thứ ba. Khai báo @font-face nằm

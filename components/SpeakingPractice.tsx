@@ -278,7 +278,7 @@ export default function SpeakingPractice({ close, onStudied }: { close: () => vo
   // ── Màn chọn tình huống ───────────────────────────────────────────────────
   return (
     <div className="page speaking-library">
-      <button className="back" onClick={close}>← Chọn chức năng khác</button>
+      <button className="back" onClick={close}>← Quay lại không gian kỹ năng</button>
 
       <header className="writing-hero">
         <span className="writing-hero-icon"><Icon name="volume" size={20} /></span>

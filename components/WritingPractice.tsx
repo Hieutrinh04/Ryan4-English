@@ -81,7 +81,7 @@ const THUMBNAILS: Record<string, { icon: IconName; label: string; className: str
   "Bài báo": { icon: "sparkles", label: "FOCUS", className: "article" },
 };
 
-export default function WritingPractice({ close, onStudied, openTranslate }: { close: () => void; onStudied?: () => void; openTranslate?: () => void }) {
+export default function WritingPractice({ onStudied, openTranslate }: { onStudied?: () => void; openTranslate?: () => void }) {
   const [route, setRoute] = useState<"home" | "paragraphs" | "exams">("home");
   const [paragraphLevel, setParagraphLevel] = useState("Tất cả");
   const [paragraphKind, setParagraphKind] = useState("Tất cả");
@@ -338,11 +338,13 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
 
   if (paragraphTask && paragraphSentence)
     return (
-      <div className="page paragraph-session">
-        <button className="back" onClick={() => setParagraphTask(null)}>← Thư viện đoạn văn</button>
-        <header className="paragraph-session-head">
-          <div><span className="eyebrow">{paragraphTask.level} · {paragraphTask.kind}</span><h1>{paragraphTask.title}</h1></div>
-          <div className="paragraph-session-stats"><span>Tiến độ</span><b>{paragraphIndex + 1}/{paragraphTask.sentences.length} câu</b><em>{Math.round(((paragraphIndex + Number(paragraphChecked && paragraphPassed)) / paragraphTask.sentences.length) * 100)}%</em></div>
+      <div className="page paragraph-session translate-page">
+        <header className="paragraph-session-head translation-session-head">
+          <div><span className="eyebrow">LUYỆN VIỆT → ANH · ĐOẠN VĂN</span><h1>{paragraphTask.title}</h1></div>
+          <div className="translation-session-stats">
+            <span><b>{paragraphIndex + 1}/{paragraphTask.sentences.length}</b> câu</span>
+            <span><b>{Math.round(((paragraphIndex + Number(paragraphChecked && paragraphPassed)) / paragraphTask.sentences.length) * 100)}%</b> tiến độ</span>
+          </div>
         </header>
         <div className="translation-progress"><i style={{ width: `${((paragraphIndex + Number(paragraphChecked)) / paragraphTask.sentences.length) * 100}%` }} /></div>
         {paragraphComplete ? <section className="panel paragraph-complete">
@@ -351,52 +353,61 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
           <strong>{Math.round(paragraphScores.reduce((sum, score) => sum + score, 0) / Math.max(1, paragraphScores.length))}%</strong>
           <p>Độ tương đồng trung bình của {paragraphTask.sentences.length} câu. Kết quả này dùng để luyện tập, không phải điểm thi.</p>
           <div><button onClick={() => openParagraph(paragraphTask)}>Làm lại</button><button className="primary" onClick={() => setParagraphTask(null)}>Chọn bài khác →</button></div>
-        </section> : <div className="paragraph-session-grid">
-          <section className="panel paragraph-source">
-            <span className="eyebrow">ĐOẠN TIẾNG VIỆT</span>
-            <p className="paragraph-story">
+        </section> : <div className="paragraph-session-grid translate-grid">
+          <section className="panel paragraph-source translate-source">
+            <div className="translate-head">
+              <div><span className="eyebrow">ĐOẠN TIẾNG VIỆT</span><small>{paragraphTask.level} · {paragraphTask.kind}</small></div>
+              <b>Câu {paragraphIndex + 1} / {paragraphTask.sentences.length}</b>
+            </div>
+            <p className="paragraph-story translate-paragraph">
               {paragraphTask.sentences.map((line, position) => {
                 const accepted = formatAcceptedTranslation(paragraphAcceptedAnswers[position] || "");
                 const className = ["paragraph-story-sentence", position === paragraphIndex ? "active" : position < paragraphIndex ? "done" : "", accepted ? "translated" : ""].filter(Boolean).join(" ");
                 return <span key={position} className={className} title={accepted ? `Câu tiếng Việt: ${line.vi}` : undefined}>{accepted || line.vi}</span>;
               })}
             </p>
-            <div className="paragraph-answer-head">
-              <label htmlFor="paragraph-answer">Dịch câu đang tô sáng sang tiếng Anh</label>
-              <span>{paragraphAnswer.trim() ? paragraphAnswer.trim().split(/\s+/).length : 0} từ</span>
+            <div className="translate-input">
+              <div className="paragraph-answer-head translate-input-head">
+                <label htmlFor="paragraph-answer">Bản dịch tiếng Anh của bạn</label>
+                <span>{paragraphAnswer.trim() ? paragraphAnswer.trim().split(/\s+/).length : 0} từ</span>
+              </div>
+              <textarea
+                id="paragraph-answer"
+                value={paragraphAnswer}
+                onChange={(event) => changeParagraphAnswer(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey && !paragraphChecked && paragraphAnswer.trim() && !paragraphGrading) {
+                    event.preventDefault();
+                    void checkParagraphSentence();
+                  }
+                }}
+                disabled={paragraphChecked && paragraphPassed}
+                placeholder="Viết câu tiếng Anh cho câu đang tô sáng…"
+              />
+              <div className="paragraph-input-help translate-input-help"><span><kbd>Enter</kbd> chấm câu · <kbd>Shift</kbd> + <kbd>Enter</kbd> xuống dòng</span>{paragraphAnswer && !paragraphChecked ? <button type="button" onClick={() => setParagraphAnswer("")}>Xóa nội dung</button> : null}</div>
             </div>
-            <textarea
-              id="paragraph-answer"
-              value={paragraphAnswer}
-              onChange={(event) => changeParagraphAnswer(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey && !paragraphChecked && paragraphAnswer.trim() && !paragraphGrading) {
-                  event.preventDefault();
-                  void checkParagraphSentence();
-                }
-              }}
-              disabled={paragraphChecked && paragraphPassed}
-              placeholder="Nhập bản dịch tiếng Anh…"
-            />
-            <div className="paragraph-input-help"><span><kbd>Enter</kbd> chấm câu · <kbd>Shift + Enter</kbd> xuống dòng</span>{paragraphAnswer && !paragraphChecked ? <button type="button" onClick={() => setParagraphAnswer("")}>Xóa nội dung</button> : null}</div>
-            <div className="paragraph-actions">
-              <button onClick={() => setParagraphAnswer(paragraphSentence.en.split(" ").slice(0, 2).join(" "))}>Gợi ý</button>
-              {!paragraphChecked ? <button className="primary" disabled={!paragraphAnswer.trim() || paragraphGrading} onClick={() => void checkParagraphSentence()}>Chấm câu</button> : paragraphGrading ? <button className="primary" disabled>Đang chấm ngữ nghĩa…</button> : paragraphGradeError ? <button className="primary retry" type="button" onClick={() => void requestParagraphAiGrade()}>Chấm lại bằng AI</button> : paragraphPassed ? <button className="primary" onClick={nextParagraphSentence}>{paragraphIndex + 1 === paragraphTask.sentences.length ? "Xem tổng kết" : "Câu tiếp theo →"}</button> : <button className="primary retry" type="button" onClick={retryParagraphSentence}>Viết lại câu này</button>}
+            <div className="paragraph-actions translate-actions">
+              <button onClick={() => setParagraphTask(null)}>← Thư viện</button>
+              <button onClick={() => setParagraphAnswer(paragraphSentence.en.split(" ").slice(0, 2).join(" "))}>♦ Gợi ý</button>
+              {!paragraphChecked ? <button className="primary" disabled={!paragraphAnswer.trim() || paragraphGrading} onClick={() => void checkParagraphSentence()}>Chấm câu này</button> : paragraphGrading ? <button className="primary" disabled>Đang chấm ngữ nghĩa…</button> : paragraphGradeError ? <button className="primary retry" type="button" onClick={() => void requestParagraphAiGrade()}>Chấm lại bằng AI</button> : paragraphPassed ? <button className="primary" onClick={nextParagraphSentence}>{paragraphIndex + 1 === paragraphTask.sentences.length ? "Xem tổng kết →" : "Câu tiếp →"}</button> : <button className="primary retry" type="button" onClick={retryParagraphSentence}>Viết lại câu này</button>}
             </div>
           </section>
-          <aside className="panel paragraph-feedback">
-            <div className="paragraph-side-tools">
+          <aside className="panel paragraph-feedback translate-feedback">
+            <div className="paragraph-side-tools translate-meta">
               <button onClick={() => setParagraphDictionaryOpen((value) => !value)}><Icon name="book" size={18} /><span>Từ điển</span></button>
               <div><Icon name="target" size={18} /><strong>{paragraphAiGrade ? `${paragraphScore}%` : paragraphGrading ? "…" : "—"}</strong><span>Độ chính xác ngữ nghĩa</span></div>
             </div>
             {paragraphDictionaryOpen && <div className="paragraph-dictionary"><label htmlFor="paragraph-dictionary">Tra nhanh từ tiếng Anh</label><div><input id="paragraph-dictionary" value={paragraphDictionaryQuery} onChange={(event) => setParagraphDictionaryQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") lookUpParagraphWord(); }} placeholder="Nhập một từ…" /><button disabled={!paragraphDictionaryQuery.trim()} onClick={lookUpParagraphWord}>Tra từ</button></div><small>Mở định nghĩa, phát âm và ví dụ trong tab mới.</small></div>}
-            <h3>Phản hồi</h3>
+            <div className="translate-feedback-title">
+              <div><span>PHẢN HỒI</span><b>{paragraphResult || paragraphRewriteReview ? "Kết quả câu hiện tại" : "Sẵn sàng chấm bài"}</b></div>
+              <em>{paragraphPassed ? "✓" : "◎"}</em>
+            </div>
             {!paragraphResult ? paragraphRewriteReview ? <div className="paragraph-review-kept">
               <div className="paragraph-score-row"><strong>{paragraphRewriteReview.score}%</strong><span>Nhận xét lần chấm trước</span></div>
               <p>{paragraphRewriteReview.comment}</p>
               {paragraphRewriteReview.issues.length ? <section className="paragraph-issues"><h4>Hướng dẫn sửa câu</h4>{paragraphRewriteReview.issues.map((issue, index) => <div key={`${issue.type}-${index}`}><b>{issue.wrong || "Cách diễn đạt cần xem lại"}</b><p>{issue.why}</p></div>)}</section> : null}
               <div className="paragraph-tip"><Icon name="sparkles" size={16} /><span><b>Hãy tự sửa:</b> Đối chiếu từng lỗi ở trên và viết lại bằng cách diễn đạt của bạn. Câu mẫu đã được ẩn trong lúc làm lại.</span></div>
-            </div> : <div className="paragraph-ready"><p>Hoàn thành câu dịch rồi bấm <b>Chấm câu</b>. Hệ thống sẽ phân tích ý nghĩa, ngữ pháp, từ vựng và độ tự nhiên.</p><ol><li>Dịch đúng câu đang được tô sáng</li><li>Nhấn <b>Gợi ý</b> nếu chưa biết cách bắt đầu</li><li>Câu chưa đạt 90% cần sửa lại trước khi tiếp tục</li></ol></div> : <>
+            </div> : <div className="paragraph-ready translate-ready"><p className="translate-empty">Viết câu tiếng Anh rồi bấm <b>Chấm câu này</b>. Hệ thống sẽ phân tích ý nghĩa, ngữ pháp, từ vựng và độ tự nhiên.</p><ul><li><span>1</span>Dịch đúng ý của câu đang được tô sáng</li><li><span>2</span>Nhấn <b>Gợi ý</b> nếu chưa biết cách bắt đầu</li><li><span>3</span>Sửa câu đến khi đạt rồi mới chuyển tiếp</li></ul></div> : <>
               <div className="paragraph-score-row"><strong>{paragraphAiGrade ? `${paragraphScore}%` : paragraphGrading ? "…" : "—"}</strong><span>Đánh giá theo ý nghĩa</span></div>
               <p className={paragraphPassed ? "good" : ""}>{paragraphGrading ? "Đang kiểm tra câu của bạn theo ý nghĩa tiếng Việt, ngữ pháp và độ tự nhiên…" : paragraphGradeError || paragraphAiGrade?.comment || "Chưa có kết quả chấm ngữ nghĩa."}</p>
               {paragraphGrading && <div className="paragraph-ai-loading"><Icon name="sparkles" size={16} /><span>Đang kiểm tra ý nghĩa, ngữ pháp và cách diễn đạt…</span></div>}
@@ -406,7 +417,7 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
               {paragraphAiGrade && <div className="paragraph-tip"><Icon name="sparkles" size={16} /><span><b>Cách cải thiện:</b> Sửa các lỗi thực sự về ý nghĩa hoặc ngữ pháp ở trên. Bạn không cần viết giống câu tham khảo nếu cách diễn đạt của bạn vẫn đúng và tự nhiên.</span></div>}
               {paragraphGradeError && <small className="paragraph-grade-note">{paragraphGradeError}</small>}
             </>}
-            <section className="paragraph-achievements"><h4>Thành tích hôm nay</h4><div><span><Icon name="flame" size={18} /><b>{paragraphIndex + (paragraphPassed ? 1 : 0)}</b><small>Câu hoàn thành</small></span><span><Icon name="sparkles" size={18} /><b>{paragraphScores.filter((score) => score >= 90).length}</b><small>Câu đạt chuẩn</small></span></div></section>
+            <section className="paragraph-achievements translation-achievements"><h3>Tiến độ buổi học</h3><div><article><strong>{paragraphIndex + (paragraphPassed ? 1 : 0)}</strong><span>Câu đã hoàn thành</span></article><article><strong>{paragraphScores.filter((score) => score >= 90).length}</strong><span>Câu đạt từ 90%</span></article><article><strong>{paragraphIndex + 1}</strong><span>Câu hiện tại</span></article></div></section>
           </aside>
         </div>}
       </div>
@@ -534,10 +545,12 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
   if (route === "home")
     return (
       <div className="page writing-hub">
-        <button className="back" onClick={close}>← Chọn chức năng khác</button>
+        {/* Không có nút quay lại: đây là màn gốc, bấm thẳng từ cột trái (và từ
+            thanh dưới trên điện thoại). Nút "về trang chủ" ở đây chỉ lặp lại thứ
+            đã luôn hiện sẵn. */}
         <header className="writing-hub-head">
           <span className="writing-hero-icon"><Icon name="pen" size={20} /></span>
-          <div><h1>Luyện viết</h1><p>Chọn đúng mục tiêu của bạn. Mỗi lộ trình có nội dung và cách chấm riêng.</p></div>
+          <div><h1>Viết</h1><p>Chọn đúng mục tiêu của bạn. Mỗi lộ trình có nội dung và cách chấm riêng.</p></div>
         </header>
         <div className="writing-paths">
           <button onClick={() => setRoute("paragraphs")}>
@@ -559,7 +572,7 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
   if (route === "paragraphs")
     return (
       <div className="page paragraph-library">
-        <button className="back" onClick={() => setRoute("home")}>← Luyện viết</button>
+        <button className="back" onClick={() => setRoute("home")}>← Viết</button>
         <header className="writing-hub-head"><span className="writing-hero-icon"><Icon name="book" size={20} /></span><div><h1>Đoạn văn có sẵn</h1><p>Chọn trình độ và nội dung, sau đó dịch từng câu trong một mạch văn hoàn chỉnh.</p></div></header>
         <div className="paragraph-toolbar">
           <label><Icon name="search" size={16} /><input value={paragraphQuery} onChange={(event) => setParagraphQuery(event.target.value)} placeholder="Tìm theo tên bài hoặc chủ đề…" /></label>
@@ -581,12 +594,12 @@ export default function WritingPractice({ close, onStudied, openTranslate }: { c
   // ── Màn chọn đề kỳ thi ────────────────────────────────────────────────────
   return (
     <div className="page writing-library">
-      <button className="back" onClick={() => setRoute("home")}>← Luyện viết</button>
+      <button className="back" onClick={() => setRoute("home")}>← Viết</button>
 
       <header className="writing-hero">
         <span className="writing-hero-icon"><Icon name="pen" size={20} /></span>
         <div>
-          <h1>Luyện viết</h1>
+          <h1>Viết theo kỳ thi</h1>
           <p>Viết theo đề rồi được chấm theo bốn tiêu chí như đề thi.</p>
         </div>
         <div className="writing-exams" role="group" aria-label="Kỳ thi">

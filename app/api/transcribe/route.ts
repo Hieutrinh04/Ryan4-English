@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { identify, logUsage, refund, spend } from "../../../lib/ai-guard";
+import { identify, logUsage } from "../../../lib/ai-guard";
+import { gate } from "../../../lib/ai-gate";
 import { alignTranscript, videoIdFrom } from "../../../lib/youtube.mjs";
 
 // Đọc lời thoại của một video YouTube KHÔNG CÓ PHỤ ĐỀ.
@@ -46,8 +47,8 @@ export async function POST(request: Request) {
   if (!key) return NextResponse.json({ error: "Chưa cấu hình GEMINI_API_KEY." }, { status: 503 });
 
   const caller = await identify(request);
-  const denied = spend(caller);
-  if (denied) return denied;
+  const g = await gate(caller, "transcribe");
+  if (g.denied) return g.denied;
 
   const model = process.env.GEMINI_MODEL?.trim() || MODEL_DEFAULT;
   const started = Date.now();
@@ -99,9 +100,9 @@ export async function POST(request: Request) {
     const sentences = alignTranscript(transcript, length || 0) as unknown[];
     return NextResponse.json({ videoId, transcript, sentences, estimated: true });
   } catch (problem) {
-    // Hỏng vì phía chúng ta hoặc phía Gemini thì trả lại lượt — người học không
-    // bấm sai gì cả.
-    refund(caller);
+    // Hỏng vì phía chúng ta hoặc phía Gemini thì trả lại lượt và điểm — người học
+    // không bấm sai gì cả.
+    await g.release(true);
     void logUsage(caller, {
       feature: "transcribe",
       ok: false,

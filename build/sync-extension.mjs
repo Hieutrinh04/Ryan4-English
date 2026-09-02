@@ -16,7 +16,7 @@ const SPLIT = "lib/split-text.mjs";
 
 // Chỉ những hàm tiện ích thật sự cần. Không chép cả tệp: phần chấm chính tả và
 // căn giờ ước lượng là việc của app, tiện ích không dùng tới.
-const WANTED = ["sliceJsonArray", "pickEnglishTrack", "cuesFromJson3", "sentencesFrom"];
+const WANTED = ["sliceJsonArray", "pickEnglishTrack", "cleanCaptionText", "removeCueDuplicates", "cuesFromJson3", "sentencesFrom"];
 
 const source = readFileSync(SOURCE, "utf8");
 

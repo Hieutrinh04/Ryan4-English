@@ -8,7 +8,7 @@ globalThis.localStorage = {
   removeItem: (key) => store.delete(key),
 };
 
-const { addToCatalogue, catalogueKey, countNew, readCatalogue, removeFromCatalogue, withLessonState } =
+const { addLessonsToCatalogue, addToCatalogue, catalogueKey, countNew, readCatalogue, removeFromCatalogue, withLessonState } =
   await import("../lib/catalogue.mjs");
 
 const video = (id, extra = {}) => ({ videoId: id.padEnd(11, "x").slice(0, 11), title: `Bài ${id}`, channel: "BBC", seconds: 300, ...extra });
@@ -27,6 +27,25 @@ test("thêm lại playlist cũ không tạo bản trùng và KHÔNG xáo thứ t
   const list = readCatalogue();
   // Thêm lại cả playlist mà xáo thứ tự thì người học mất dấu chỗ đang học dở.
   assert.deepEqual(list.map((item) => item.title), ["Bài a", "Bài b", "Bài c"]);
+});
+
+test("bài đã lấy phụ đề được thêm vào danh mục và hiện đúng tên kênh", () => {
+  store.clear();
+  addLessonsToCatalogue([
+    { videoId: "lxxxxxxxxxx", title: "Bài từ tiện ích", author: "Lillian Chiu", seconds: 679 },
+  ]);
+  assert.deepEqual(
+    readCatalogue().map(({ videoId, title, channel, seconds }) => ({ videoId, title, channel, seconds })),
+    [{ videoId: "lxxxxxxxxxx", title: "Bài từ tiện ích", channel: "Lillian Chiu", seconds: 679 }],
+  );
+});
+
+test("đồng bộ lại cùng một bài không tạo thẻ trùng", () => {
+  store.clear();
+  const lesson = { videoId: "lxxxxxxxxxx", title: "Bài từ tiện ích", author: "Lillian Chiu", seconds: 679 };
+  addLessonsToCatalogue([lesson]);
+  addLessonsToCatalogue([lesson]);
+  assert.equal(readCatalogue().length, 1);
 });
 
 test("video hỏng không lọt vào danh mục", () => {
@@ -61,9 +80,14 @@ test("countNew: nói trước sẽ thêm bao nhiêu video mới", () => {
 
 test("withLessonState: đánh dấu video đã có phụ đề để mở học ngay", () => {
   const entries = [video("a"), video("b")];
-  const marked = withLessonState(entries, [{ videoId: "axxxxxxxxxx" }]);
+  const lesson = bai("axxxxxxxxxx", 3);
+  const marked = withLessonState(entries, [lesson], { [lesson.id]: { dictation: [1, 2] } }, "dictation");
   assert.equal(marked[0].ready, true);
+  assert.equal(marked[0].lesson, lesson, "thẻ phải giữ bài thật để bấm vào mở màn học");
+  assert.equal(marked[0].done, 2);
+  assert.equal(marked[0].total, 3);
   assert.equal(marked[1].ready, false);
+  assert.equal(marked[1].lesson, null);
   assert.deepEqual(withLessonState(null, null), []);
 });
 

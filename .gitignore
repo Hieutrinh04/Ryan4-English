@@ -43,6 +43,7 @@ yarn-error.log*
 
 # dev server logs & build artifacts
 .dev-server.*.log
+/.lexilo-dev.*.log
 tsconfig.tsbuildinfo
 *.tar.gz
 
@@ -57,3 +58,12 @@ scripts/node_modules/
 # cấu hình công cụ dev cục bộ, không đưa lên repo
 /.claude/
 /.openai/
+
+# log của script khởi động lại dev server
+/.lexilo-restart.*.log
+
+# bản sao lưu tay khi sửa CSS lớn — chỉ có nghĩa trên máy đang sửa
+*.css.bak
+
+# trạng thái cục bộ của Supabase CLI (project-ref, pooler-url…)
+/supabase/.temp/

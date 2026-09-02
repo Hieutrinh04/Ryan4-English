@@ -14,6 +14,7 @@ const {
   MAX_SENTENCES,
   lessonFromHash,
   lessonsKey,
+  mergeLessonSources,
   needsRecapture,
   readLessonProgress,
   readLessons,
@@ -108,6 +109,28 @@ test("số câu và độ dài câu bị chặn, tránh nhồi dữ liệu khổ
 
 test("nguồn lạ bị quy về 'paste', không tin giá trị gửi tới", () => {
   assert.equal(sanitiseLesson({ ...good(), source: "chỗ nào đó" }).source, "paste");
+});
+
+test("video quản trị viên duyệt được giữ nhãn hệ thống", () => {
+  assert.equal(sanitiseLesson({ ...good(), source: "system" }).source, "system");
+});
+
+test("kho hệ thống và kho cá nhân dùng chung, bản hệ thống thắng khi hai bản ngang nhau", () => {
+  const system = { ...good(), title: "Bản mặc định", source: "system" };
+  const personal = [good(), { ...good(), videoId: "M7lc1UVf-VE", title: "Bài riêng" }];
+  const merged = mergeLessonSources([system], personal);
+  assert.deepEqual(merged.map((item) => item.title), ["Bản mặc định", "Bài riêng"]);
+  assert.deepEqual(merged.map((item) => item.source), ["system", "extension"]);
+});
+
+test("bản phụ đề cá nhân đầy đủ hơn không bị bản hệ thống cũ che khuất", () => {
+  const sentence = "This sentence contains enough useful words to stay as one complete practice segment for the learner.";
+  const system = { ...good(), title: "Bản cũ 4 câu", source: "system", sentences: Array.from({ length: 4 }, (_, index) => ({ start: index * 5, end: index * 5 + 5, text: sentence })) };
+  const personal = { ...good(), title: "Bản mới 108 câu", sentences: Array.from({ length: 108 }, (_, index) => ({ start: index * 5, end: index * 5 + 5, text: sentence })) };
+  const [selected] = mergeLessonSources([system], [personal]);
+  assert.equal(selected.title, "Bản mới 108 câu");
+  assert.equal(selected.sentences.length, 108);
+  assert.equal(selected.source, "extension");
 });
 
 test("số thứ tự câu được đánh lại, không tin số gửi tới", () => {
@@ -284,6 +307,54 @@ test("vá câu cắt ngang: KHÔNG nối hai câu thật đứng cạnh nhau", (
   assert.ok(lesson.sentences[0].text.startsWith("He left."));
 });
 
+test("vá bài bản cũ: dấu ba chấm nối tiếp được ghép với ý phía sau dù mở đầu bằng tên riêng", () => {
+  const lesson = sanitiseLesson({
+    videoId: "arj7oStGLkU",
+    captionVersion: CAPTION_VERSION - 1,
+    sentences: [
+      { start: 16, end: 20, text: "The first thing I see was ..." },
+      { start: 20, end: 24, text: "Meta laid off 8,000 employees because of AI." },
+    ],
+  });
+  assert.match(lesson.sentences.map((item) => item.text).join(" "), /was\s*\.\.\. Meta laid off/);
+});
+
+test("bài mới giữ loại timing để player chọn đúng hàng rào cuối câu", () => {
+  const lesson = sanitiseLesson({ ...good(), captionVersion: CAPTION_VERSION, timingPrecision: "millisecond" });
+  assert.equal(lesson.timingPrecision, "millisecond");
+  const untrusted = sanitiseLesson({ ...good(), captionVersion: CAPTION_VERSION, timingPrecision: "guess" });
+  assert.equal(untrusted.timingPrecision, undefined);
+});
+
+test("tự nâng bản 7: nối lại New York City và giữ dấu bản 8 để nhắc lấy lại mốc giờ", () => {
+  const lesson = sanitiseLesson({
+    ...good(),
+    captionVersion: 7,
+    sentences: [
+      { start: 1, end: 6, text: "Hello there. As you can see, I'm not in my usual setting. Today we are in New" },
+      { start: 6, end: 11, text: "York City, I just finished season 2 on my channel." },
+    ],
+  });
+  const transcript = lesson.sentences.map((item) => item.text).join(" ");
+  assert.match(transcript, /New York City/);
+  assert.equal(lesson.captionVersion, 8);
+  assert.equal(needsRecapture(lesson), true);
+});
+
+test("bài đã lưu được bỏ toàn bộ nhãn music khi đọc lại", () => {
+  const lesson = sanitiseLesson({
+    ...good(),
+    captionVersion: 8,
+    sentences: [
+      { start: 1, end: 5.5, text: "Today we are in New York City. >> [music] >> I just finished season 2." },
+      { start: 5.5, end: 11.5, text: "With season [music] 2, I focused on intentional filmmaking." },
+    ],
+  });
+  const transcript = lesson.sentences.map((item) => item.text).join(" ");
+  assert.doesNotMatch(transcript, /music|>>/i);
+  assert.match(transcript, /season 2/);
+});
+
 test("needsRecapture: bài chưa có dấu phiên bản thì phải bắt lại", () => {
   const cu = sanitiseLesson(good());
   assert.equal(cu.captionVersion, 1, "bài cũ không có dấu thì coi như bản 1");
@@ -324,6 +395,15 @@ test("bài cắt bằng bản hiện hành giữ NGUYÊN mốc, không bị gom 
     assert.ok(mocThat.has(s.start), `mốc bắt đầu ${s.start} không có trong phụ đề`);
     assert.ok(mocThat.has(s.end), `mốc kết thúc ${s.end} không có trong phụ đề`);
   }
+});
+
+test("bài hiện hành không bị trim lần hai làm mất từ cuối", () => {
+  const exact = [
+    { index: 1, start: 17, end: 24.5, text: "The first thing I see was ... Meta laid off 8,000 employees because of AI." },
+    { index: 2, start: 24.5, end: 28, text: "And immediately, all my friends were freaking out." },
+  ];
+  const lesson = sanitiseLesson({ ...good(), sentences: exact, captionVersion: CAPTION_VERSION });
+  assert.deepEqual(lesson.sentences.map((item) => [item.start, item.end]), [[17, 24.5], [24.5, 28]]);
 });
 
 test("bài bản cũ thì VẪN gom lại, vì mốc của chúng vốn đã là ước lượng", () => {

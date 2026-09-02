@@ -1,0 +1,983 @@
+/*
+ * Lexilo Workspace 2026
+ * Lớp giao diện cuối cùng: chỉ thay cách trình bày, không đổi dữ liệu hay luồng học.
+ * Mọi selector được đặt sau globals/extras để toàn ứng dụng dùng chung một hệ thống.
+ */
+
+:root{
+  --ui-bg:var(--bg);
+  --ui-sidebar:color-mix(in srgb,var(--bg) 86%,var(--surface));
+  --ui-card:var(--surface);
+  --ui-card-raised:color-mix(in srgb,var(--surface-2) 84%,var(--surface));
+  --ui-card-soft:var(--surface-2);
+  --ui-line:var(--line);
+  --ui-line-strong:var(--line-accent);
+  --ui-text:var(--ink);
+  --ui-text-soft:var(--text-2);
+  --ui-muted:var(--text-3);
+  --ui-accent:var(--accent-solid);
+  --ui-accent-strong:var(--purple);
+  --ui-accent-soft:var(--soft);
+  --ui-success:#62d39b;
+  --ui-warning:#f4bc62;
+  --ui-danger:#f1848f;
+  --ui-info:#78b8ff;
+  --ui-radius-xs:8px;
+  --ui-radius-sm:12px;
+  --ui-radius-md:16px;
+  --ui-radius-lg:22px;
+  --ui-shadow:0 18px 55px #00000038;
+  --ui-shadow-soft:0 8px 28px #00000020;
+  --ui-sidebar-width:264px;
+  --ui-topbar-height:72px;
+  --ui-content:1240px;
+}
+
+:root[data-theme="light"]{
+  --ui-success:#27845a;
+  --ui-warning:#a56715;
+  --ui-danger:#c5505c;
+  --ui-info:#236fbd;
+  --ui-shadow:0 18px 55px #34304416;
+  --ui-shadow-soft:0 8px 28px #3430440d;
+}
+
+html{scroll-behavior:smooth}
+body{background:var(--ui-bg);color:var(--ui-text);text-rendering:optimizeLegibility}
+button,a,input,textarea,select{transition:border-color var(--t-base) var(--ease),background-color var(--t-base) var(--ease),color var(--t-base) var(--ease),box-shadow var(--t-base) var(--ease),transform var(--t-base) var(--ease),opacity var(--t-base) var(--ease)}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid color-mix(in srgb,var(--ui-accent) 38%,transparent);outline-offset:2px}
+button:active:not(:disabled){transform:translateY(1px)}
+button:disabled{cursor:not-allowed;opacity:.48}
+::selection{background:color-mix(in srgb,var(--ui-accent) 35%,transparent);color:var(--ui-text)}
+
+.skip-link{position:fixed;left:18px;top:12px;z-index:300;transform:translateY(-160%);border-radius:10px;background:var(--ui-text);color:var(--ui-bg);padding:10px 14px;font-weight:800;text-decoration:none}
+.skip-link:focus{transform:translateY(0)}
+
+/* App shell */
+.lexilo-workspace{min-height:100dvh;background:var(--ui-bg);color:var(--ui-text)}
+.lexilo-workspace .sidebar{width:var(--ui-sidebar-width);padding:20px 14px 16px;background:var(--ui-sidebar);border-right:1px solid var(--ui-line);box-shadow:none;overflow:hidden}
+.lexilo-workspace .content{margin-left:var(--ui-sidebar-width);min-height:100dvh;padding-top:var(--ui-topbar-height);background:var(--ui-bg)}
+.lexilo-workspace .brand{height:48px;padding:0 10px;gap:11px}
+.lexilo-workspace .brand-mark{width:38px;height:38px;border-radius:12px;background:linear-gradient(145deg,var(--ui-accent-strong),var(--ui-accent));box-shadow:0 9px 25px color-mix(in srgb,var(--ui-accent) 32%,transparent);font-size:23px}
+.brand-copy{display:grid;gap:1px;line-height:1.1}
+.brand-copy>b{font-size:17px;letter-spacing:-.3px}
+.brand-copy>small{color:var(--ui-muted);font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+.lexilo-workspace .sidebar nav{display:flex;flex-direction:column;gap:3px;min-height:0;margin:28px 0 14px;padding:0 4px 10px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.lexilo-workspace .nav-group{margin:19px 10px 7px;color:var(--ui-muted);font-size:9px;font-weight:800;letter-spacing:1.25px}
+.lexilo-workspace .nav-group:first-child{margin-top:0}
+.lexilo-workspace .nav-item{position:relative;min-height:43px;padding:9px 11px;border:1px solid transparent;border-radius:11px;color:var(--ui-text-soft);gap:11px;font-size:12px;font-weight:700}
+.lexilo-workspace .nav-item svg{flex:none;color:var(--ui-muted)}
+.lexilo-workspace .nav-item:hover{border-color:var(--ui-line);background:var(--ui-card-soft);color:var(--ui-text)}
+.lexilo-workspace .nav-item.active{border-color:color-mix(in srgb,var(--ui-accent) 28%,var(--ui-line));background:var(--ui-accent-soft);color:var(--ui-accent-strong);box-shadow:inset 3px 0 0 var(--ui-accent)}
+.lexilo-workspace .nav-item.active svg{color:var(--ui-accent-strong)}
+.lexilo-workspace .nav-count{margin-left:auto;min-width:24px;border:1px solid var(--ui-line);border-radius:999px;background:var(--ui-card);color:var(--ui-muted);padding:2px 6px;font-size:9px;font-style:normal;text-align:center}
+.lexilo-workspace .sidebar-bottom{gap:9px;padding:0 4px}
+.lexilo-workspace .upgrade-cta{min-height:43px;border-radius:11px;box-shadow:none}
+.lexilo-workspace .theme-menu>button,.lexilo-workspace .theme-toggle{min-height:42px;border-radius:11px;background:var(--ui-card-soft)}
+.lexilo-workspace .profile{min-height:61px;margin-top:2px;padding:12px 5px 0;border-color:var(--ui-line);background:transparent}
+.lexilo-workspace .profile .avatar{width:36px;height:36px}
+.lexilo-workspace .profile b{font-size:11px}
+.lexilo-workspace .profile small{font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.workspace-topbar{position:fixed;inset:0 0 auto var(--ui-sidebar-width);z-index:30;height:var(--ui-topbar-height);display:flex;align-items:center;justify-content:space-between;gap:24px;padding:0 max(28px,calc((100vw - var(--ui-sidebar-width) - var(--ui-content))/2 + 28px));border-bottom:1px solid color-mix(in srgb,var(--ui-line) 84%,transparent);background:color-mix(in srgb,var(--ui-bg) 88%,transparent);backdrop-filter:blur(18px)}
+.workspace-location{display:grid;gap:2px}
+.workspace-location span{color:var(--ui-muted);font-size:9px;font-weight:800;letter-spacing:1.1px;text-transform:uppercase}
+.workspace-location b{font-size:14px}
+.workspace-quick-actions{display:flex;gap:8px}
+.workspace-quick-actions button{min-height:38px;display:flex;align-items:center;gap:7px;border:1px solid var(--ui-line);border-radius:10px;background:var(--ui-card);color:var(--ui-text-soft);padding:0 13px;font-size:11px;font-weight:800;box-shadow:none}
+.workspace-quick-actions button:hover{border-color:var(--ui-line-strong);color:var(--ui-text)}
+.workspace-quick-actions .primary{border-color:var(--ui-accent);background:var(--ui-accent);color:#fff}
+.lexilo-workspace{--ui-gutter:32px}
+.lexilo-workspace .page{width:min(100%,var(--ui-content));max-width:none;padding:38px 32px 74px}
+.lexilo-workspace .mobile-head,.lexilo-workspace .mobile-nav{display:none}
+
+/* Shared page hierarchy */
+.lexilo-workspace .eyebrow{color:var(--ui-accent-strong);font-size:9px;letter-spacing:1.35px}
+.lexilo-workspace .page-sub{max-width:720px;color:var(--ui-muted);font-size:12px;line-height:1.65}
+.lexilo-workspace .greeting,.lexilo-workspace .section-head{margin-bottom:26px}
+.lexilo-workspace .greeting h1,.lexilo-workspace .section-head h1,.lexilo-workspace .page>h1{color:var(--ui-text);font-size:clamp(27px,2.2vw,34px);letter-spacing:-1.15px;line-height:1.14}
+.lexilo-workspace .greeting p,.lexilo-workspace .section-head p{color:var(--ui-muted);font-size:12px;line-height:1.6}
+.lexilo-workspace .panel{border:1px solid var(--ui-line);border-radius:var(--ui-radius-md);background:var(--ui-card);box-shadow:none;padding:20px}
+.lexilo-workspace .panel:hover{border-color:color-mix(in srgb,var(--ui-line-strong) 78%,var(--ui-line))}
+.lexilo-workspace .panel h2,.lexilo-workspace .panel h3{color:var(--ui-text)}
+.lexilo-workspace .panel-title p,.lexilo-workspace .muted{color:var(--ui-muted)}
+.lexilo-workspace .primary{min-height:42px;border-radius:10px;background:var(--ui-accent);color:#fff;box-shadow:0 8px 24px color-mix(in srgb,var(--ui-accent) 23%,transparent);padding:10px 16px}
+.lexilo-workspace .primary:hover{background:var(--ui-accent-strong);box-shadow:0 10px 28px color-mix(in srgb,var(--ui-accent) 30%,transparent)}
+.lexilo-workspace .section-actions{display:flex;flex-wrap:wrap;gap:8px}
+.lexilo-workspace .section-actions button{min-height:40px;border:1px solid var(--ui-line);border-radius:10px;background:var(--ui-card);color:var(--ui-text-soft);padding:9px 13px}
+.lexilo-workspace .section-actions button:hover{border-color:var(--ui-line-strong);color:var(--ui-text)}
+
+/* Dashboard: action first, detail second */
+.lexilo-workspace .home-primary-actions{display:flex;flex-wrap:wrap;gap:8px}
+.lexilo-workspace .home-add-video{min-height:42px;border:1px solid var(--ui-line);border-radius:11px;background:var(--ui-card);color:var(--ui-text-soft);box-shadow:none}
+.lexilo-workspace .home-add-video:hover{border-color:var(--ui-accent);color:var(--ui-accent-strong)}
+.lexilo-workspace .add-menu>button{min-height:42px;border:1px solid var(--ui-accent);border-radius:11px;background:var(--ui-accent);color:#fff;box-shadow:0 8px 24px color-mix(in srgb,var(--ui-accent) 22%,transparent)}
+.lexilo-workspace .add-menu>button:hover{border-color:var(--ui-accent-strong);background:var(--ui-accent-strong);color:#fff}
+.lexilo-workspace .home-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 18px}
+.lexilo-workspace .home-stat{min-height:86px;border:1px solid var(--ui-line);border-radius:15px;background:var(--ui-card);padding:16px;box-shadow:none}
+.lexilo-workspace .home-stat:hover{border-color:var(--ui-line-strong);transform:translateY(-1px);box-shadow:var(--ui-shadow-soft)}
+.lexilo-workspace .home-stat-icon{border-radius:11px;background:var(--ui-accent-soft);color:var(--ui-accent-strong)}
+.lexilo-workspace .home-stat b{font-size:20px;color:var(--ui-text)}
+.lexilo-workspace .home-stat small{color:var(--ui-muted)}
+.lexilo-workspace .goal-row{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:12px;margin-bottom:18px}
+.lexilo-workspace .goal-card{min-height:72px;border:1px solid var(--ui-line);border-radius:15px;background:var(--ui-card);padding:15px 17px}
+.lexilo-workspace .goal-card.exam{background:linear-gradient(110deg,color-mix(in srgb,var(--ui-accent-soft) 66%,var(--ui-card)),var(--ui-card))}
+.lexilo-workspace .goal-icon{border-radius:11px;background:var(--ui-card-soft)}
+.lexilo-workspace .home-row{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.75fr);gap:14px}
+.lexilo-workspace .home-chart{min-height:320px}
+.lexilo-workspace .home-chart-tabs,.lexilo-workspace .ranking-period-tabs,.lexilo-workspace .ranking-metric-tabs{border-radius:10px;background:var(--ui-card-soft);padding:3px}
+.lexilo-workspace .home-chart-tabs button,.lexilo-workspace .ranking-period-tabs button,.lexilo-workspace .ranking-metric-tabs button{border-radius:8px;color:var(--ui-muted)}
+.lexilo-workspace .home-chart-tabs button.active,.lexilo-workspace .ranking-period-tabs button.active,.lexilo-workspace .ranking-metric-tabs button.active{background:var(--ui-card-raised);color:var(--ui-text);box-shadow:0 2px 8px #0002}
+.lexilo-workspace .home-bars i{background:linear-gradient(180deg,var(--ui-accent-strong),var(--ui-accent));border-radius:7px 7px 3px 3px}
+.lexilo-workspace .home-week-day span{border-color:var(--ui-line);background:var(--ui-card-soft)}
+.lexilo-workspace .home-week-day.done span{border-color:color-mix(in srgb,var(--ui-success) 48%,var(--ui-line));background:color-mix(in srgb,var(--ui-success) 15%,var(--ui-card));color:var(--ui-success)}
+.lexilo-workspace .home-ranking-row{border-color:var(--ui-line)}
+.lexilo-workspace .home-ranking-row.is-me{background:var(--ui-accent-soft);color:var(--ui-accent-strong)}
+.lexilo-workspace .home-continue{margin-top:28px}
+.lexilo-workspace .home-section-head{margin-bottom:14px}
+.lexilo-workspace .home-lesson-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.lexilo-workspace .home-lesson-card{overflow:hidden;border:1px solid var(--ui-line);border-radius:15px;background:var(--ui-card);padding:0 0 14px;text-align:left}
+.lexilo-workspace .home-lesson-card:hover{border-color:var(--ui-accent);transform:translateY(-2px);box-shadow:var(--ui-shadow-soft)}
+.lexilo-workspace .home-lesson-card>b,.lexilo-workspace .home-lesson-card>small{margin-inline:14px}
+.lexilo-workspace .resume-bar,.lexilo-workspace .import-banner{left:auto;right:auto;bottom:auto;width:calc(min(100%,var(--ui-content)) - 2 * var(--ui-gutter));max-width:none;margin-inline:auto;border:1px solid var(--ui-line-strong);border-radius:14px;background:color-mix(in srgb,var(--ui-card) 92%,transparent);box-shadow:var(--ui-shadow);backdrop-filter:blur(16px)}
+
+/* Vocabulary library */
+.lexilo-workspace .words-page{container-type:inline-size}
+.lexilo-workspace .wordlists-bar{border:1px solid var(--ui-line);border-radius:15px;background:var(--ui-card);padding:12px}
+.lexilo-workspace .wordlists-bar button{min-height:39px;border-radius:10px}
+.lexilo-workspace .folder-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.lexilo-workspace .folder-card{min-height:126px;border:1px solid var(--ui-line);border-radius:15px;background:var(--ui-card);padding:16px;box-shadow:none}
+.lexilo-workspace .folder-card:hover{border-color:var(--ui-accent);background:color-mix(in srgb,var(--ui-accent-soft) 28%,var(--ui-card));transform:translateY(-2px);box-shadow:var(--ui-shadow-soft)}
+.lexilo-workspace .folder-card-icon{border-radius:12px;background:var(--ui-accent-soft);color:var(--ui-accent-strong)}
+.lexilo-workspace .word-tools{position:sticky;top:calc(var(--ui-topbar-height) + 10px);z-index:8;display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 12px;padding:10px;border:1px solid var(--ui-line);border-radius:14px;background:color-mix(in srgb,var(--ui-bg) 88%,transparent);backdrop-filter:blur(16px)}
+.lexilo-workspace .word-tools label{min-width:260px;min-height:42px;border-color:var(--ui-line);border-radius:10px;background:var(--ui-card);padding:9px 12px}
+.lexilo-workspace .word-tools input{color:var(--ui-text)}
+.lexilo-workspace .word-tools select,.lexilo-workspace .word-tools>button{min-height:42px;border:1px solid var(--ui-line);border-radius:10px;background:var(--ui-card);color:var(--ui-text-soft);padding:0 12px}
+.lexilo-workspace .word-tools>button:hover,.lexilo-workspace .word-tools select:hover{border-color:var(--ui-line-strong);color:var(--ui-text)}
+.lexilo-workspace .word-tools .backfill-button{border-color:color-mix(in srgb,var(--ui-accent) 35%,var(--ui-line));background:var(--ui-accent-soft);color:var(--ui-accent-strong)}
+.lexilo-workspace .word-table{border:1px solid var(--ui-line);border-radius:15px;background:var(--ui-card);overflow:hidden}
+.lexilo-workspace .word-tr{min-height:68px;border-color:var(--ui-line);padding:13px 16px}
+.lexilo-workspace .word-th{min-height:44px;background:var(--ui-card-soft);color:var(--ui-muted)}
+.lexilo-workspace .word-tr:not(.word-th):hover{background:color-mix(in srgb,var(--ui-accent-soft) 24%,var(--ui-card))}
+.lexilo-workspace .word-main b{font-size:13px;color:var(--ui-text)}
+.lexilo-workspace .word-main small{color:var(--ui-muted);line-height:1.45}
+.lexilo-workspace .word-cefr{border-radius:6px;background:var(--ui-accent-soft);color:var(--ui-accent-strong)}
+.lexilo-workspace .pagination{border-color:var(--ui-line)}
+.lexilo-workspace .pagination button{border-radius:9px;background:var(--ui-card)}
+
+/* Dictionary */
+.lexilo-workspace .dictionary-page{max-width:1040px}
+.lexilo-workspace .dictionary-search{position:sticky;top:calc(var(--ui-topbar-height) + 12px);z-index:7;min-height:58px;border:1px solid var(--ui-line-strong);border-radius:15px;background:color-mix(in srgb,var(--ui-card) 94%,transparent);box-shadow:var(--ui-shadow-soft);backdrop-filter:blur(16px);padding:8px 9px 8px 17px}
+.lexilo-workspace .dictionary-search:focus-within{border-color:var(--ui-accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--ui-accent) 12%,transparent),var(--ui-shadow-soft)}
+.lexilo-workspace .dictionary-search input{color:var(--ui-text);font-size:14px}
+.lexilo-workspace .dictionary-search button{min-width:94px;min-height:42px;border-radius:10px;background:var(--ui-accent);color:#fff}
+.lexilo-workspace .dictionary-results{display:grid;gap:14px;margin-top:18px}
+.lexilo-workspace .dictionary-word-card,.lexilo-workspace .dictionary-detail-card{border-color:var(--ui-line);border-radius:18px;background:var(--ui-card)}
+.lexilo-workspace .dictionary-title-line h2{font-size:clamp(28px,4vw,42px);letter-spacing:-1.2px}
+.lexilo-workspace .dictionary-actions button{width:42px;height:42px;border-color:var(--ui-line);border-radius:11px;background:var(--ui-card-soft);color:var(--ui-text-soft)}
+.lexilo-workspace .dictionary-actions button:hover,.lexilo-workspace .dictionary-actions button.active{border-color:var(--ui-accent);background:var(--ui-accent-soft);color:var(--ui-accent-strong)}
+.dictionary-list-overlay{background:#05050b8c;backdrop-filter:blur(3px)}
+.dictionary-list-popover{border:1px solid var(--ui-line-strong)!important;border-radius:16px!important;background:var(--ui-card)!important;box-shadow:var(--ui-shadow)!important}
+
+/* Practice hubs and learning sessions */
+.lexilo-workspace .practice-grid,.lexilo-workspace .quizlet-modes,.lexilo-workspace .vocab-mode-grid{gap:12px}
+.lexilo-workspace .practice-grid button,.lexilo-workspace .quizlet-modes button,.lexilo-workspace .vocab-mode-card{min-height:150px;border:1px solid var(--ui-line);border-radius:16px;background:var(--ui-card);box-shadow:none;padding:20px}
+.lexilo-workspace .practice-grid button:hover,.lexilo-workspace .quizlet-modes button:hover,.lexilo-workspace .vocab-mode-card:hover{border-color:var(--ui-accent);background:color-mix(in srgb,var(--ui-accent-soft) 30%,var(--ui-card));transform:translateY(-2px);box-shadow:var(--ui-shadow-soft)}
+.lexilo-workspace .practice-mode-bar{position:sticky;top:calc(var(--ui-topbar-height) + 10px);z-index:8;border:1px solid var(--ui-line);border-radius:14px;background:color-mix(in srgb,var(--ui-bg) 90%,transparent);backdrop-filter:blur(16px);padding:7px}
+.lexilo-workspace .practice-mode-bar button{min-height:40px;border-radius:9px}
+.lexilo-workspace .practice-session,.lexilo-workspace .vocab-drill,.lexilo-workspace .writing-task,.lexilo-workspace .paragraph-session{max-width:1040px}
+.lexilo-workspace .practice-card,.lexilo-workspace .dictation-card,.lexilo-workspace .translation-card,.lexilo-workspace .test-card{border:1px solid var(--ui-line);border-radius:20px;background:var(--ui-card);box-shadow:var(--ui-shadow-soft)}
+.lexilo-workspace .choice-grid button,.lexilo-workspace .test-options button{min-height:48px;border:1px solid var(--ui-line);border-radius:11px;background:var(--ui-card-soft);color:var(--ui-text-soft)}
+.lexilo-workspace .choice-grid button:hover,.lexilo-workspace .test-options button:hover{border-color:var(--ui-accent);color:var(--ui-text)}
+.lexilo-workspace .practice-empty-page{display:grid;place-items:center;min-height:calc(100dvh - var(--ui-topbar-height))}
+.lexilo-workspace .practice-empty-state{width:min(100%,650px);display:grid;justify-items:center;gap:12px;border:1px solid var(--ui-line);border-radius:24px;background:radial-gradient(circle at 50% 0,color-mix(in srgb,var(--ui-accent) 15%,transparent),transparent 42%),var(--ui-card);padding:48px clamp(22px,5vw,58px);text-align:center;box-shadow:var(--ui-shadow-soft)}
+.lexilo-workspace .practice-empty-icon{width:64px;height:64px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--ui-accent) 32%,var(--ui-line));border-radius:18px;background:var(--ui-accent-soft);color:var(--ui-accent-strong)}
+.lexilo-workspace .practice-empty-state h1{max-width:520px;margin:2px 0 0;font-size:clamp(25px,4vw,34px);line-height:1.18;letter-spacing:-1px}
+.lexilo-workspace .practice-empty-state p{max-width:520px;margin:0;color:var(--ui-muted);font-size:13px;line-height:1.7}
+.lexilo-workspace .practice-empty-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:9px;margin-top:7px}
+.lexilo-workspace .practice-empty-actions button{min-height:44px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--ui-line);border-radius:11px;background:var(--ui-card-soft);color:var(--ui-text-soft);padding:10px 16px;font-weight:800}
+.lexilo-workspace .practice-empty-actions .primary{border-color:var(--ui-accent);background:var(--ui-accent);color:#fff}
+.lexilo-workspace .practice-empty-state>small{color:var(--ui-muted);font-size:10px;line-height:1.55}
+
+/* Review: one calm focal surface */
+.lexilo-workspace .review,.review{background:radial-gradient(circle at 50% -10%,color-mix(in srgb,var(--ui-accent) 12%,transparent),transparent 35%),var(--ui-bg)}
+.review header{position:relative;z-index:2}
+.review header>button{border:1px solid var(--ui-line);background:var(--ui-card);color:var(--ui-text-soft);box-shadow:var(--ui-shadow-soft)}
+.review .progress{height:5px;background:var(--ui-line)}
+.review .progress i{background:linear-gradient(90deg,var(--ui-accent),var(--ui-accent-strong))}
+.review-mode-picker{border:1px solid var(--ui-line);border-radius:16px;background:var(--ui-card);box-shadow:none}
+.review-modes button{border:1px solid transparent;border-radius:11px;background:transparent;color:var(--ui-text-soft)}
+.review-modes button:hover{border-color:var(--ui-line);background:var(--ui-card-soft)}
+.review-modes button.active{border-color:color-mix(in srgb,var(--ui-accent) 34%,var(--ui-line));background:var(--ui-accent-soft);color:var(--ui-accent-strong)}
+.review-task-frame{border:0;border-radius:22px;background:transparent;box-shadow:none}
+.review-task-frame .flashcard,.review-flash-frame .quizlet-flashcard>span{border:1px solid var(--ui-line);border-radius:22px;background:var(--ui-card);box-shadow:var(--ui-shadow);color:var(--ui-text)}
+.review-task-actions{border:1px solid var(--ui-line);border-top:0;border-radius:0 0 18px 18px;background:var(--ui-card)}
+.review .ratings button{border:1px solid var(--ui-line);border-radius:12px;background:var(--ui-card-soft);color:var(--ui-text-soft)}
+.review .ratings button:hover,.review .ratings button.suggested{border-color:var(--ui-accent);background:var(--ui-accent-soft);color:var(--ui-text)}
+
+/* Video, speaking and writing */
+.lexilo-workspace .lesson-library-v2,.lexilo-workspace .video-lesson-v2{max-width:1440px}
+.lexilo-workspace .lesson-card,.lexilo-workspace .video-card,.lexilo-workspace .writing-card,.lexilo-workspace .speaking-card{border:1px solid var(--ui-line);border-radius:16px;background:var(--ui-card);box-shadow:none;overflow:hidden}
+.lexilo-workspace .lesson-card:hover,.lexilo-workspace .video-card:hover,.lexilo-workspace .writing-card:hover,.lexilo-workspace .speaking-card:hover{border-color:var(--ui-accent);transform:translateY(-2px);box-shadow:var(--ui-shadow-soft)}
+.lexilo-workspace .video-lesson-v2 .lesson-topbar,.lexilo-workspace .video-lesson-v2 .lesson-mode-tabs{border-color:var(--ui-line);background:var(--ui-card)}
+.lexilo-workspace .video-lesson-v2 .lesson-work,.lexilo-workspace .video-lesson-v2 .lesson-sidebar{border-color:var(--ui-line);background:var(--ui-card)}
+.lexilo-workspace .video-lesson-v2 .yt-player{border-radius:16px;overflow:hidden;background:#050508}
+.lexilo-workspace .lesson-lookup-popover{border:1px solid var(--ui-line-strong);border-radius:16px;background:var(--ui-card);box-shadow:var(--ui-shadow)}
+.lexilo-workspace textarea,.lexilo-workspace input,.lexilo-workspace select{color:var(--ui-text)}
+
+/* Dialogs and overlays */
+.modal-backdrop{background:#05050b9c;backdrop-filter:blur(7px);padding:20px}
+.modal,.confirm-modal,.word-detail{border:1px solid var(--ui-line-strong);border-radius:20px;background:var(--ui-card);color:var(--ui-text);box-shadow:0 35px 100px #0009}
+.modal-head{padding-bottom:15px;border-bottom:1px solid var(--ui-line)}
+.modal h2{margin-bottom:0;color:var(--ui-text)}
+.modal-head button{border:1px solid var(--ui-line);background:var(--ui-card-soft);color:var(--ui-muted)}
+.modal label{color:var(--ui-text-soft)}
+.modal input,.modal textarea,.modal select{min-height:44px;border:1px solid var(--ui-line);border-radius:10px;background:var(--ui-card-soft);color:var(--ui-text)}
+.modal input:focus,.modal textarea:focus,.modal select:focus{border-color:var(--ui-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--ui-accent) 15%,transparent)}
+.modal-actions{border-color:var(--ui-line)}
+.modal-actions>button:first-child{border-color:var(--ui-line);background:var(--ui-card-soft);color:var(--ui-text-soft)}
+.toast,.backfill-status{border:1px solid var(--ui-line-strong);border-radius:12px;background:var(--ui-card);box-shadow:var(--ui-shadow)}
+
+/* Biểu mẫu dài là một trang riêng, chỉ có một vùng cuộn. */
+.full-screen-form{inset:0 0 0 var(--ui-sidebar-width);z-index:60;padding:30px 32px 64px;background:var(--ui-bg);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+.full-screen-form>.form-screen{width:min(100%,880px);max-width:880px;max-height:none;margin:0 auto;padding:26px 28px 24px;border:1px solid var(--ui-line);border-radius:20px;background:var(--ui-card);overflow:visible;box-shadow:none}
+.full-screen-form>.form-screen .modal-actions{background:color-mix(in srgb,var(--ui-card) 96%,transparent);backdrop-filter:blur(12px)}
+
+/* Tablet */
+@media(max-width:1180px) and (min-width:901px){
+  :root{--ui-sidebar-width:228px}
+  .lexilo-workspace .sidebar{padding-inline:10px}
+  .lexilo-workspace .nav-item{font-size:11px;padding-inline:10px}
+  .lexilo-workspace{--ui-gutter:24px}.lexilo-workspace .page{padding-inline:24px}
+  .workspace-topbar{padding-inline:24px}
+  .lexilo-workspace .home-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lexilo-workspace .home-row{grid-template-columns:1fr}
+  .lexilo-workspace .home-side-stack{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .lexilo-workspace .folder-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+/* Mobile/tablet shell */
+@media(max-width:900px){
+  :root{--ui-topbar-height:0px}
+  body{overflow-x:hidden}
+  .lexilo-workspace .sidebar,.workspace-topbar{display:none}
+  .lexilo-workspace .content{margin-left:0;padding-top:60px}
+  .lexilo-workspace .mobile-head{position:fixed;inset:0 0 auto;z-index:30;height:60px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid var(--ui-line);background:color-mix(in srgb,var(--ui-sidebar) 92%,transparent);backdrop-filter:blur(18px)}
+  .lexilo-workspace .mobile-head .brand{height:auto;padding:0}
+  .lexilo-workspace .mobile-head .brand-mark{width:34px;height:34px;border-radius:10px;font-size:20px}
+  .lexilo-workspace .mobile-head-actions{display:flex;gap:7px}
+  .lexilo-workspace .mobile-head-actions button{width:38px;height:38px;display:grid;place-items:center;border:1px solid var(--ui-line);border-radius:10px;background:var(--ui-card);color:var(--ui-text-soft)}
+  .lexilo-workspace .mobile-head-actions button:last-child{border-color:var(--ui-accent);background:var(--ui-accent);color:#fff}
+  .lexilo-workspace .mobile-nav{position:fixed;inset:auto 0 0;z-index:40;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:3px;min-height:64px;padding:6px 5px max(6px,env(safe-area-inset-bottom));border-top:1px solid var(--ui-line);background:color-mix(in srgb,var(--ui-sidebar) 94%,transparent);box-shadow:0 -15px 40px #0005;backdrop-filter:blur(18px)}
+  .lexilo-workspace .mobile-nav button{position:relative;min-width:0;min-height:50px;display:grid;place-items:center;align-content:center;gap:3px;border:0;border-radius:11px;background:transparent;color:var(--ui-muted);font-size:8px;font-weight:800;line-height:1.1}
+  .lexilo-workspace .mobile-nav button svg{width:19px;height:19px}
+  .lexilo-workspace .mobile-nav button.active{background:var(--ui-accent-soft);color:var(--ui-accent-strong)}
+  .lexilo-workspace .mobile-nav button.active::before{content:"";position:absolute;top:3px;width:20px;height:2px;border-radius:2px;background:var(--ui-accent)}
+  .lexilo-workspace{--ui-gutter:clamp(14px,3.4vw,26px)}.lexilo-workspace .page{width:100%;padding:24px clamp(14px,3.4vw,26px) calc(86px + env(safe-area-inset-bottom))}
+  .lexilo-workspace .home-stats,.lexilo-workspace .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lexilo-workspace .home-row{grid-template-columns:1fr}
+  .lexilo-workspace .home-side-stack{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .lexilo-workspace .home-lesson-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lexilo-workspace .folder-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .lexilo-workspace .word-tools{top:70px}
+  .lexilo-workspace .dictionary-search{top:70px}
+  .lexilo-workspace .practice-mode-bar{top:70px}
+  .lexilo-workspace .resume-bar,.lexilo-workspace .import-banner{left:auto;right:auto;bottom:auto}
+  .full-screen-form{inset:0;z-index:80;padding:0;overflow-x:hidden;overflow-y:auto}
+  .full-screen-form>.form-screen{width:100%;max-width:none;min-height:100dvh;max-height:none;margin:0;padding:18px 16px 92px;border:0;border-radius:0;overflow:visible}
+  .full-screen-form>.form-screen .modal-actions{position:fixed;inset:auto 0 0;margin:0;padding:11px 16px calc(11px + env(safe-area-inset-bottom));border-radius:0;box-shadow:0 -14px 38px #0005}
+}
+
+@media(max-width:700px){
+  .lexilo-workspace .greeting,.lexilo-workspace .section-head,.lexilo-workspace .home-section-head{display:flex;align-items:flex-start;flex-direction:column;gap:14px}
+  .lexilo-workspace .home-primary-actions,.lexilo-workspace .section-actions{width:100%}
+  .lexilo-workspace .home-primary-actions>*,.lexilo-workspace .section-actions>*{flex:1;justify-content:center}
+  .lexilo-workspace .section-head .primary{font-size:12px;padding:10px 14px}
+  .lexilo-workspace .section-head .primary::after{content:none}
+  .lexilo-workspace .goal-row,.lexilo-workspace .home-side-stack{grid-template-columns:1fr}
+  .lexilo-workspace .home-chart-head{align-items:flex-start;flex-direction:column;gap:12px}
+  .lexilo-workspace .home-chart-tabs{width:100%;display:flex;overflow-x:auto}
+  .lexilo-workspace .home-chart-tabs button{flex:none}
+  .lexilo-workspace .folder-grid{grid-template-columns:1fr}
+  .lexilo-workspace .folder-card{min-height:108px}
+  .lexilo-workspace .word-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:8px}
+  .lexilo-workspace .word-tools label{grid-column:1/-1;min-width:0}
+  .lexilo-workspace .word-tools select,.lexilo-workspace .word-tools>button{display:flex;width:100%;align-items:center;justify-content:center}
+  .lexilo-workspace .dictionary-word-card{display:grid;grid-template-columns:1fr auto;gap:14px}
+  .lexilo-workspace .dictionary-pronunciations{grid-column:1/-1}
+  .review{min-height:100dvh;padding:12px 10px 22px}
+  .review-mode-picker{width:100%;margin:11px 0 14px;padding:9px}
+  .review-mode-heading{padding-bottom:8px}
+  .review-modes{display:grid;grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(170px,72vw);gap:7px;overflow-x:auto;scroll-snap-type:x proximity;padding-bottom:4px}
+  .review-modes button{scroll-snap-align:start;min-height:58px}
+  .review-task-frame,.review-flash-frame{width:100%}
+  .review-task-frame .flashcard{min-height:min(390px,50dvh);padding:28px 17px}
+  .review-flash-frame .quizlet-flashcard{height:min(390px,50dvh);min-height:310px}
+}
+
+@media(max-width:560px){
+  .lexilo-workspace{--ui-gutter:13px}.lexilo-workspace .page{padding-inline:13px}
+  .lexilo-workspace .greeting h1,.lexilo-workspace .section-head h1,.lexilo-workspace .page>h1{font-size:27px}
+  .lexilo-workspace .home-stats{grid-template-columns:1fr 1fr;gap:8px}
+  .lexilo-workspace .home-stat{min-height:78px;padding:12px;gap:10px}
+  .lexilo-workspace .home-stat-icon{width:36px;height:36px}
+  .lexilo-workspace .home-stat b{font-size:17px}
+  .lexilo-workspace .home-lesson-grid{grid-template-columns:1fr}
+  .lexilo-workspace .home-chart{min-height:280px}
+  .lexilo-workspace .word-tools{grid-template-columns:1fr;position:relative;top:auto}
+  .lexilo-workspace .word-tools label{grid-column:1}
+  .lexilo-workspace .word-table{display:grid;gap:9px;border:0;background:transparent;overflow:visible}
+  .lexilo-workspace .word-table .word-th{display:none}
+  .lexilo-workspace .word-table .word-tr:not(.word-th){position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px;min-height:0;padding:14px;border:1px solid var(--ui-line);border-radius:14px;background:var(--ui-card)}
+  .lexilo-workspace .word-table .word-tr:not(.word-th)>.word-main{grid-column:1/-1;padding-right:34px}
+  .lexilo-workspace .word-table .word-tr:not(.word-th)>span:nth-child(2){display:flex;grid-column:1;flex-wrap:wrap}
+  .lexilo-workspace .word-table .word-tr:not(.word-th)>span:nth-child(3){display:grid;grid-column:1}
+  .lexilo-workspace .word-table .word-tr:not(.word-th)>span:nth-child(4){display:block;grid-column:2;grid-row:2/4;align-self:end}
+  .lexilo-workspace .word-table .word-tr:not(.word-th)>button{position:absolute;right:9px;top:9px;width:32px;height:32px}
+  .lexilo-workspace .dictionary-search{position:relative;top:auto;min-height:54px;padding-left:13px}
+  .lexilo-workspace .dictionary-search button{min-width:74px;padding-inline:10px}
+  .lexilo-workspace .dictionary-word-card{grid-template-columns:1fr}
+  .lexilo-workspace .dictionary-actions{grid-row:auto;justify-content:flex-start}
+  .lexilo-workspace .dictionary-pronunciations{grid-column:1}
+  .modal-backdrop{align-items:end;padding:0}
+  .modal:not(.auth-modal):not(.form-screen),.confirm-modal,.word-detail{width:100%;max-width:none;max-height:92dvh;margin:0;border-radius:22px 22px 0 0;padding:19px 16px calc(18px + env(safe-area-inset-bottom));overflow-y:auto}
+  .modal-actions{position:sticky;bottom:calc(-18px - env(safe-area-inset-bottom));margin-inline:-16px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:color-mix(in srgb,var(--ui-card) 95%,transparent);backdrop-filter:blur(12px)}
+  .modal-actions>button{min-height:44px;flex:1}
+  .review .ratings{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+  .review .ratings button{min-height:60px}
+  .lexilo-workspace .practice-empty-page{min-height:calc(100dvh - 60px);padding-top:16px}
+  .lexilo-workspace .practice-empty-state{padding:34px 19px;border-radius:19px}
+  .lexilo-workspace .practice-empty-actions{width:100%;flex-direction:column}
+  .lexilo-workspace .practice-empty-actions button{width:100%}
+}
+
+/* Thêm từ: gợi ý là lối tắt, không biến thành một bước bắt buộc. */
+.lexilo-workspace .term-suggest{max-height:none;overflow:hidden}
+.lexilo-workspace .term-suggest-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;border-bottom:1px solid var(--ui-line);background:var(--ui-card-soft)}
+.lexilo-workspace .term-suggest-head b{font-size:10px;color:var(--ui-text-soft)}
+.lexilo-workspace .term-suggest-head small{border-radius:999px;background:var(--ui-accent-soft);color:var(--ui-accent-strong);padding:3px 7px;font-size:8px;font-weight:800}
+.lexilo-workspace .term-suggest>div[role="listbox"]{max-height:176px;overflow-y:auto;overscroll-behavior:contain}
+.lexilo-workspace .term-suggest>.term-suggest-skip{justify-content:center;border-top:1px solid var(--ui-line);background:color-mix(in srgb,var(--ui-accent-soft) 50%,var(--ui-card));color:var(--ui-accent-strong);font-size:10px;font-weight:800}
+.lexilo-workspace .term-suggest>.term-suggest-skip:hover{background:var(--ui-accent-soft)}
+.lexilo-workspace .sense-picker{padding:12px;border:1px solid var(--ui-line);border-radius:13px;background:color-mix(in srgb,var(--ui-card-soft) 56%,var(--ui-card))}
+.lexilo-workspace .sense-picker>header{display:grid;gap:3px;margin-bottom:9px}
+.lexilo-workspace .sense-picker>header b{font-size:11px;color:var(--ui-text-soft)}
+.lexilo-workspace .sense-picker>header span{color:var(--ui-muted);font-size:9px;line-height:1.5}
+.lexilo-workspace .collocation-fields label>small{color:var(--ui-muted);font-size:9px;font-weight:600}
+
+@media(max-width:380px){
+  .lexilo-workspace .home-stats,.lexilo-workspace .stats-grid{grid-template-columns:1fr}
+  .lexilo-workspace .greeting h1,.lexilo-workspace .section-head h1,.lexilo-workspace .page>h1{font-size:24px}
+  .lexilo-workspace .mobile-nav button{font-size:7px}
+  .lexilo-workspace .mobile-nav button svg{width:18px;height:18px}
+  .lexilo-workspace .mobile-head .brand-copy>small{display:none}
+  .review-modes{grid-auto-columns:82vw}
+}
+
+@media(max-height:720px) and (min-width:901px){
+  .lexilo-workspace .sidebar{padding-block:12px}
+  .lexilo-workspace .sidebar nav{margin-top:15px}
+  .lexilo-workspace .nav-group{margin-top:11px}
+  .lexilo-workspace .nav-item{min-height:38px;padding-block:7px}
+  .lexilo-workspace .profile{min-height:52px}
+}
+
+@media(hover:none) and (pointer:coarse){
+  .lexilo-workspace button,.lexilo-workspace select,.lexilo-workspace input{min-height:44px}
+  .lexilo-workspace .folder-card-actions{opacity:1}
+  .lexilo-workspace .home-lesson-card:hover,.lexilo-workspace .folder-card:hover{transform:none}
+}
+
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}
+}
+
+/* --------------------------------------------------------------------------
+   Visual richness pass
+   Mọi bề mặt nhận màu từ --hue của theme. Độ sáng và độ bão hòa tạo phân cấp,
+   không tự đổi màu theo màn hình; muốn đổi tông chỉ cần đổi theme.
+   -------------------------------------------------------------------------- */
+.lexilo-workspace{
+  --section-accent:var(--ui-accent);
+  --section-strong:var(--ui-accent-strong);
+  --section-soft:var(--ui-accent-soft);
+  --section-glow:hsl(var(--hue) 76% 60% / .11);
+  --tone-1:hsl(var(--hue) 86% 73%);
+  --tone-2:hsl(var(--hue) 72% 64%);
+  --tone-3:hsl(var(--hue) 60% 55%);
+  --tone-4:hsl(var(--hue) 48% 46%);
+}
+
+.lexilo-workspace .content{
+  background:
+    radial-gradient(780px 420px at 86% 0,var(--section-glow),transparent 64%),
+    var(--ui-bg);
+}
+.lexilo-workspace .workspace-location span,
+.lexilo-workspace .eyebrow{color:var(--section-strong)}
+.lexilo-workspace .workspace-location::before{
+  content:"";position:absolute;width:3px;height:34px;margin-left:-14px;border-radius:9px;
+  background:linear-gradient(180deg,var(--section-accent),transparent);
+}
+.lexilo-workspace .nav-item.active,
+.lexilo-workspace .mobile-nav button.active{
+  border-color:color-mix(in srgb,var(--section-accent) 28%,var(--ui-line));
+  background:var(--section-soft);color:var(--section-strong);
+  box-shadow:inset 3px 0 0 var(--section-accent);
+}
+.lexilo-workspace .nav-item.active svg{color:var(--section-strong)}
+.lexilo-workspace .mobile-nav button.active::before{background:var(--section-accent)}
+.lexilo-workspace .mobile-nav button.active{box-shadow:none}
+
+/* Dashboard: các chỉ số có màu theo ý nghĩa, không theo vị trí trang trí ngẫu nhiên. */
+.lexilo-workspace .home-stat{position:relative;isolation:isolate;overflow:hidden}
+.lexilo-workspace .home-stat::after{
+  content:"";position:absolute;right:-24px;bottom:-36px;z-index:-1;width:110px;height:110px;
+  border-radius:999px;background:var(--stat-glow);filter:blur(5px);opacity:.72;
+}
+.lexilo-workspace .home-stat:nth-child(1){--stat:var(--tone-1);--stat-soft:hsl(var(--hue) 42% 23%);--stat-glow:hsl(var(--hue) 80% 64% / .14)}
+.lexilo-workspace .home-stat:nth-child(2){--stat:var(--tone-2);--stat-soft:hsl(var(--hue) 38% 21%);--stat-glow:hsl(var(--hue) 72% 58% / .13)}
+.lexilo-workspace .home-stat:nth-child(3){--stat:var(--tone-3);--stat-soft:hsl(var(--hue) 34% 19%);--stat-glow:hsl(var(--hue) 64% 52% / .12)}
+.lexilo-workspace .home-stat:nth-child(4){--stat:var(--tone-4);--stat-soft:hsl(var(--hue) 30% 17%);--stat-glow:hsl(var(--hue) 58% 46% / .11)}
+.lexilo-workspace .home-stat-icon{background:var(--stat-soft);color:var(--stat);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--stat) 22%,transparent)}
+:root[data-theme="light"] .lexilo-workspace .home-stat:nth-child(1){--stat-soft:hsl(var(--hue) 72% 94%)}
+:root[data-theme="light"] .lexilo-workspace .home-stat:nth-child(2){--stat-soft:hsl(var(--hue) 62% 95%)}
+:root[data-theme="light"] .lexilo-workspace .home-stat:nth-child(3){--stat-soft:hsl(var(--hue) 52% 96%)}
+:root[data-theme="light"] .lexilo-workspace .home-stat:nth-child(4){--stat-soft:hsl(var(--hue) 42% 97%)}
+.lexilo-workspace .goal-card{position:relative;overflow:hidden}
+.lexilo-workspace .goal-card.exam{border-color:color-mix(in srgb,var(--tone-1) 25%,var(--ui-line));background:linear-gradient(120deg,color-mix(in srgb,var(--tone-1) 13%,var(--ui-card)),var(--ui-card) 72%)}
+.lexilo-workspace .goal-card:not(.exam){border-color:color-mix(in srgb,var(--tone-3) 22%,var(--ui-line));background:linear-gradient(120deg,color-mix(in srgb,var(--tone-3) 9%,var(--ui-card)),var(--ui-card) 70%)}
+.lexilo-workspace .goal-card.exam .goal-icon{background:color-mix(in srgb,var(--tone-1) 15%,transparent);color:var(--tone-1)}
+.lexilo-workspace .goal-card:not(.exam) .goal-icon{background:color-mix(in srgb,var(--tone-3) 14%,transparent);color:var(--tone-3)}
+.lexilo-workspace .home-chart{background:linear-gradient(145deg,color-mix(in srgb,var(--tone-1) 7%,var(--ui-card)),var(--ui-card) 54%)}
+.lexilo-workspace .home-week{background:linear-gradient(145deg,color-mix(in srgb,var(--tone-2) 6%,var(--ui-card)),var(--ui-card) 56%)}
+.lexilo-workspace .home-ranking{background:linear-gradient(145deg,color-mix(in srgb,var(--tone-3) 6%,var(--ui-card)),var(--ui-card) 56%)}
+.lexilo-workspace .home-lesson-card:nth-child(3n+1){--lesson-tone:var(--tone-1)}
+.lexilo-workspace .home-lesson-card:nth-child(3n+2){--lesson-tone:var(--tone-2)}
+.lexilo-workspace .home-lesson-card:nth-child(3n){--lesson-tone:var(--tone-3)}
+.lexilo-workspace .home-lesson-card{box-shadow:inset 0 3px 0 color-mix(in srgb,var(--lesson-tone) 72%,transparent)}
+
+/* Kho từ: cấu trúc phân cấp rõ, trạng thái đọc được bằng cả chữ lẫn màu. */
+.lexilo-workspace .primary,
+.lexilo-workspace .dictionary-search button{
+  background:var(--section-accent);box-shadow:0 9px 25px color-mix(in srgb,var(--section-accent) 20%,transparent);
+}
+.lexilo-workspace .folder-card:nth-child(4n+1){--folder-tone:var(--tone-1)}
+.lexilo-workspace .folder-card:nth-child(4n+2){--folder-tone:var(--tone-2)}
+.lexilo-workspace .folder-card:nth-child(4n+3){--folder-tone:var(--tone-3)}
+.lexilo-workspace .folder-card:nth-child(4n){--folder-tone:var(--tone-4)}
+.lexilo-workspace .folder-card{
+  position:relative;overflow:hidden;
+  background:linear-gradient(145deg,color-mix(in srgb,var(--folder-tone) 7%,var(--ui-card)),var(--ui-card) 58%);
+}
+.lexilo-workspace .folder-card::after{
+  content:"";position:absolute;inset:auto -22px -35px auto;width:88px;height:88px;border-radius:50%;
+  background:color-mix(in srgb,var(--folder-tone) 10%,transparent);pointer-events:none;
+}
+.lexilo-workspace .folder-card-icon{background:color-mix(in srgb,var(--folder-tone) 16%,var(--ui-card));color:var(--folder-tone)}
+.lexilo-workspace .word-tr:not(.word-th){box-shadow:inset 3px 0 0 transparent}
+.lexilo-workspace .word-tr:not(.word-th):hover{box-shadow:inset 3px 0 0 var(--section-accent)}
+.lexilo-workspace .state-due{color:var(--ui-warning);background:color-mix(in srgb,var(--ui-warning) 12%,transparent)}
+.lexilo-workspace .state-mastered{color:var(--ui-success);background:color-mix(in srgb,var(--ui-success) 12%,transparent)}
+
+/* Tiến độ: bốn thẻ số liệu dùng cùng màu tone đã truyền từ component. */
+.lexilo-workspace .progress-library-stats .stat{position:relative;overflow:hidden;background:linear-gradient(145deg,color-mix(in srgb,var(--stat-tone,var(--section-accent)) 7%,var(--ui-card)),var(--ui-card) 66%)}
+.lexilo-workspace .progress-library-stats .stat:nth-child(1){--stat-tone:var(--tone-1)}
+.lexilo-workspace .progress-library-stats .stat:nth-child(2){--stat-tone:var(--tone-2)}
+.lexilo-workspace .progress-library-stats .stat:nth-child(3){--stat-tone:var(--tone-3)}
+.lexilo-workspace .progress-library-stats .stat:nth-child(4){--stat-tone:var(--tone-4)}
+.lexilo-workspace .progress-library-stats .stat::after{content:"";position:absolute;right:-18px;bottom:-28px;width:78px;height:78px;border-radius:50%;background:color-mix(in srgb,var(--stat-tone) 10%,transparent)}
+.lexilo-workspace .learning-plan{border-color:color-mix(in srgb,var(--tone-1) 18%,var(--ui-line));background:linear-gradient(130deg,color-mix(in srgb,var(--tone-1) 8%,var(--ui-card)),var(--ui-card) 62%)}
+.lexilo-workspace .plan-steps button:nth-child(1){--step-tone:var(--tone-1)}
+.lexilo-workspace .plan-steps button:nth-child(2){--step-tone:var(--tone-2)}
+.lexilo-workspace .plan-steps button:nth-child(3){--step-tone:var(--tone-3)}
+.lexilo-workspace .plan-steps button{border-color:color-mix(in srgb,var(--step-tone) 19%,var(--ui-line));box-shadow:inset 3px 0 0 var(--step-tone)}
+.lexilo-workspace .day-cards button:nth-child(7n+1),.lexilo-workspace .period-stat:nth-child(4n+1){--day-tone:var(--tone-1)}
+.lexilo-workspace .day-cards button:nth-child(7n+2),.lexilo-workspace .period-stat:nth-child(4n+2){--day-tone:var(--tone-2)}
+.lexilo-workspace .day-cards button:nth-child(7n+3),.lexilo-workspace .period-stat:nth-child(4n+3){--day-tone:var(--tone-3)}
+.lexilo-workspace .day-cards button:nth-child(7n+4),.lexilo-workspace .period-stat:nth-child(4n){--day-tone:var(--tone-4)}
+.lexilo-workspace .day-cards button:nth-child(7n+5){--day-tone:var(--tone-1)}
+.lexilo-workspace .day-cards button:nth-child(7n+6){--day-tone:var(--tone-2)}
+.lexilo-workspace .day-cards button:nth-child(7n){--day-tone:var(--tone-3)}
+.lexilo-workspace .day-cards button,.lexilo-workspace .period-stat{background:linear-gradient(145deg,color-mix(in srgb,var(--day-tone) 7%,var(--ui-card)),var(--ui-card));border-color:color-mix(in srgb,var(--day-tone) 16%,var(--ui-line))}
+.lexilo-workspace .due-reminder{border-color:color-mix(in srgb,var(--ui-warning) 28%,var(--ui-line));background:linear-gradient(115deg,color-mix(in srgb,var(--ui-warning) 13%,var(--ui-card)),var(--ui-card))}
+
+/* Luyện tập và thẻ ghi nhớ: mỗi kỹ năng có tín hiệu riêng, trạng thái chọn rõ ràng. */
+.lexilo-workspace .practice-grid>*:nth-child(4n+1),.lexilo-workspace .quizlet-modes>*:nth-child(4n+1),.lexilo-workspace .vocab-mode-card:nth-child(4n+1){--mode-tone:var(--tone-1)}
+.lexilo-workspace .practice-grid>*:nth-child(4n+2),.lexilo-workspace .quizlet-modes>*:nth-child(4n+2),.lexilo-workspace .vocab-mode-card:nth-child(4n+2){--mode-tone:var(--tone-2)}
+.lexilo-workspace .practice-grid>*:nth-child(4n+3),.lexilo-workspace .quizlet-modes>*:nth-child(4n+3),.lexilo-workspace .vocab-mode-card:nth-child(4n+3){--mode-tone:var(--tone-3)}
+.lexilo-workspace .practice-grid>*:nth-child(4n),.lexilo-workspace .quizlet-modes>*:nth-child(4n),.lexilo-workspace .vocab-mode-card:nth-child(4n){--mode-tone:var(--tone-4)}
+.lexilo-workspace .practice-grid button,.lexilo-workspace .quizlet-modes button,.lexilo-workspace .vocab-mode-card{
+  position:relative;overflow:hidden;border-color:color-mix(in srgb,var(--mode-tone) 19%,var(--ui-line));
+  background:linear-gradient(145deg,color-mix(in srgb,var(--mode-tone) 8%,var(--ui-card)),var(--ui-card) 62%);
+  box-shadow:inset 0 3px 0 color-mix(in srgb,var(--mode-tone) 64%,transparent);
+}
+.lexilo-workspace .mode-options .mode-option:nth-child(4n+1){--mode-tone:var(--tone-1)}.lexilo-workspace .mode-options .mode-option:nth-child(4n+2){--mode-tone:var(--tone-2)}.lexilo-workspace .mode-options .mode-option:nth-child(4n+3){--mode-tone:var(--tone-3)}.lexilo-workspace .mode-options .mode-option:nth-child(4n){--mode-tone:var(--tone-4)}
+.lexilo-workspace .mode-option.active{border-color:var(--mode-tone,var(--section-accent));background:color-mix(in srgb,var(--mode-tone,var(--section-accent)) 14%,var(--ui-card));box-shadow:0 0 0 3px color-mix(in srgb,var(--mode-tone,var(--section-accent)) 10%,transparent)}
+.review-modes button:nth-child(4n+1){--review-tone:var(--tone-1)}.review-modes button:nth-child(4n+2){--review-tone:var(--tone-2)}.review-modes button:nth-child(4n+3){--review-tone:var(--tone-3)}.review-modes button:nth-child(4n){--review-tone:var(--tone-4)}
+.review-modes button{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--review-tone) 55%,transparent)}
+.review-modes button.active{border-color:color-mix(in srgb,var(--review-tone) 46%,var(--ui-line));background:color-mix(in srgb,var(--review-tone) 13%,var(--ui-card));color:color-mix(in srgb,var(--review-tone) 78%,white)}
+:root[data-theme="light"] .review-modes button.active{color:color-mix(in srgb,var(--review-tone) 72%,var(--ui-text))}
+.review .ratings button:nth-child(1){--rating-tone:#ef7184}.review .ratings button:nth-child(2){--rating-tone:#eeab55}.review .ratings button:nth-child(3){--rating-tone:#69aaf0}.review .ratings button:nth-child(4){--rating-tone:#52ca94}
+.review .ratings button{border-color:color-mix(in srgb,var(--rating-tone) 20%,var(--ui-line));background:color-mix(in srgb,var(--rating-tone) 6%,var(--ui-card-soft))}
+.review .ratings button:hover,.review .ratings button.suggested{border-color:var(--rating-tone);background:color-mix(in srgb,var(--rating-tone) 15%,var(--ui-card));color:var(--ui-text)}
+
+/* Từ điển, video, nói và viết có bề mặt nhận diện nhưng vẫn dùng chung hệ thẻ. */
+.lexilo-workspace .dictionary-word-card{position:relative;overflow:hidden;border-color:color-mix(in srgb,var(--tone-1) 23%,var(--ui-line));background:linear-gradient(130deg,color-mix(in srgb,var(--tone-1) 9%,var(--ui-card)),color-mix(in srgb,var(--tone-3) 5%,var(--ui-card)))}
+.lexilo-workspace .dictionary-word-card::after{content:"";position:absolute;right:-75px;top:-90px;width:210px;height:210px;border-radius:50%;background:hsl(var(--hue) 82% 65% / .05);pointer-events:none}
+.lexilo-workspace .dictionary-detail-card:nth-child(3n+1){border-left:3px solid var(--tone-1)}.lexilo-workspace .dictionary-detail-card:nth-child(3n+2){border-left:3px solid var(--tone-2)}.lexilo-workspace .dictionary-detail-card:nth-child(3n){border-left:3px solid var(--tone-3)}
+.lexilo-workspace .library-hero{position:relative;overflow:hidden;border-color:color-mix(in srgb,var(--tone-1) 18%,var(--ui-line));background:radial-gradient(circle at 92% 10%,hsl(var(--hue) 80% 64% / .08),transparent 38%),linear-gradient(135deg,color-mix(in srgb,var(--tone-2) 8%,var(--ui-card)),var(--ui-card))}
+.lexilo-workspace .catalogue-card:nth-child(4n+1),.lexilo-workspace .lesson-card:nth-child(4n+1),.lexilo-workspace .video-card:nth-child(4n+1){--media-tone:var(--tone-1)}
+.lexilo-workspace .catalogue-card:nth-child(4n+2),.lexilo-workspace .lesson-card:nth-child(4n+2),.lexilo-workspace .video-card:nth-child(4n+2){--media-tone:var(--tone-2)}
+.lexilo-workspace .catalogue-card:nth-child(4n+3),.lexilo-workspace .lesson-card:nth-child(4n+3),.lexilo-workspace .video-card:nth-child(4n+3){--media-tone:var(--tone-3)}
+.lexilo-workspace .catalogue-card:nth-child(4n),.lexilo-workspace .lesson-card:nth-child(4n),.lexilo-workspace .video-card:nth-child(4n){--media-tone:var(--tone-4)}
+.lexilo-workspace .catalogue-card,.lexilo-workspace .lesson-card,.lexilo-workspace .video-card{border-color:color-mix(in srgb,var(--media-tone) 17%,var(--ui-line));box-shadow:inset 0 3px 0 color-mix(in srgb,var(--media-tone) 60%,transparent)}
+.lexilo-workspace .writing-card:nth-child(3n+1),.lexilo-workspace .speaking-card:nth-child(3n+1){--skill-tone:var(--tone-1)}.lexilo-workspace .writing-card:nth-child(3n+2),.lexilo-workspace .speaking-card:nth-child(3n+2){--skill-tone:var(--tone-2)}.lexilo-workspace .writing-card:nth-child(3n),.lexilo-workspace .speaking-card:nth-child(3n){--skill-tone:var(--tone-3)}
+.lexilo-workspace .writing-card,.lexilo-workspace .speaking-card{border-color:color-mix(in srgb,var(--skill-tone) 18%,var(--ui-line));background:linear-gradient(145deg,color-mix(in srgb,var(--skill-tone) 7%,var(--ui-card)),var(--ui-card));box-shadow:inset 0 3px 0 color-mix(in srgb,var(--skill-tone) 58%,transparent)}
+
+/* Modal: tiêu đề và hành động chính dễ nhận diện hơn trong những luồng dài. */
+.modal-head{position:relative}
+.modal-head::after{content:"";position:absolute;left:0;bottom:-1px;width:64px;height:2px;border-radius:3px;background:linear-gradient(90deg,var(--section-accent,var(--ui-accent)),transparent)}
+.modal .primary,.confirm-modal .primary{background:var(--section-accent,var(--ui-accent));box-shadow:0 8px 24px color-mix(in srgb,var(--section-accent,var(--ui-accent)) 22%,transparent)}
+
+@media(max-width:900px){
+  .lexilo-workspace .mobile-head{box-shadow:inset 0 -2px 0 color-mix(in srgb,var(--section-accent) 52%,transparent)}
+  .lexilo-workspace .content{background:radial-gradient(520px 280px at 78% 0,var(--section-glow),transparent 70%),var(--ui-bg)}
+}
+
+@media(max-width:560px){
+  .lexilo-workspace .home-stat::after{width:72px;height:72px;right:-18px;bottom:-24px}
+  .lexilo-workspace .progress-library-stats .stat::after{width:58px;height:58px}
+  .lexilo-workspace .workspace-location::before{display:none}
+}
+
+/* Thư viện video dùng cùng token theme với toàn workspace. Trước đây khối này
+   giữ một bảng màu tối riêng nên khi chuyển sang giao diện sáng, nội dung vẫn
+   thành một mảng đen. Header + bộ lọc cũng bám dưới topbar cố định để không bị
+   cuốn đi hoặc chồng lên thanh thao tác khi người dùng cuộn nhiều kệ video. */
+.lexilo-workspace .lesson-library-v2{
+  padding-top:0;background:transparent;color:var(--ui-text);
+  animation:none;transform:none;
+}
+.lexilo-workspace .lesson-library-v2 .library-sticky-controls{
+  position:fixed;inset:var(--ui-topbar-height) 0 auto var(--ui-sidebar-width);z-index:20;
+  padding-inline:max(32px,calc((100vw - var(--ui-sidebar-width) - var(--ui-content))/2 + 32px));
+  background:color-mix(in srgb,var(--ui-bg) 94%,transparent);
+  box-shadow:0 14px 28px color-mix(in srgb,var(--ui-text) 8%,transparent);
+  backdrop-filter:blur(16px);
+}
+.lexilo-workspace .lesson-library-v2 .library-sticky-spacer{display:block;min-height:1px;pointer-events:none}
+.lexilo-workspace .lesson-library-v2 .library-hero{
+  position:static;overflow:visible;
+  border-color:var(--ui-line);
+  background:transparent;
+  box-shadow:0 1px 0 var(--ui-line);
+  backdrop-filter:none;
+}
+.lexilo-workspace .lesson-library-v2 .library-filter-panel{
+  position:static;
+  border-color:var(--ui-line);
+  background:transparent;
+  box-shadow:none;
+  backdrop-filter:none;
+}
+.lexilo-workspace .lesson-library-v2 .library-title-row h1,
+.lexilo-workspace .lesson-library-v2 .library-summary b,
+.lexilo-workspace .lesson-library-v2 .library-section-title h2,
+.lexilo-workspace .lesson-library-v2 .catalogue-shelf-head b{
+  color:var(--ui-text);
+}
+.lexilo-workspace .lesson-library-v2 .library-title-row p,
+.lexilo-workspace .lesson-library-v2 .library-summary,
+.lexilo-workspace .lesson-library-v2 .library-section-title span,
+.lexilo-workspace .lesson-library-v2 .catalogue-shelf-head small{
+  color:var(--ui-muted);
+}
+.lexilo-workspace .lesson-library-v2 .library-summary i,
+.lexilo-workspace .lesson-library-v2 .library-filters,
+.lexilo-workspace .lesson-library-v2 .library-channel-filter,
+.lexilo-workspace .lesson-library-v2 .library-personal-shelf{
+  border-color:var(--ui-line);
+}
+.lexilo-workspace .lesson-library-v2 .library-back,
+.lexilo-workspace .lesson-library-v2 .catalogue-arrows button{
+  border-color:var(--ui-line);background:var(--ui-card);color:var(--ui-text-soft);
+}
+.lexilo-workspace .lesson-library-v2 .library-back:hover,
+.lexilo-workspace .lesson-library-v2 .catalogue-arrows button:hover{
+  border-color:var(--ui-accent);background:var(--ui-accent-soft);color:var(--ui-accent-strong);
+}
+.lexilo-workspace .lesson-library-v2 .library-mode-icon{
+  background:var(--ui-accent-soft);color:var(--ui-accent-strong);
+}
+.lexilo-workspace .lesson-library-v2 .library-add-video{
+  border-color:color-mix(in srgb,var(--ui-accent) 45%,var(--ui-line));
+  background:var(--ui-accent-soft);color:var(--ui-accent-strong);
+}
+.lexilo-workspace .lesson-library-v2 .library-add-video:hover{
+  border-color:var(--ui-accent);background:var(--ui-accent);color:#fff;
+}
+.lexilo-workspace .lesson-library-v2 .topic-chips button,
+.lexilo-workspace .lesson-library-v2 .catalogue-filter.levels button,
+.lexilo-workspace .lesson-library-v2 .library-filters button{
+  border-color:transparent;background:transparent;color:var(--ui-text-soft);
+}
+.lexilo-workspace .lesson-library-v2 .topic-chips button:hover:not(:disabled),
+.lexilo-workspace .lesson-library-v2 .catalogue-filter.levels button:hover,
+.lexilo-workspace .lesson-library-v2 .library-filters button:hover{
+  border-color:var(--ui-line-strong);background:var(--ui-card-soft);color:var(--ui-text);
+}
+.lexilo-workspace .lesson-library-v2 .topic-chips button.active,
+.lexilo-workspace .lesson-library-v2 .catalogue-filter.levels button.active,
+.lexilo-workspace .lesson-library-v2 .library-filters button.active{
+  border-color:var(--ui-accent);background:var(--ui-accent);color:#fff;
+  box-shadow:0 6px 16px color-mix(in srgb,var(--ui-accent) 24%,transparent);
+}
+.lexilo-workspace .lesson-library-v2 .topic-chips button.active em,
+.lexilo-workspace .lesson-library-v2 .library-filters button.active em{color:#fff}
+.lexilo-workspace .lesson-library-v2 .topic-chips .topic-chip-empty{
+  border-color:var(--ui-line-strong);border-style:dashed;
+}
+.lexilo-workspace .lesson-library-v2 .library-filters em{
+  background:var(--ui-card-soft);color:var(--ui-muted);
+}
+.lexilo-workspace .lesson-library-v2 .catalogue-open{
+  border-color:color-mix(in srgb,var(--media-tone,var(--ui-accent)) 18%,var(--ui-line));
+  background:var(--ui-card);color:var(--ui-text);
+  box-shadow:0 8px 22px color-mix(in srgb,var(--ui-text) 8%,transparent),inset 0 3px 0 color-mix(in srgb,var(--media-tone,var(--ui-accent)) 60%,transparent);
+}
+.lexilo-workspace .lesson-library-v2 .catalogue-open:hover{
+  border-color:var(--ui-accent);background:color-mix(in srgb,var(--ui-accent-soft) 28%,var(--ui-card));
+}
+.lexilo-workspace .lesson-library-v2 .catalogue-open .catalogue-thumb,
+.lexilo-workspace .lesson-library-v2 .catalogue-open:hover .catalogue-thumb{border-color:var(--ui-line)}
+.lexilo-workspace .lesson-library-v2 .catalogue-open>b{color:var(--ui-text)}
+.lexilo-workspace .lesson-library-v2 .catalogue-open>small{color:var(--ui-muted)}
+.lexilo-workspace .lesson-library-v2 .catalogue-open>small.recent,
+.lexilo-workspace .lesson-library-v2 .shelf-more{color:var(--ui-accent-strong)}
+.lexilo-workspace .lesson-library-v2 .promote-all{color:var(--ui-success)}
+.lexilo-workspace .lesson-library-v2 .library-card,
+.lexilo-workspace .lesson-library-v2 .library-empty,
+.lexilo-workspace .lesson-library-v2 .saved-group li{
+  border-color:var(--ui-line);background:var(--ui-card);color:var(--ui-text);
+}
+.lexilo-workspace .lesson-library-v2 .library-card b{color:var(--ui-text)}
+.lexilo-workspace .lesson-library-v2 .library-card small,
+.lexilo-workspace .lesson-library-v2 .library-empty p{color:var(--ui-muted)}
+
+@media(max-width:900px){
+  .lexilo-workspace .lesson-library-v2 .library-sticky-controls{inset:60px 0 auto;padding-inline:clamp(14px,3.4vw,26px)}
+  .lexilo-workspace .lesson-library-v2 .library-hero,
+  .lexilo-workspace .lesson-library-v2 .library-filter-panel{position:static}
+}
+
+/* ── Thống nhất cỡ chữ tiêu đề ─────────────────────────────────────────────
+   Trước khối này, "tên màn hình" — cùng một vai trò — đang dùng 10 cỡ khác nhau
+   (19, 24, 25, 26, 27, 29, 30, 31px và hai clamp). Mỗi màn tự đặt một số, nên
+   chuyển giữa các màn thấy chữ nhảy cỡ.
+
+   Biến --type-page-title đã có sẵn từ trước (kèm bản thu nhỏ cho ≤600px) nhưng
+   gần như không nơi nào dùng. Khối này nối chúng lại.
+
+   Liệt kê TƯỜNG MINH từng bộ chọn thay vì quét ".page h1": h1 còn đóng vai trò
+   khác (từ trên thẻ ghi nhớ, tiêu đề trang giới thiệu) và không được gộp chung. */
+.lexilo-workspace .page>h1,
+.lexilo-workspace .greeting h1,
+.lexilo-workspace .section-head h1,
+.lexilo-workspace .skill-hub-head h1,
+.lexilo-workspace .writing-hub-head h1,
+.lexilo-workspace .writing-hero h1,
+.lexilo-workspace .speaking-head h1,
+.lexilo-workspace .lesson-overview-heading h1,
+.lexilo-workspace .paragraph-session-head h1,
+.lexilo-workspace .translation-session-head h1,
+.lexilo-workspace .mode-picker h1,
+.lexilo-workspace .form-screen-head h1,
+.lexilo-workspace .practice-empty-state h1{
+  font-size:var(--type-page-title);
+  line-height:var(--leading-tight);
+  letter-spacing:-.9px;
+}
+
+/* Tiêu đề trong thanh dính của thư viện bài học nhỏ hơn một bậc: nó nằm cạnh
+   nút và bộ lọc, không phải tiêu đề đứng riêng một dòng. */
+.lexilo-workspace .library-title-row h1{
+  font-size:var(--type-section-title);
+  line-height:var(--leading-tight);
+  letter-spacing:-.4px;
+}
+
+/* Từ trên thẻ ghi nhớ là vai trò KHÁC — chữ trưng bày, không phải tên màn.
+   Trước đây nó cũng có bốn cỡ rời rạc (30/34/36 và hai clamp). */
+.lexilo-workspace .flashcard h1,
+.lexilo-workspace .quizlet-flashcard b{
+  font-size:clamp(28px,4vw,40px);
+  line-height:1.12;
+  letter-spacing:-1px;
+}
+
+/* ── Màn Tiến độ: chia nhóm và bớt rối ───────────────────────────────────────
+   Trước đây màn này là sáu khối full-width nối đuôi nhau, không khối nào nói
+   cho khối kế tiếp biết nó thuộc về đâu. Ba tiêu đề nhóm dưới đây chia màn
+   thành ba câu hỏi: đang ở đâu · đã học thế nào · cần chú ý gì. */
+.lexilo-workspace .page > h2.screen-group,
+.screen-group {
+  margin: 30px 0 12px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.lexilo-workspace .page > h2.screen-group::after,
+.screen-group::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.lexilo-workspace .page > h2.screen-group:first-of-type,
+.screen-group:first-of-type { margin-top: 22px; }
+
+/* Bảng chi tiết theo nhóm đóng lại mặc định: nó là bảng 6 cột × ~20 dòng, tức
+   là thứ nặng nhất màn hình, mà phần lớn lần ghé thăm không ai đọc tới. */
+.weekly-toggle {
+  width: 100%;
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-2);
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-base), color var(--t-base);
+}
+.weekly-toggle:hover { background: var(--tint-purple); color: var(--purple-dark); }
+.weekly .weekly-table { margin: 14px -22px -22px; }
+/* Hàng tiêu đề bảng từng cắm cứng #255984 — một mảng xanh dương lạc lõng giữa
+   bảng màu tím của người dùng, và không đổi theo chủ đề sáng/tối. */
+.weekly .weekly-table > div:first-child {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 700;
+  border-top: 1px solid var(--line);
+}
+.weekly .bar-chart { height: 190px; padding: 18px 6px 0; }
+
+/* ── Ô chuỗi ngày học: một chỗ duy nhất ──────────────────────────────────────
+   Trước đây chuỗi được nói ở hai nơi cạnh nhau — ô số trên hàng thống kê và
+   thẻ "N ngày liên tiếp" ngay dưới — với cùng một con số. Nay gộp làm một, ô
+   số nhận thêm kỷ lục và câu nhắc vốn nằm ở thẻ kia. */
+.lexilo-workspace .home-stat-hint {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: .3px;
+  color: var(--muted);
+}
+.lexilo-workspace .home-stat.is-live .home-stat-hint { color: var(--green); }
+.lexilo-workspace .home-stat.is-live .home-stat-icon.flame {
+  background: var(--tint-orange);
+  color: var(--orange);
+}
+/* Hàng chỉ còn ngày thi thì trải hết bề ngang thay vì bỏ trống nửa phải. */
+.lexilo-workspace .goal-row.is-single { grid-template-columns: 1fr; }
+
+/* ── Nhật ký cập nhật ở cuối Trang chủ ───────────────────────────────────── */
+.lexilo-workspace .home-changelog { margin-top: 26px; }
+.lexilo-workspace .changelog-new {
+  margin-left: 10px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  background: var(--tint-purple);
+  color: var(--purple-dark);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  vertical-align: middle;
+}
+.lexilo-workspace .changelog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.lexilo-workspace .changelog-release {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+.lexilo-workspace .changelog-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 7px;
+}
+.lexilo-workspace .changelog-head b {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--purple);
+  letter-spacing: .3px;
+}
+.lexilo-workspace .changelog-head em {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--tint-purple);
+  color: var(--purple-dark);
+}
+.lexilo-workspace .changelog-head time { margin-left: auto; font-size: 11px; color: var(--muted); }
+.lexilo-workspace .changelog-release > strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 11px;
+}
+.lexilo-workspace .changelog-release ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.lexilo-workspace .changelog-release ul li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+/* Ba loại thay đổi ba màu, để lướt qua là biết bản này thiên về gì. */
+.lexilo-workspace .changelog-tag {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .3px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.lexilo-workspace .changelog-tag.is-new { background: var(--tint-purple); color: var(--purple-dark); }
+.lexilo-workspace .changelog-tag.is-better { background: var(--tint-green); color: var(--green); }
+.lexilo-workspace .changelog-tag.is-fix { background: var(--tint-orange); color: var(--orange); }
+@media (max-width: 600px) {
+  .lexilo-workspace .changelog-release ul li { grid-template-columns: 1fr; gap: 3px; }
+  .lexilo-workspace .changelog-tag { justify-self: start; }
+}
+
+/* ── Góp ý cho hệ thống ──────────────────────────────────────────────────── */
+.lexilo-workspace .feedback-modal { max-width: 560px; }
+.lexilo-workspace .feedback-kinds {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 9px;
+  margin-bottom: 16px;
+}
+.lexilo-workspace .feedback-kind {
+  display: grid;
+  gap: 3px;
+  justify-items: start;
+  text-align: left;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: border-color var(--t-base), background var(--t-base), color var(--t-base);
+}
+.lexilo-workspace .feedback-kind b { font-size: 12px; font-weight: 700; color: var(--text); }
+.lexilo-workspace .feedback-kind small { font-size: 10px; line-height: 1.4; color: var(--muted); }
+.lexilo-workspace .feedback-kind:hover { border-color: var(--purple); }
+.lexilo-workspace .feedback-kind.active {
+  border-color: var(--purple);
+  background: var(--tint-purple);
+}
+.lexilo-workspace .feedback-kind.active b { color: var(--purple-dark); }
+/* Giữ nguyên dáng label của các hộp thoại khác (.modal label là lưới), chỉ
+   thêm chỗ neo cho bộ đếm ký tự ở góc. */
+.lexilo-workspace .feedback-field { position: relative; }
+.lexilo-workspace .feedback-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 120px;
+}
+.lexilo-workspace .feedback-count {
+  position: absolute;
+  right: 10px;
+  bottom: 9px;
+  font-size: 10px;
+  font-style: normal;
+  color: var(--muted);
+  pointer-events: none;
+}
+.lexilo-workspace .feedback-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+/* Thiếu dòng này thì trên màn hẹp chữ ép biểu tượng bẹp lại còn một vạch. */
+.lexilo-workspace .feedback-note > svg,
+.lexilo-workspace .changelog-ask > svg { flex: none; }
+.lexilo-workspace .feedback-error {
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--tint-pink);
+  color: var(--pink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.lexilo-workspace .feedback-done {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 22px 0 8px;
+  text-align: center;
+  color: var(--green);
+}
+.lexilo-workspace .feedback-done p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-2); }
+@media (max-width: 600px) {
+  .lexilo-workspace .feedback-kinds { grid-template-columns: 1fr; }
+  .lexilo-workspace .feedback-kind { grid-template-columns: auto 1fr; align-items: center; column-gap: 10px; }
+  .lexilo-workspace .feedback-kind small { grid-column: 2; }
+}
+.lexilo-workspace .changelog-ask {
+  width: 100%;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 18px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+  color: var(--purple);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-base), background var(--t-base);
+}
+.lexilo-workspace .changelog-ask:hover { border-color: var(--purple); background: var(--tint-purple); }
+.lexilo-workspace .changelog-ask span { flex: 1; display: grid; gap: 2px; }
+.lexilo-workspace .changelog-ask b { font-size: 13px; font-weight: 700; color: var(--text); }
+.lexilo-workspace .changelog-ask small { font-size: 11px; color: var(--muted); }
+.lexilo-workspace .changelog-ask em {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--purple);
+  white-space: nowrap;
+}

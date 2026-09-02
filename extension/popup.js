@@ -144,7 +144,7 @@ async function send() {
   el.send.disabled = true;
   say("Đang tải phụ đề…");
   try {
-    const response = await ask(tabId, { type: "captions", baseUrl: el.track.value });
+    const response = await ask(tabId, { type: "captions", baseUrl: el.track.value, seconds: page.seconds || 0 });
     if (!response?.ok) throw new Error(response?.error ?? "Không tải được phụ đề.");
 
     const sentences = sentencesFrom(cuesFromJson3(response.data));
@@ -158,6 +158,7 @@ async function send() {
       source: "extension",
       // Đóng dấu cách cắt để Lexilo nhận ra bài nào cắt bằng bản cũ.
       captionVersion: CAPTION_VERSION,
+      timingPrecision: response.data?.timingPrecision || "millisecond",
       sentences,
     };
 

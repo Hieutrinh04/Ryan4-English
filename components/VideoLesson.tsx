@@ -3,15 +3,47 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
 import Icon from "./Icon";
+import WordListPicker from "./WordListPicker";
 import { createRecogniser, hasRecognition, micError, type Recognition } from "../lib/speech";
 import { clearLessonProgress, doneSentences, needsRecapture, markSentence, readLessonProgress, readReports, reportedSentences, toggleReport } from "../lib/lessons.mjs";
 import { properNouns, scoreDictation, wordShapes } from "../lib/youtube.mjs";
+import { fetchGlance, translatePhrase } from "../lib/glance.mjs";
 import { missingWords, readIpaCache, readTranslationCache, saveIpa, saveTranslation, withIpa } from "../lib/sentence-aids.mjs";
 import { scoreShadowing } from "../lib/shadowing.mjs";
+import { analyseWaveform, expectedProsody, refToExpected, scoreProsody } from "../lib/prosody.mjs";
+import { fetchProsodyRef } from "../lib/prosody-ref.mjs";
+
+type ProsodyRef = { stressedWords: string[]; pauseAfter: string[]; finalPitch: string; pitchRange: string; pace: string; summary: string };
+type ProsodyScore = ReturnType<typeof scoreProsody> & { comparedToVideo?: boolean; modelRef?: ProsodyRef | null };
 import { audioConstraint, micOptions, pickMic, readMic, saveMic } from "../lib/mic.mjs";
 import { MAX_CHAIN, canChain, chainOf, clampChain } from "../lib/sentence-chain.mjs";
 import { isSaved, makeSaved, readSaved, toggleSentence } from "../lib/saved-sentences.mjs";
+import { foldersOf } from "../lib/folders.mjs";
 import { aiFetch } from "../lib/supabase";
+import { fallbackLessonSummary, normalizeLessonSummary } from "../lib/lesson-summary.mjs";
+import { MAX_CUE_OVERLAP, segmentPlaybackEnd, usesLegacyHalfSecondBoundaries } from "../lib/caption-timing.mjs";
+import type { NewWord } from "./Dictionary";
+
+type FolderStore = Parameters<typeof foldersOf>[0];
+
+/** Cầu nối tới kho từ vựng + danh sách từ cho ô tra nghĩa (nút ☆ và 📖). */
+export type LookupVocab = {
+  folders: FolderStore;
+  updateFolders: (next: FolderStore) => void;
+  legacyCollections: boolean;
+  /** Mã của từ trong kho nếu đã lưu, chưa lưu thì null. */
+  wordId: (term: string) => string | null;
+  /** Bộ sưu tập gốc mà từ đang thuộc trong Kho từ vựng. */
+  collectionOf: (term: string) => "mine" | "pdf";
+  /** Thư mục theo thứ hiện tại của từ cá nhân. */
+  studyDayOf: (term: string) => number | null;
+  /** Chọn hoặc bỏ lịch học theo thứ cho từ cá nhân. */
+  setStudyDay: (wordId: string, day: number | null) => void;
+  /** Lưu từ vào kho, trả về mã từ (đã có thì trả mã cũ). */
+  saveWord: (found: NewWord) => string;
+  /** Mở trang Từ điển AI với từ này. */
+  openDictionary: (term: string) => void;
+};
 
 // Học trên chính video: nghe chép chính tả và nói nhại theo TỪNG CÂU.
 //
@@ -20,9 +52,11 @@ import { aiFetch } from "../lib/supabase";
 // câu đó — tách thành hai màn hình thì phải mở lại bài và tua lại từ đầu.
 
 type Sentence = { index: number; start: number; end: number; text: string };
-export type Lesson = { id: string; videoId: string; title: string; author: string; seconds: number; sentences: Sentence[] };
+export type Lesson = { id: string; videoId: string; title: string; author: string; seconds: number; captionVersion?: number; timingPrecision?: "second" | "millisecond" | "word"; sentences: Sentence[] };
 type Mode = "dictation" | "shadowing";
 type CoachTip = { word: string; ipa: string; how: string };
+type CoachLink = { pair: string; rule: string; blend: string; how: string };
+type LessonSummary = ReturnType<typeof fallbackLessonSummary>;
 
 const RATES = [0.5, 0.75, 1, 1.25, 1.5];
 
@@ -47,7 +81,12 @@ function senseGroups(text: string, maxWords = 5) {
   return groups;
 }
 
-export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: { lesson: Lesson; mode: Mode; close: () => void; onStudied?: () => void; onMode?: (next: Mode) => void }) {
+export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vocab }: { lesson: Lesson; mode: Mode; close: () => void; onStudied?: () => void; onMode?: (next: Mode) => void; vocab?: LookupVocab }) {
+  const [lessonView, setLessonView] = useState<"practice" | "overview">("practice");
+  const [summary, setSummary] = useState<LessonSummary>(() => fallbackLessonSummary(lesson.title, lesson.sentences));
+  const [summaryFor, setSummaryFor] = useState("");
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryWarning, setSummaryWarning] = useState("");
   const [index, setIndex] = useState(0);
   const [rate, setRate] = useState(1);
   const [at, setAt] = useState(0);
@@ -58,6 +97,8 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   const [checked, setChecked] = useState(false);
   const [hints, setHints] = useState(0);
   const [revealed, setRevealed] = useState(false);
+  // Bấm riêng từng ô để lộ một từ (kèm tra nghĩa), không phải lộ cả câu.
+  const [peeked, setPeeked] = useState<Set<number>>(() => new Set());
 
   // Nói nhại
   const [listening, setListening] = useState(false);
@@ -68,6 +109,9 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   // Chế độ chỉ nghe: giấu khung hình đi để buộc tai làm việc, nhưng KHÔNG gỡ
   // trình phát khỏi trang — gỡ là mất luôn tiếng và phải nạp lại video từ đầu.
   const [audioOnly, setAudioOnly] = useState(false);
+  // Trình phát YouTube không báo sự kiện play/pause, nên tự hỏi định kỳ để nút
+  // phát ở chế độ Âm thanh hiện đúng biểu tượng.
+  const [playing, setPlaying] = useState(false);
   const [full, setFull] = useState(false);
   // Ghép thêm mấy câu phía sau vào đoạn đang luyện. 0 nghĩa là một câu như cũ.
   const [chain, setChain] = useState(0);
@@ -81,18 +125,37 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   const [coachComment, setCoachComment] = useState("");
   const [coachError, setCoachError] = useState("");
   const [coachTips, setCoachTips] = useState<CoachTip[]>([]);
+  const [coachLinks, setCoachLinks] = useState<CoachLink[]>([]);
   const [coachOpen, setCoachOpen] = useState(false);
 
   // Ba thứ đỡ khi nghe, bật tắt riêng vì mỗi người cần mức đỡ khác nhau.
   const [showText, setShowText] = useState(true);
+  // Nghe chép: xem trước toàn bộ lời thoại trong danh sách bên phải để đọc lướt
+  // trước khi nghe. Tắt mặc định để không lộ đáp án.
+  const [previewAll, setPreviewAll] = useState(false);
   // Shadowing cần nhìn thấy cách đọc và nghĩa ngay như màn luyện mẫu. Dictation
   // vẫn giấu cả hai để không vô tình lộ đáp án trước khi người học gõ.
   const [showIpa, setShowIpa] = useState(mode === "shadowing");
   const [showVi, setShowVi] = useState(mode === "shadowing");
   const [ipaCache, setIpaCache] = useState<Record<string, string>>({});
   const [viCache, setViCache] = useState<Record<string, string>>({});
-  const [lookup, setLookup] = useState<{ word: string; ipa: string; meaning: string; part?: string; definitions?: string[]; x: number; y: number } | null>(null);
+  const [lookup, setLookup] = useState<{
+    word: string;
+    ipa: string;
+    meaning: string;
+    parts?: string[];
+    senses?: { part: string; meaningVi: string; definition: string; synonyms: string[] }[];
+    x: number;
+    y: number;
+  } | null>(null);
+  // Bôi đen một cụm trong câu để dịch cả cụm / lưu cả cụm vào kho.
+  const [phrase, setPhrase] = useState<{ text: string; x: number; y: number; vi?: string; loading?: boolean; saved?: boolean } | null>(null);
+  // Trạng thái cho nút ☆ (lưu từ + xếp vào danh sách) trong ô tra nghĩa.
+  const [savedWordId, setSavedWordId] = useState<string | null>(null);
+  const [listMenuOpen, setListMenuOpen] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  // Điểm ngữ điệu (ước lượng) đo từ bản ghi của người học — xem lib/prosody.mjs.
+  const [prosody, setProsody] = useState<ProsodyScore | null>(null);
   // Chấm xong tự sang câu kế tiếp. Tắt mặc định vì người mới cần đọc lại chỗ sai.
   const [autoNext, setAutoNext] = useState(false);
 
@@ -102,7 +165,11 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   const recorder = useRef<MediaRecorder | null>(null);
   const recordingActive = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const activeCaptionRef = useRef<HTMLButtonElement | null>(null);
   const startedAt = useRef(0);
+  // Câu đang nhại lúc bắt đầu ghi — dùng để chấm ngữ điệu khi bản ghi dừng, vì
+  // lúc đó người học có thể đã bấm sang câu khác.
+  const scoringRef = useRef<{ text: string; index: number; start: number; end: number }>({ text: "", index: 0, start: 0, end: 0 });
 
   const sentence = lesson.sentences[index];
   const span = useMemo(
@@ -111,6 +178,16 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   );
   // Chữ và mốc thời gian của đoạn đang luyện; chưa ghép thì y hệt câu đơn.
   const target = span ?? { text: sentence?.text ?? "", start: sentence?.start ?? 0, end: sentence?.end ?? 0, count: 1, words: 0 };
+  const legacyHalfSecond = useMemo(
+    () => usesLegacyHalfSecondBoundaries(lesson.sentences, lesson.captionVersion),
+    [lesson.sentences, lesson.captionVersion],
+  );
+  const nextSentenceStart = lesson.sentences[index + target.count]?.start;
+  // Chỉ timestamp từng từ mới đủ chính xác để giữ phần chồng. `millisecond`
+  // ở đây có thể là mốc của cả dòng transcript; thêm 1,2 giây sẽ lọt 2–3 từ
+  // của câu kế tiếp như video Life Of Riza.
+  const preciseOverlap = lesson.timingPrecision === "word" ? MAX_CUE_OVERLAP : 0;
+  const playbackEnd = segmentPlaybackEnd(target.start, target.end, nextSentenceStart, legacyHalfSecond, preciseOverlap);
   const done = useMemo(() => new Set(doneSentences(progress, lesson.id, mode) as number[]), [progress, lesson.id, mode]);
   const reported = useMemo(() => new Set(reportedSentences(reports, lesson.id) as number[]), [reports, lesson.id]);
 
@@ -122,6 +199,12 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     setReports(readReports());
     setViCache(readTranslationCache());
   }, []);
+
+  // Giữ câu đang học trong vùng nhìn thấy của danh sách phụ đề. Dùng `nearest`
+  // để chỉ cuộn khung danh sách, không kéo giật toàn bộ trang.
+  useEffect(() => {
+    activeCaptionRef.current?.scrollIntoView({ block: "nearest" });
+  }, [index, lesson.id]);
 
   // Chỉ tra những gì CHƯA có và chỉ khi người học bật lên. Một video mười phút có
   // hàng trăm câu; tra sẵn tất cả là một trận gọi mạng vô nghĩa.
@@ -170,6 +253,23 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   useEffect(() => {
     if (mode === "dictation" && !checked) inputRef.current?.focus();
   }, [mode, checked, index]);
+
+  // Đồng bộ trạng thái phát/dừng cho nút lớn ở chế độ Âm thanh.
+  useEffect(() => {
+    if (!audioOnly) return;
+    const timer = window.setInterval(() => setPlaying(Boolean(player.current?.playing())), 300);
+    return () => window.clearInterval(timer);
+  }, [audioOnly]);
+
+  // Bấm ra ngoài thanh "Dịch cụm" thì đóng nó lại.
+  useEffect(() => {
+    if (!phrase) return;
+    const onDown = (event: MouseEvent) => {
+      if (!(event.target as HTMLElement)?.closest?.(".phrase-bar")) setPhrase(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [phrase]);
 
   // Phím tắt để tay không rời bàn phím: gõ xong Enter là chấm rồi Enter lần nữa
   // sang câu kế, Ctrl nghe lại mà không phải với chuột lên nút.
@@ -269,13 +369,13 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   }, []);
 
   // YouTube mặc định phát liên tục hết video. Shadowing/Dictation cần một đơn vị
-  // là CÂU, nên dừng player ngay khi chạm mốc cuối của câu đang chọn. Khoảng đệm
-  // nhỏ tránh bỏ mất phụ âm cuối do ticker chỉ cập nhật bốn lần mỗi giây.
+  // là CÂU, nên dừng player ngay khi chạm mốc cuối của câu đang chọn. Ticker đã
+  // chạy 40 lần/giây nên không cần trừ sớm 60ms; trừ sớm chính là đủ để nuốt
+  // phụ âm cuối ở các từ ngắn như "it", "did", "thank".
   useEffect(() => {
-    if (!sentence || !player.current?.playing()) return;
-    const stopAt = Math.max(target.start + 0.15, target.end);
-    if (at >= stopAt - 0.06) player.current.pause();
-  }, [at, sentence, target.start, target.end]);
+    if (lessonView === "overview" || !sentence || !player.current?.playing()) return;
+    if (at >= playbackEnd) player.current.pause();
+  }, [at, sentence, playbackEnd, lessonView]);
 
   /** Phát đúng câu đang làm, từ đầu câu. */
   function playSentence() {
@@ -283,20 +383,163 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     player.current.rate(rate);
     player.current.seek(target.start);
     player.current.play();
+    setPlaying(true);
+  }
+
+  /** Nút phát lớn ở chế độ Âm thanh: đang phát thì dừng, đang dừng thì phát tiếp
+   *  (nếu đã ra ngoài câu thì quay về đầu câu). */
+  function togglePlay() {
+    if (!player.current) return;
+    if (player.current.playing()) {
+      player.current.pause();
+      setPlaying(false);
+      return;
+    }
+    const now = player.current.time();
+    if (now < target.start || now > playbackEnd + 0.3) player.current.seek(target.start);
+    player.current.rate(rate);
+    player.current.play();
+    setPlaying(true);
+  }
+
+  /** Trong Tổng quan, phát tự do từ vị trí hiện tại tới hết video, không dừng ở
+   * mốc cuối câu như hai chế độ luyện tập. */
+  function toggleWholeLesson() {
+    if (!player.current) return;
+    if (player.current.playing()) {
+      player.current.pause();
+      setPlaying(false);
+      return;
+    }
+    if (player.current.time() >= lesson.seconds - 0.5) player.current.seek(0);
+    player.current.rate(rate);
+    player.current.play();
+    setPlaying(true);
+  }
+
+  function playWholeFrom(seconds: number) {
+    if (!player.current) return;
+    player.current.seek(seconds);
+    player.current.rate(rate);
+    player.current.play();
+    setPlaying(true);
+  }
+
+  async function openOverview() {
+    player.current?.pause();
+    setPlaying(false);
+    setLessonView("overview");
+    if (summaryFor === lesson.id || summaryLoading) return;
+    const fallback = fallbackLessonSummary(lesson.title, lesson.sentences);
+    setSummary(fallback);
+    setSummaryLoading(true);
+    setSummaryWarning("");
+    try {
+      const response = await aiFetch("/api/ai/summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: lesson.title, sentences: lesson.sentences }),
+      });
+      const data = (await response.json()) as { summary?: Record<string, unknown>; warning?: string; error?: string };
+      if (!response.ok || !data.summary) throw new Error(data.error || "Không tạo được bản tóm tắt.");
+      setSummary(normalizeLessonSummary(data.summary, fallback));
+      setSummaryWarning(data.warning ?? "");
+      setSummaryFor(lesson.id);
+    } catch (error) {
+      setSummaryWarning(error instanceof Error ? `${error.message} Đang hiển thị bản tổng quan từ transcript.` : "Đang hiển thị bản tổng quan từ transcript.");
+    } finally {
+      setSummaryLoading(false);
+    }
+  }
+
+  /** Tua trong phạm vi câu đang làm. */
+  function nudge(seconds: number) {
+    if (!player.current) return;
+    const next = Math.min(target.end, Math.max(target.start, player.current.time() + seconds));
+    player.current.seek(next);
+  }
+
+  // Lấy đúng chữ tiếng Anh trong vùng bôi đen — bỏ phần phiên âm IPA lẫn vào.
+  function phraseFromSelection(selection: Selection): string {
+    const host = stage.current;
+    if (host) {
+      const tokens = [...host.querySelectorAll<HTMLElement>(".shadowing-sentence .lesson-word, .lesson-sentence .lesson-word")];
+      const hit = tokens.filter((token) => selection.containsNode(token, true));
+      if (hit.length >= 2) {
+        return hit.map((token) => token.querySelector("span")?.textContent?.trim() ?? "").filter(Boolean).join(" ");
+      }
+    }
+    // Câu chép / đáp án là văn bản thuần; nếu có IPA dạng /.../ thì cắt bỏ.
+    return (selection.toString() ?? "").replace(/\s*\/[^/]{1,40}\//g, "").replace(/\s+/g, " ").trim();
+  }
+
+  // Người học bôi đen một cụm trong câu → hiện thẻ "Dịch cụm / Lưu vào kho".
+  function onPhraseSelect() {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) {
+      setPhrase(null);
+      return;
+    }
+    const text = phraseFromSelection(selection);
+    // Chỉ bắt cụm nhiều từ; một từ đơn thì đã có nút bấm-để-tra sẵn.
+    if (!/\s/.test(text) || text.length > 160 || !/[a-zA-Z]/.test(text)) {
+      setPhrase(null);
+      return;
+    }
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    const width = 300;
+    const x = Math.min(Math.max(rect.left + rect.width / 2, width / 2 + 8), window.innerWidth - width / 2 - 8);
+    const below = rect.bottom + 8;
+    const y = below + 190 > window.innerHeight ? Math.max(8, rect.top - 8) : below;
+    setPhrase({ text, x, y, loading: true });
+    void translatePhrase(text).then((vi) =>
+      setPhrase((current) => (current && current.text === text ? { ...current, loading: false, vi: vi || "Không dịch được cụm này." } : current)),
+    );
+  }
+
+  async function translateSelectedPhrase() {
+    if (!phrase || phrase.loading) return;
+    setPhrase((current) => (current ? { ...current, loading: true, vi: undefined } : current));
+    const vi = await translatePhrase(phrase.text);
+    setPhrase((current) =>
+      current && current.text === phrase.text ? { ...current, loading: false, vi: vi || "Không dịch được cụm này." } : current,
+    );
+  }
+
+  async function saveSelectedPhrase() {
+    if (!phrase || !vocab || phrase.saved) return;
+    const vi = phrase.vi && !/Không dịch/.test(phrase.vi) ? phrase.vi : await translatePhrase(phrase.text);
+    vocab.saveWord({ term: phrase.text, ipa: "", meaning: vi || "", partOfSpeech: "cụm từ", definition: "" });
+    setPhrase((current) => (current ? { ...current, saved: true, vi: current.vi ?? vi } : current));
   }
 
   async function lookUp(token: string, element: HTMLElement) {
     const word = token.toLowerCase().replace(/[^a-z'-]/g, "");
     if (!word) return;
-    const card = element.closest(".shadowing-card")?.getBoundingClientRect();
+    const card = element.closest(".shadowing-card, .lesson-shapes")?.getBoundingClientRect();
     const anchor = element.getBoundingClientRect();
     const position = { x: Math.max(12, anchor.left - (card?.left ?? anchor.left)), y: anchor.bottom - (card?.top ?? anchor.top) + 8 };
+    setSavedWordId(null);
+    setListMenuOpen(false);
     setLookup({ word, ipa: ipaCache[word] ?? "", meaning: "Đang tra…", ...position });
     try {
-      const response = await fetch(`/api/ai/glance?q=${encodeURIComponent(word)}`);
-      const data = (await response.json()) as { ipa?: string; meaningVi?: string; senses?: { part?: string; definition?: string }[]; error?: string };
-      if (!response.ok || data.error) throw new Error(data.error ?? "không tra được");
-      setLookup({ word, ipa: data.ipa || ipaCache[word] || "", meaning: data.meaningVi || data.senses?.[0]?.definition || "Không tra được nghĩa.", part: data.senses?.[0]?.part, definitions: data.senses?.map((sense) => sense.definition || "").filter(Boolean).slice(0, 3), ...position });
+      const data = (await fetchGlance(word)) as {
+        ipa: string;
+        meaningVi: string;
+        senses: { part: string; meaningVi: string; definition: string; synonyms: string[] }[];
+      };
+      const senses = data.senses.filter((sense) => sense.meaningVi || sense.definition);
+      const parts = [...new Set(senses.map((sense) => sense.part).filter(Boolean))];
+      setLookup({
+        word,
+        ipa: data.ipa || ipaCache[word] || "",
+        // Dòng đậm chỉ để nghĩa tiếng Việt gọn — nếu chưa dịch được thì để trống,
+        // danh sách nghĩa bên dưới vẫn hiện (tiếng Anh) chứ không nhồi cả câu vào đây.
+        meaning: data.meaningVi || senses[0]?.meaningVi || "",
+        parts,
+        senses,
+        ...position,
+      });
     } catch {
       setLookup({ word, ipa: ipaCache[word] ?? "", meaning: "Không tra được từ này.", ...position });
     }
@@ -310,6 +553,24 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     window.speechSynthesis?.speak(utterance);
   }
 
+  /** Mã của từ đang tra nếu đã nằm trong kho (state cục bộ hoặc tra lại từ kho). */
+  const lookupWordId = savedWordId ?? (vocab && lookup ? vocab.wordId(lookup.word) : null);
+
+  /** Đảm bảo từ đang tra đã có trong kho — trả về mã từ để xếp vào danh sách. */
+  function ensureWordSaved(): string | null {
+    if (!vocab || !lookup) return null;
+    if (lookupWordId) return lookupWordId;
+    const id = vocab.saveWord({
+      term: lookup.word,
+      ipa: lookup.ipa || "",
+      meaning: lookup.meaning || lookup.senses?.[0]?.meaningVi || lookup.senses?.[0]?.definition || "",
+      partOfSpeech: lookup.parts?.[0] ?? "",
+      definition: lookup.senses?.[0]?.definition ?? "",
+    });
+    setSavedWordId(id);
+    return id;
+  }
+
   function go(step: number, autoplay = false) {
     const next = Math.min(lesson.sentences.length - 1, Math.max(0, index + step));
     const nextSentence = lesson.sentences[next];
@@ -319,10 +580,12 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     setChecked(false);
     setHints(0);
     setRevealed(false);
+    setPeeked(new Set());
     setHeard("");
     setRecordingAttempted(false);
     setMicNote("");
     setRecordingSeconds(0);
+    setProsody(null);
     setRecordUrl((current) => {
       if (current) URL.revokeObjectURL(current);
       return "";
@@ -330,8 +593,12 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     setCoachComment("");
     setCoachError("");
     setCoachTips([]);
+    setCoachLinks([]);
     setCoachOpen(false);
     setLookup(null);
+    setPhrase(null);
+    setSavedWordId(null);
+    setListMenuOpen(false);
     // Câu đang chọn và vị trí video luôn là một trạng thái duy nhất. Trước đây
     // danh sách đổi câu nhưng player vẫn đứng ở thời gian cũ nên bấm phát sẽ nói
     // sang đoạn khác.
@@ -427,6 +694,61 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     else void stage.current?.requestFullscreen?.();
   }
 
+  // Giải mã bản ghi rồi chấm ngữ điệu. Lỗi ở bước nào cũng bỏ qua lặng lẽ — phần
+  // chấm chữ (độ rõ lời) vẫn chạy độc lập, ngữ điệu chỉ là điểm cộng.
+  async function scoreProsodyFromBlob(blob: Blob, at: { text: string; index: number; start: number; end: number }) {
+    if (!at.text.trim()) return;
+    // Bản ghi im lặng bị chặn ở scoreProsody bằng ngưỡng âm lượng, không dựa vào
+    // chữ máy nghe được — kết quả nhận dạng đến sau lúc bản ghi dừng nên dựa vào
+    // nó sẽ lúc chấm lúc không.
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    let ctx: AudioContext | null = null;
+    try {
+      ctx = new Ctx();
+      const buffer = await ctx.decodeAudioData(await blob.arrayBuffer());
+      // Giảm tần số mẫu về ~16kHz và cắt tối đa 15s trước khi phân tích: dò cao độ
+      // bằng tự tương quan rất nặng, để nguyên 48kHz × 11s là treo cả giây.
+      const raw = buffer.getChannelData(0);
+      const step = Math.max(1, Math.round(buffer.sampleRate / 16000));
+      const rate = buffer.sampleRate / step;
+      const limit = Math.min(raw.length, Math.floor(15 * buffer.sampleRate));
+      const samples = new Float32Array(Math.floor(limit / step));
+      for (let i = 0; i < samples.length; i += 1) samples[i] = raw[i * step];
+      const measured = analyseWaveform(samples, rate, { hopMs: 20 });
+      // Hiện ngay điểm ước lượng từ văn bản để người học không phải chờ.
+      const quick = scoreProsody(measured, expectedProsody(at.text));
+      setProsody({ ...quick, comparedToVideo: false, modelRef: null });
+      // Đoạn nói quá ngắn / quá nhỏ thì thôi, đừng tốn lượt AI gọi phân tích video.
+      if (!quick.usable) return;
+      // Rồi nâng cấp: so với chính người nói trong video (Gemini nghe đoạn clip,
+      // nhớ lại theo câu nên chỉ tốn một lượt AI cho mỗi câu).
+      const ref = (await fetchProsodyRef({
+        videoId: lesson.videoId,
+        sentenceIndex: at.index,
+        start: at.start,
+        end: at.end,
+        sentence: at.text,
+      })) as ProsodyRef | null;
+      if (ref && scoringRef.current.index === at.index) {
+        setProsody({ ...scoreProsody(measured, refToExpected(ref, at.text)), comparedToVideo: true, modelRef: ref });
+      }
+    } catch (error) {
+      console.warn("prosody: không chấm được", error);
+      setProsody((current) =>
+        current?.usable
+          ? current // đã có điểm rồi thì giữ, đừng xoá vì bước nâng cấp video hỏng
+          : {
+              usable: false, score: 0, rhythm: 0, stress: 0, melody: null,
+              pauses: 0, expectedPauses: 0, dynamicDb: 0, monotone: false,
+              notes: ["Chưa đọc được bản ghi để chấm ngữ điệu. Thử ghi âm lại."],
+            },
+      );
+    } finally {
+      void ctx?.close();
+    }
+  }
+
   async function startRecording() {
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") return;
     try {
@@ -442,11 +764,13 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
       next.onstop = () => {
         stream.getTracks().forEach((track) => track.stop());
         if (!chunks.length) return;
-        const url = URL.createObjectURL(new Blob(chunks, { type: next.mimeType || "audio/webm" }));
+        const blob = new Blob(chunks, { type: next.mimeType || "audio/webm" });
+        const url = URL.createObjectURL(blob);
         setRecordUrl((current) => {
           if (current) URL.revokeObjectURL(current);
           return url;
         });
+        void scoreProsodyFromBlob(blob, scoringRef.current);
       };
       next.start();
       recorder.current = next;
@@ -465,8 +789,11 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
     setCoachComment("");
     setCoachError("");
     setCoachTips([]);
+    setCoachLinks([]);
     setCoachOpen(false);
     setRecordingSeconds(0);
+    setProsody(null);
+    scoringRef.current = { text: target.text, index, start: target.start, end: target.end };
     recordingActive.current = true;
     engine.current = recogniser;
     recogniser.continuous = true;
@@ -513,23 +840,25 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
   async function askCoach() {
     if (!sentence || !spoken || coaching) return;
     setCoachOpen(true);
-    if (coachComment || coachTips.length > 0) return;
+    if (coachComment || coachTips.length > 0 || coachLinks.length > 0) return;
     setCoaching(true);
     setCoachError("");
     setCoachComment("");
     setCoachTips([]);
+    setCoachLinks([]);
     try {
       const response = await aiFetch("/api/ai/pronounce", {
         method: "POST",
         body: JSON.stringify({ sentence: target.text, heard, missed: spoken.missed, swallowed: spoken.swallowed }),
       });
-      const data = (await response.json()) as { comment?: string; tips?: CoachTip[]; error?: string };
+      const data = (await response.json()) as { comment?: string; tips?: CoachTip[]; links?: CoachLink[]; error?: string };
       if (!response.ok || data.error) throw new Error(data.error ?? "Chưa lấy được nhận xét phát âm.");
-      if (!data.comment && !data.tips?.length) {
+      setCoachTips(data.tips ?? []);
+      setCoachLinks(data.links ?? []);
+      if (!data.comment && !data.tips?.length && !data.links?.length) {
         setCoachComment("Máy đã nhận ra đầy đủ các từ trong câu. Hãy nghe lại bản ghi và đối chiếu nhịp điệu với câu mẫu.");
       } else {
         setCoachComment(data.comment ?? "");
-        setCoachTips(data.tips ?? []);
       }
     } catch (error) {
       setCoachError(error instanceof Error ? error.message : "Chưa lấy được nhận xét phát âm.");
@@ -546,48 +875,180 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
       </div>
     );
 
+  // Ô tra nghĩa dùng chung cho cả nói nhại và nghe chép — đặt trong thẻ có
+  // position:relative gần nhất, toạ độ tính theo thẻ đó.
+  const lookupCard = lookup && (
+    <div className="lesson-lookup lesson-lookup-popover" style={{ left: lookup.x, top: lookup.y }}>
+      <div className="lesson-lookup-title">
+        <b>{lookup.word}</b>
+        <button className="lesson-lookup-speak" onClick={speakLookup} aria-label={`Phát âm ${lookup.word}`}>
+          <Icon name="volume" size={15} />
+        </button>
+        {vocab && (
+          <>
+            <button
+              className={`lesson-lookup-star${lookupWordId ? " on" : ""}`}
+              onClick={() => { ensureWordSaved(); setListMenuOpen((open) => !open); }}
+              aria-pressed={Boolean(lookupWordId)}
+              aria-label="Lưu từ và xếp vào danh sách"
+              title="Lưu từ và xếp vào danh sách"
+            >
+              <Icon name="star" size={15} />
+            </button>
+            <button
+              className="lesson-lookup-open"
+              onClick={() => vocab.openDictionary(lookup.word)}
+              aria-label="Xem chi tiết trong Từ điển"
+              title="Xem chi tiết trong Từ điển"
+            >
+              <Icon name="book" size={15} />
+            </button>
+          </>
+        )}
+        <button className="lesson-lookup-close" onClick={() => setLookup(null)} aria-label="Đóng">×</button>
+      </div>
+
+      {vocab && listMenuOpen && (
+        <div className="lesson-lookup-lists">
+          {lookupWordId ? (
+            <WordListPicker compact legacyCollections={vocab.legacyCollections} folders={vocab.folders} wordId={lookupWordId} updateFolders={vocab.updateFolders} collection={vocab.collectionOf(lookup.word)} studyDay={vocab.studyDayOf(lookup.word)} onStudyDayChange={(day) => vocab.setStudyDay(lookupWordId, day)} onDone={() => setListMenuOpen(false)} />
+          ) : <p>Đang lưu từ vào Kho từ vựng…</p>}
+        </div>
+      )}
+
+      <div className="lesson-lookup-meta">
+        {lookup.ipa && <code>{lookup.ipa}</code>}
+        {lookup.parts?.map((part) => <em key={part}>{part}</em>)}
+      </div>
+      {lookup.meaning && <strong>{lookup.meaning}</strong>}
+      {lookup.senses && lookup.senses.length > 0 && (
+        <ul>
+          {lookup.senses.map((sense, position) => (
+            <li key={position}>
+              {sense.part && <i>{sense.part}</i>}
+              <span>{sense.meaningVi || sense.definition}</span>
+              {sense.meaningVi && !sense.synonyms.length && sense.definition && <small>{sense.definition}</small>}
+              {sense.synonyms.length > 0 && <small className="syn">{sense.synonyms.join(", ")}</small>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+
+  const lessonTop = (
+    <div className="lesson-top">
+      <button className="drill-icon" onClick={close} aria-label="Quay lại">←</button>
+      <span className="lesson-level">B1</span>
+      <div className="lesson-title">
+        <b>{lesson.title}</b>
+        <small>{[lesson.author, `${lesson.sentences.length} câu`].filter(Boolean).join(" · ")}</small>
+      </div>
+      <div className="lesson-mode-tabs" role="group" aria-label="Chế độ bài học">
+        <button className={lessonView === "practice" && mode === "shadowing" ? "active" : ""} onClick={() => { player.current?.pause(); setLessonView("practice"); onMode?.("shadowing"); }}>
+          <Icon name="mic" size={15} /> Nói nhại
+        </button>
+        <button className={lessonView === "practice" && mode === "dictation" ? "active" : ""} onClick={() => { player.current?.pause(); setLessonView("practice"); onMode?.("dictation"); }}>
+          <Icon name="headphones" size={15} /> Nghe chép
+        </button>
+        <button className={lessonView === "overview" ? "active" : ""} onClick={() => void openOverview()}>
+          <Icon name="book" size={15} /> Tổng quan bài
+        </button>
+      </div>
+      <div className="lesson-view-tools">
+        <div className="lesson-av-tabs" role="group" aria-label="Hình hoặc chỉ tiếng">
+          <button className={!audioOnly ? "active" : ""} onClick={() => setAudioOnly(false)} aria-pressed={!audioOnly}>
+            <Icon name="play" size={14} /> Video
+          </button>
+          <button className={audioOnly ? "active" : ""} onClick={() => setAudioOnly(true)} aria-pressed={audioOnly}>
+            <Icon name="headphones" size={14} /> Âm thanh
+          </button>
+        </div>
+        <button onClick={toggleFullscreen} aria-label={full ? "Thoát toàn màn hình" : "Toàn màn hình"}>
+          <Icon name={full ? "stop" : "target"} size={15} />
+        </button>
+      </div>
+      <span className="lesson-count">{done.size}/{lesson.sentences.length}</span>
+    </div>
+  );
+
+  if (lessonView === "overview") {
+    return (
+      <div ref={stage} className={`page video-lesson video-lesson-v2 lesson-overview-page${audioOnly ? " audio-only" : ""}${full ? " full" : ""}`}>
+        {lessonTop}
+        <main className="lesson-overview-layout">
+          <section className="lesson-overview-media">
+            <div className="lesson-overview-video">
+              <YouTubePlayer videoId={lesson.videoId} onReady={(handle) => { player.current = handle; }} onTime={setAt} />
+              {audioOnly && (
+                <div className="lesson-overview-audio">
+                  <Icon name="headphones" size={34} />
+                  <strong>Đang nghe toàn bài</strong>
+                  <span>{clock(at)} / {clock(lesson.seconds)}</span>
+                </div>
+              )}
+            </div>
+            <div className="lesson-whole-controls">
+              <button onClick={() => playWholeFrom(Math.max(0, at - 10))} aria-label="Lùi 10 giây"><Icon name="replay" size={17} /> 10s</button>
+              <button className="primary" onClick={toggleWholeLesson}><Icon name={playing ? "stop" : "play"} size={18} /> {playing ? "Tạm dừng" : at > 0.5 ? "Tiếp tục nghe" : "Nghe toàn bài"}</button>
+              <button onClick={() => playWholeFrom(Math.min(lesson.seconds, at + 10))} aria-label="Tiến 10 giây">10s <Icon name="arrow" size={16} /></button>
+              <span>{clock(at)} / {clock(lesson.seconds)}</span>
+              <div className="lesson-overview-rates">
+                {RATES.map((value) => <button key={value} className={value === rate ? "active" : ""} onClick={() => { setRate(value); player.current?.rate(value); }}>{value}x</button>)}
+              </div>
+            </div>
+            <div className="lesson-overview-progress" aria-hidden="true"><i style={{ width: `${Math.min(100, (at / Math.max(1, lesson.seconds)) * 100)}%` }} /></div>
+          </section>
+
+          <section className="lesson-overview-content">
+            <header className="lesson-overview-heading">
+              <div><span>TỔNG QUAN BÀI</span><h1>Nắm nội dung trước khi luyện</h1></div>
+              {summaryLoading && <em><Icon name="sparkles" size={14} /> Đang phân tích transcript…</em>}
+            </header>
+            {summaryWarning && <p className="lesson-summary-warning">{summaryWarning}</p>}
+            <article className="lesson-summary-card">
+              <h2>Nội dung chính</h2>
+              <p>{summary.summaryVi}</p>
+              <ul>{summary.keyPoints.map((point, position) => <li key={position}><span>{position + 1}</span>{point}</li>)}</ul>
+            </article>
+
+            <article className="lesson-summary-section">
+              <div className="lesson-summary-title"><div><h2>Từ vựng đáng học</h2><p>Những từ và cụm từ nổi bật trong ngữ cảnh của bài</p></div><span>{summary.vocabulary.length} từ</span></div>
+              <div className="lesson-summary-vocab">
+                {summary.vocabulary.map((item) => (
+                  <div key={item.term}>
+                    <b>{item.term}</b>
+                    <strong>{item.meaningVi || "Có trong transcript — bấm Từ điển AI để tra sâu"}</strong>
+                    {item.example && <small>{item.example}</small>}
+                    {vocab && <button onClick={() => vocab.openDictionary(item.term)}>Tra và lưu từ <Icon name="arrow" size={13} /></button>}
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="lesson-summary-section">
+              <div className="lesson-summary-title"><div><h2>Câu và cách diễn đạt hay</h2><p>Có thể dùng lại khi nói hoặc viết</p></div><span>{summary.phrases.length} câu</span></div>
+              <div className="lesson-summary-phrases">
+                {summary.phrases.map((item, position) => <div key={position}><span>{String(position + 1).padStart(2, "0")}</span><div><b>{item.text}</b>{item.meaningVi && <p>{item.meaningVi}</p>}<small>{item.note}</small></div></div>)}
+              </div>
+            </article>
+
+            <article className="lesson-summary-section lesson-full-transcript">
+              <div className="lesson-summary-title"><div><h2>Transcript toàn bài</h2><p>Chọn một câu để nghe liên tục từ vị trí đó</p></div><span>{lesson.sentences.length} câu</span></div>
+              <ol>{lesson.sentences.map((item) => <li key={item.index}><button onClick={() => playWholeFrom(item.start)}><time>{clock(item.start)}</time><span>{item.text}</span><Icon name="play" size={13} /></button></li>)}</ol>
+            </article>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={stage}
       className={`page video-lesson video-lesson-v2 ${mode === "shadowing" ? "shadowing-layout" : "dictation-layout"}${audioOnly ? " audio-only" : ""}${full ? " full" : ""}`}
     >
-      <div className="lesson-top">
-        <button className="drill-icon" onClick={close} aria-label="Quay lại">←</button>
-        <span className="lesson-level">B1</span>
-        <div className="lesson-title">
-          <b>{lesson.title}</b>
-          <small>{[lesson.author, `${lesson.sentences.length} câu`].filter(Boolean).join(" · ")}</small>
-        </div>
-        <div className="lesson-mode-tabs" role="group" aria-label="Chế độ đang luyện">
-          {/* Đổi chế độ ngay trong bài: cùng một video, chép xong câu nào thì nhại
-              luôn câu đó, không phải quay ra thư viện chọn lại. */}
-          <button className={mode === "shadowing" ? "active" : ""} onClick={() => onMode?.("shadowing")}>
-            <Icon name="mic" size={15} /> Shadowing
-          </button>
-          <button className={mode === "dictation" ? "active" : ""} onClick={() => onMode?.("dictation")}>
-            <Icon name="headphones" size={15} /> Dictation
-          </button>
-        </div>
-        <div className="lesson-view-tools">
-          {/* Chỉ nghe: giấu hình để tai phải tự làm việc. Người học nào quen nhìn
-              khẩu hình sẽ hụt lúc nghe thật, nên cần tắt hình được. */}
-          <button
-            className={audioOnly ? "active" : ""}
-            onClick={() => setAudioOnly((value) => !value)}
-            aria-pressed={audioOnly}
-            title={audioOnly ? "Đang chỉ nghe tiếng" : "Đang xem cả hình"}
-          >
-            <Icon name={audioOnly ? "headphones" : "play"} size={15} />
-            {audioOnly ? "Âm thanh" : "Video"}
-          </button>
-          <button onClick={toggleFullscreen} aria-label={full ? "Thoát toàn màn hình" : "Toàn màn hình"}>
-            <Icon name={full ? "stop" : "target"} size={15} />
-          </button>
-        </div>
-        <span className="lesson-count">
-          {done.size}/{lesson.sentences.length}
-        </span>
-      </div>
+      {lessonTop}
 
       <div className="lesson-body">
         <div className="lesson-main">
@@ -598,6 +1059,29 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
             }}
             onTime={setAt}
           />
+
+          {audioOnly && (
+            // Chế độ Âm thanh: thay khung hình bằng một mặt đồng hồ + nút phát lớn.
+            <div className="lesson-audio-card" aria-label="Trình phát âm thanh">
+              <div className="lesson-audio-seg">Câu {index + 1} / {lesson.sentences.length}</div>
+              <div className="lesson-audio-clock">{clock(at)}</div>
+              <div className="lesson-audio-dots" aria-hidden="true">
+                {Array.from({ length: 34 }, (_, dot) => {
+                  const done = (dot + 1) / 34 <= (at - target.start) / Math.max(0.4, target.end - target.start);
+                  return <span key={dot} className={done ? "on" : ""} />;
+                })}
+              </div>
+              <div className="lesson-audio-transport">
+                <button onClick={() => go(-1, true)} disabled={index === 0} aria-label="Câu trước"><Icon name="previous" size={18} /></button>
+                <button onClick={() => nudge(-3)} aria-label="Lùi 3 giây"><Icon name="replay" size={17} /></button>
+                <button className="lesson-audio-play" onClick={togglePlay} aria-label={playing ? "Tạm dừng" : "Phát"}>
+                  <Icon name={playing ? "stop" : "play"} size={26} />
+                </button>
+                <button onClick={playSentence} aria-label="Nghe lại từ đầu câu"><Icon name="replay" size={17} className="mirror" /></button>
+                <button onClick={() => go(1, true)} disabled={index >= lesson.sentences.length - 1} aria-label="Câu sau"><Icon name="previous" size={18} className="mirror" /></button>
+              </div>
+            </div>
+          )}
 
           {/* Thanh chạy cho thấy đang ở đâu trong cả video, và câu hiện tại nằm
               ở khúc nào — hai vạch khác màu. */}
@@ -638,7 +1122,8 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
             </div>
           )}
 
-          <div className="panel lesson-work">
+          {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- bôi đen chữ để dịch cụm, không phải nút bấm */}
+          <div className="panel lesson-work" onMouseUp={onPhraseSelect}>
             <div className="lesson-work-head">
               <b>#{sentence.index}{mode === "shadowing" && target.count > 1 ? "–" + (sentence.index + target.count - 1) : ""}</b>
               <span>
@@ -663,6 +1148,16 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                 // cho biết máy NGHE RA chữ gì, không chấm được giọng bạn chuẩn hay chưa.
                 <em className={`lesson-clarity${spoken.clarity >= 80 ? " good" : spoken.clarity >= 50 ? " fair" : " low"}`}>
                   <Icon name="chart" size={12} /> Độ rõ lời {spoken.clarity}%
+                </em>
+              )}
+              {mode === "shadowing" && spoken && prosody?.usable && (
+                <em
+                  className={`lesson-clarity${prosody.score >= 75 ? " good" : prosody.score >= 45 ? " fair" : " low"}`}
+                  title={prosody.comparedToVideo
+                    ? "Đối chiếu nhịp ngắt, độ nhấn và lên–xuống giọng trong bản ghi của bạn với cách người trong video nói câu này."
+                    : "Ước lượng từ nhịp ngắt, độ nhấn và lên–xuống giọng trong bản ghi của bạn."}
+                >
+                  <Icon name="volume" size={12} /> Ngữ điệu {prosody.score}%{prosody.comparedToVideo ? "" : " ~"}
                 </em>
               )}
               {mode === "dictation" && <em className={result?.percent === 100 ? "good" : ""}>Khớp: {result?.percent ?? 0}%</em>}
@@ -740,17 +1235,38 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                   </button>
                 </div>
 
-                {/* Ô trống theo số chữ cái: biết câu dài bao nhiêu từ mà không lộ chữ nào. */}
+                {/* Ô trống theo số chữ cái: biết câu dài bao nhiêu từ mà không lộ chữ nào.
+                    Bấm một ô để lộ riêng từ đó và tra nghĩa, không phải mở cả câu. */}
                 <div className="lesson-shapes">
-                  {shapes.map((shape, position) => (
-                    <span key={position} className={result?.words[position]?.ok ? "ok" : checked ? "miss" : ""}>
-                      {revealed || (checked && result?.words[position]?.ok)
-                        ? shape.word
-                        : hints > 0
-                          ? `${shape.word.slice(0, 1)}${"·".repeat(Math.max(0, shape.letters - 1))}`
-                          : "·".repeat(shape.letters || 1)}
-                    </span>
-                  ))}
+                  {shapes.map((shape, position) => {
+                    const shown = revealed || peeked.has(position) || (checked && result?.words[position]?.ok);
+                    const cls = result?.words[position]?.ok
+                      ? "ok"
+                      : checked
+                        ? "miss"
+                        : peeked.has(position)
+                          ? "peek"
+                          : "";
+                    return (
+                      <button
+                        type="button"
+                        key={position}
+                        className={cls}
+                        title="Bấm để xem từ và tra nghĩa"
+                        onClick={(event) => {
+                          setPeeked((current) => new Set(current).add(position));
+                          void lookUp(shape.word, event.currentTarget);
+                        }}
+                      >
+                        {shown
+                          ? shape.word
+                          : hints > 0
+                            ? `${shape.word.slice(0, 1)}${"·".repeat(Math.max(0, shape.letters - 1))}`
+                            : "·".repeat(shape.letters || 1)}
+                      </button>
+                    );
+                  })}
+                  {lookupCard}
                 </div>
 
                 {showVi && <p className="lesson-vi">{viCache[sentence.text] || "Đang dịch…"}</p>}
@@ -787,7 +1303,16 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                     <>
                       <p className={`shadowing-sentence${showIpa ? " with-ipa" : ""}`}>
                         {(withIpa(target.text, ipaCache) as { word: string; ipa: string; isWord: boolean; checked: boolean; estimated?: boolean }[]).map((row, position) => (
-                          <button className="shadowing-token lesson-word" key={position} onClick={(event) => void lookUp(row.word, event.currentTarget)} title="Bấm để tra nghĩa">
+                          <button
+                            className="shadowing-token lesson-word"
+                            key={position}
+                            onClick={(event) => {
+                              // Vừa bôi đen xong thì bỏ qua — để thẻ "Dịch cụm" xử lý.
+                              if (!window.getSelection()?.isCollapsed) return;
+                              void lookUp(row.word, event.currentTarget);
+                            }}
+                            title="Bấm để tra nghĩa"
+                          >
                             <span>{row.word}</span>
                             {/* Tra rồi mà không nguồn nào có — thường là tên riêng — thì để trống,
                                 đừng treo dấu "…" như thể vẫn đang tra. */}
@@ -808,25 +1333,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
 
                   {showVi && <p className="shadowing-vi">{viCache[target.text] || "Đang dịch…"}</p>}
 
-                  {lookup && (
-                    <div className="lesson-lookup lesson-lookup-popover" style={{ left: lookup.x, top: lookup.y }}>
-                      <div className="lesson-lookup-title">
-                        <b>{lookup.word}</b>
-                        <button className="lesson-lookup-speak" onClick={speakLookup} aria-label={`Phát âm ${lookup.word}`}>
-                          <Icon name="volume" size={15} />
-                        </button>
-                        <button className="lesson-lookup-close" onClick={() => setLookup(null)} aria-label="Đóng">×</button>
-                      </div>
-                      <div className="lesson-lookup-meta">
-                        {lookup.ipa && <code>{lookup.ipa}</code>}
-                        {lookup.part && <em>{lookup.part}</em>}
-                      </div>
-                      <strong>{lookup.meaning}</strong>
-                      {lookup.definitions && lookup.definitions.length > 0 && (
-                        <ul>{lookup.definitions.map((definition, position) => <li key={position}>{definition}</li>)}</ul>
-                      )}
-                    </div>
-                  )}
+                  {lookupCard}
                 </div>
 
                 {showText && (
@@ -895,6 +1402,45 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                       <audio className="shadowing-audio" controls src={recordUrl} preload="metadata" />
                     )}
 
+                    {prosody && !prosody.usable && (
+                      <div className="shadowing-prosody">
+                        <div className="shadowing-prosody-head"><b>Ngữ điệu</b></div>
+                        {prosody.notes.length > 0 && <ul>{prosody.notes.map((note, position) => <li key={position}>{note}</li>)}</ul>}
+                      </div>
+                    )}
+                    {prosody?.usable && (
+                      <div className="shadowing-prosody">
+                        <div className="shadowing-prosody-head">
+                          <b>{prosody.comparedToVideo ? `Ngữ điệu — so với người nói trong video ${prosody.score}%` : `Ngữ điệu (ước lượng) ${prosody.score}%`}</b>
+                          <small>{prosody.comparedToVideo ? "đối chiếu bản ghi của bạn với cách người trong video nói câu này" : "đo từ bản ghi của bạn — đang lấy phân tích giọng trong video…"}</small>
+                        </div>
+                        {prosody.comparedToVideo && prosody.modelRef && (
+                          <p className="shadowing-prosody-model">
+                            {prosody.modelRef.summary && <span>{prosody.modelRef.summary} </span>}
+                            Người nói nhấn: <b>{prosody.modelRef.stressedWords.join(", ")}</b>
+                            {prosody.modelRef.pauseAfter.length > 0 && <> · ngắt sau: <b>{prosody.modelRef.pauseAfter.join(", ")}</b></>}
+                            {" · "}cuối câu {prosody.modelRef.finalPitch === "rise" ? "lên giọng" : prosody.modelRef.finalPitch === "flat" ? "giữ đều" : "xuống giọng"}
+                          </p>
+                        )}
+                        <div className="shadowing-prosody-bars">
+                          {[
+                            { label: "Nhịp ngắt", value: prosody.rhythm },
+                            { label: "Nhấn nhá", value: prosody.stress },
+                            ...(prosody.melody !== null ? [{ label: "Lên–xuống giọng", value: prosody.melody }] : []),
+                          ].map((item) => (
+                            <div key={item.label} className={`shadowing-prosody-bar${item.value >= 70 ? " good" : item.value >= 45 ? " fair" : " low"}`}>
+                              <span>{item.label}</span>
+                              <i><b style={{ width: `${Math.max(4, item.value)}%` }} /></i>
+                              <em>{item.value}%</em>
+                            </div>
+                          ))}
+                        </div>
+                        {prosody.notes.length > 0 && (
+                          <ul>{prosody.notes.map((note, position) => <li key={position}>{note}</li>)}</ul>
+                        )}
+                      </div>
+                    )}
+
                     {/* Từ thừa nằm đúng chỗ nó chen vào, không dồn xuống cuối. */}
                     <div className="shadowing-chips">
                       {spoken.marks.map((mark, position) => (
@@ -937,7 +1483,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                 {/* Thanh phát nằm dưới cùng, sau phần kết quả — nghe lại câu mẫu là
                     việc làm SAU khi xem mình sai chỗ nào. */}
                 <div className="shadowing-repeat-controls">
-                  <button onClick={() => go(-1)} disabled={index === 0} aria-label="Câu trước"><Icon name="previous" size={17} /></button>
+                  <button onClick={() => go(-1, true)} disabled={index === 0} aria-label="Câu trước"><Icon name="previous" size={17} /></button>
                   <button onClick={playSentence} aria-label="Nghe lại"><Icon name="replay" size={17} /></button>
                   <button className="play" onClick={playSentence} aria-label="Phát câu mẫu"><Icon name="play" size={21} /></button>
                   <div className="shadowing-inline-rates">
@@ -955,7 +1501,9 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                 disabled={listening}
                 onClick={() => {
                   finish();
-                  if (index < lesson.sentences.length - 1) go(1);
+                  // Sang câu mới thì phát luôn câu mẫu — nói nhại là nghe rồi nhại
+                  // theo, không có lý do gì bắt bấm phát thêm một lần nữa.
+                  if (index < lesson.sentences.length - 1) go(1, true);
                 }}
               >
                 {index < lesson.sentences.length - 1 ? "Câu tiếp theo" : "Hoàn thành"} <Icon name={index < lesson.sentences.length - 1 ? "arrow" : "check"} size={16} />
@@ -968,29 +1516,38 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
 
         <aside className="lesson-list">
           <div className="lesson-list-tabs">
-            <b className="active"><Icon name="list" size={15} /> Phụ đề</b>
+            <button className="active" type="button"><Icon name="list" size={15} /> Phụ đề</button>
+            <button type="button" onClick={() => void openOverview()}><Icon name="sparkles" size={15} /> Gợi ý bài học</button>
           </div>
 
           {/* Mốc câu của bài cũ không sửa lại được: lúc lưu, mốc của từng dòng
               phụ đề đã bị gộp thành mốc câu. Chỉ còn cách bắt lại từ video. */}
           {needsRecapture(lesson) && (
             <p className="lesson-stale" role="status">
-              Bài này cắt bằng bản cũ nên mốc câu lệch khoảng một hai giây. Bắt lại phụ đề từ video để sửa — bài cũ sẽ được thay, không tạo bản trùng.
+              <b>↻ Phụ đề cần cập nhật</b>
+              <span>Thêm lại video để sửa timing; bài cũ sẽ được thay tự động.</span>
             </p>
           )}
 
           <div className="lesson-list-head">
-            <span>{done.size}/{lesson.sentences.length}</span>
-            <button className="lesson-list-toggle" onClick={() => setShowText((value) => !value)} aria-pressed={showText}>
-              {showText ? "Ẩn chữ" : "Hiện chữ"}
-            </button>
+            <span><b>{done.size}</b>/{lesson.sentences.length}</span>
+            <div className="lesson-list-head-actions">
+              <button className="lesson-list-reset" onClick={resetProgress} disabled={done.size === 0}>
+                <Icon name="replay" size={12} /> Đặt lại tiến độ
+              </button>
+              {mode === "dictation" && (
+                <button className={`lesson-list-toggle${previewAll ? " on" : ""}`} onClick={() => setPreviewAll((value) => !value)} aria-pressed={previewAll}>
+                  {previewAll ? "Đang xem trước" : "Xem trước"}
+                </button>
+              )}
+              <button className="lesson-list-visibility" onClick={() => setShowText((value) => !value)} aria-pressed={showText} aria-label={showText ? "Ẩn nội dung phụ đề" : "Hiện nội dung phụ đề"}>
+                <span>Hiện</span><i aria-hidden="true" />
+              </button>
+            </div>
           </div>
 
           <div className="lesson-list-progress">
             <span>Tiến độ</span>
-            <button className="lesson-list-reset" onClick={resetProgress} disabled={done.size === 0}>
-              <Icon name="replay" size={12} /> Đặt lại tiến độ
-            </button>
             <b>{Math.round((done.size / lesson.sentences.length) * 100)}%</b>
           </div>
           <div className="lesson-list-bar">
@@ -999,12 +1556,19 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
 
           <ol>
             {lesson.sentences.map((item, position) => {
-              // Chép chính tả thì che câu chưa làm — hiện ra là mất bài. Người học
-              // vẫn tắt được chữ hẳn bằng nút "Ẩn chữ" ở trên.
-              const open = mode === "shadowing" || done.has(item.index) || position === index;
+              // Chép chính tả thì che MỌI câu chưa xong — kể cả câu ĐANG làm dù nó
+              // đã từng chép đúng trước đó, vì hiện nguyên văn bên phải là lộ đáp
+              // án lần này. Mở lại khi: đã chấm câu này lần này, hoặc là câu khác
+              // đã chép xong, hoặc bật "Xem trước cả bài". Nói nhại thì luôn cho xem.
+              const active = position === index;
+              const open =
+                mode === "shadowing" ||
+                previewAll ||
+                (active ? checked : done.has(item.index));
               return (
                 <li key={item.index}>
                   <button
+                    ref={active ? activeCaptionRef : undefined}
                     className={`${position === index ? "active" : ""} ${done.has(item.index) ? "done" : ""}`}
                     onClick={() => go(position - index, true)}
                   >
@@ -1016,7 +1580,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                         <em className="at">{clock(item.start)}</em>
                       </span>
                       <span className="lesson-list-text">
-                        {!showText
+                        {!showText && !previewAll
                           ? ""
                           : open
                             ? item.text
@@ -1029,6 +1593,26 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
             })}
           </ol>
         </aside>
+
+        {phrase && (
+          <div className="phrase-bar" style={{ left: phrase.x, top: phrase.y }}>
+            <div className="phrase-bar-head">
+              <span>{phrase.text}</span>
+              <button className="phrase-bar-close" onClick={() => setPhrase(null)} aria-label="Đóng">×</button>
+            </div>
+            <p className="phrase-bar-vi">{phrase.loading ? "Đang dịch…" : phrase.vi}</p>
+            <div className="phrase-bar-actions">
+              <button onClick={() => void translateSelectedPhrase()} disabled={phrase.loading}>
+                <Icon name="search" size={13} /> {phrase.vi && !phrase.loading ? "Dịch lại" : "Dịch cụm"}
+              </button>
+              {vocab && (
+                <button className={phrase.saved ? "done" : ""} onClick={() => void saveSelectedPhrase()} disabled={phrase.saved}>
+                  <Icon name={phrase.saved ? "check" : "star"} size={13} /> {phrase.saved ? "Đã lưu vào kho" : "Lưu vào kho"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {coachOpen && (
           <div className="ai-coach-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCoachOpen(false); }}>
@@ -1059,6 +1643,22 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode }: 
                     <ul>
                       {coachTips.map((tip) => (
                         <li key={tip.word}><b>{tip.word}</b>{tip.ipa && <code>{tip.ipa}</code>}<span>{tip.how}</span></li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {!coaching && !coachError && coachLinks.length > 0 && (
+                  <>
+                    <h3>{coachTips.length > 0 ? "3" : "2"}. Nối âm trong câu</h3>
+                    <p className="ai-coach-hint">Người bản ngữ đọc dính những chỗ này, không tách rời từng từ:</p>
+                    <ul className="ai-coach-links">
+                      {coachLinks.map((link, position) => (
+                        <li key={position}>
+                          <b>{link.pair}</b>
+                          <code>{link.blend}</code>
+                          {link.rule && <em>{link.rule}</em>}
+                          <span>{link.how}</span>
+                        </li>
                       ))}
                     </ul>
                   </>

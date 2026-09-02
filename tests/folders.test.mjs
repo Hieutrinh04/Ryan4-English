@@ -18,6 +18,7 @@ const {
   emptyStore,
   folderDate,
   folderPath,
+  folderStorageKey,
   foldersKey,
   foldersOf,
   foldersWithCounts,
@@ -26,6 +27,7 @@ const {
   removeFolder,
   removeWords,
   saveFolders,
+  setFolderScope,
   toggleWord,
   wordsIn,
 } = await import("../lib/folders.mjs");
@@ -224,4 +226,22 @@ test("lưu rồi đọc lại giữ nguyên danh sách, ghi chú và thành viê
   assert.equal(lại.list[0].name, "Ôn gấp");
   assert.equal(lại.list[0].note, "trước kỳ thi");
   assert.deepEqual(lại.members[lại.list[0].id], ["w1"]);
+});
+
+test("tách danh sách theo tài khoản và chỉ chuyển kho cũ cho chủ sở hữu", () => {
+  store.clear();
+  const legacy = addFolder(emptyStore(), "Thư mục riêng của chủ");
+  store.set(foldersKey, JSON.stringify(legacy));
+
+  setFolderScope("owner-id", true);
+  assert.equal(folderStorageKey(), `${foldersKey}:user:owner-id`);
+  assert.equal(readFolders().list[0].name, "Thư mục riêng của chủ");
+
+  setFolderScope("member-id", false);
+  assert.deepEqual(readFolders(), emptyStore());
+  saveFolders(addFolder(emptyStore(), "Danh sách của thành viên"));
+
+  setFolderScope("owner-id", false);
+  assert.equal(readFolders().list[0].name, "Thư mục riêng của chủ");
+  setFolderScope(null);
 });

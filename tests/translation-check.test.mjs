@@ -3,7 +3,7 @@
 // thư viện." với câu mẫu "Lila sat alone in the corner of the library."
 import assert from "node:assert/strict";
 import test from "node:test";
-import { alignTokens, baseForm, buildPassages, gradeTranslation, isMetaSentence, notesFor, themeOf, tokenize } from "../lib/translation-check.mjs";
+import { alignTokens, baseForm, buildPassages, containsTargetTerm, gradeTranslation, isMetaSentence, notesFor, themeOf, tokenize } from "../lib/translation-check.mjs";
 
 const REFERENCE = "Lila sat alone in the corner of the library.";
 
@@ -89,6 +89,13 @@ test("isMetaSentence: loại câu khuôn nói VỀ từ thay vì dùng từ", ()
   assert.equal(isMetaSentence("Cô ấy cắt quả táo thành tám lát mỏng.", "apple"), false);
 });
 
+test("containsTargetTerm: chặn từ khóa tiếng Anh bị chép vào đề tiếng Việt", () => {
+  assert.equal(containsTargetTerm("Mỗi sáng tôi chạy quanh công viên để run sức khỏe.", ["run"]), true);
+  assert.equal(containsTargetTerm("Mỗi sáng tôi chạy quanh công viên để rèn luyện sức khỏe.", ["run"]), false);
+  assert.equal(containsTargetTerm("Cô ấy bỏ lỡ cơ hội mua hàng miễn thuế.", ["miss out", "duty-free"]), false);
+  assert.equal(containsTargetTerm("Cô ấy không muốn miss out cơ hội này.", ["miss out"]), true);
+});
+
 test("buildPassages: gom theo chủ đề, bỏ câu khuôn, cắt thành đoạn ngắn", () => {
   const tao = (term, topic, vi) => ({ word: { term, topic }, vi, en: `${term} sentence.` });
   const tasks = [
@@ -110,6 +117,26 @@ test("buildPassages: chủ đề dài bị cắt thành nhiều đoạn", () => 
   const tasks = Array.from({ length: 14 }, (_, position) => ({ word: { term: `w${position}`, topic: "FRUIT" }, vi: `Câu số ${position}.`, en: `Sentence ${position}.` }));
   const passages = buildPassages(tasks, { size: 6 });
   assert.deepEqual(passages.map((item) => item.tasks.length), [6, 6, 2]);
+});
+
+test("buildPassages: minSize dồn các chủ đề nhỏ thành vài đoạn dài", () => {
+  // 13 từ, mỗi từ một chủ đề — không có minSize thì ra 13 đoạn một câu.
+  const tasks = Array.from({ length: 13 }, (_, position) => ({
+    word: { term: `w${position}`, topic: `TOPIC_${position}` },
+    vi: `Câu số ${position}.`,
+    en: `Sentence ${position}.`,
+  }));
+  assert.equal(buildPassages(tasks, { size: 6 }).length, 13, "không có minSize → mỗi chủ đề một đoạn");
+  const merged = buildPassages(tasks, { size: 6, minSize: 4 });
+  assert.deepEqual(merged.map((item) => item.tasks.length), [6, 7], "gộp thành 2 đoạn, đoạn cuối ngắn dồn lên");
+  assert.equal(merged.flatMap((item) => item.tasks).length, 13, "không mất câu nào");
+});
+
+test("buildPassages: minSize không tạo đoạn cụt ở cuối", () => {
+  const tasks = Array.from({ length: 7 }, (_, position) => ({
+    word: { term: `w${position}`, topic: `T${position}` }, vi: `Câu ${position}.`, en: `S${position}.`,
+  }));
+  assert.deepEqual(buildPassages(tasks, { size: 6, minSize: 4 }).map((p) => p.tasks.length), [7]);
 });
 
 test("themeOf: xếp câu vào nhóm chủ đề theo từ khoá trong câu tiếng Anh", () => {

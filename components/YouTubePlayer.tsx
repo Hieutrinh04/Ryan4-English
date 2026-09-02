@@ -86,10 +86,16 @@ export default function YouTubePlayer({
   useEffect(() => {
     let alive = true;
     let ticker = 0;
+    const container = holder.current;
+    // IFrame Player API thay chính node được truyền vào bằng một <iframe>.
+    // Node đó không được để React quản lý, nếu không lúc chuyển màn React sẽ cố
+    // xoá một node đã bị YouTube thay mất và ném lỗi removeChild.
+    const mount = document.createElement("div");
+    container?.replaceChildren(mount);
 
     void loadApi().then((api) => {
-      if (!alive || !holder.current) return;
-      player.current = new api.Player(holder.current, {
+      if (!alive || !container) return;
+      player.current = new api.Player(mount, {
         videoId,
         playerVars: { rel: 0, modestbranding: 1, playsinline: 1 },
         events: {
@@ -105,12 +111,11 @@ export default function YouTubePlayer({
               playing: () => player.current?.getPlayerState() === api.PlayerState.PLAYING,
             };
             onReady?.(handle);
-            // Mười lần mỗi giây. Bốn lần là đủ để làm nổi câu đang phát, nhưng
-            // bộ dừng cuối câu cũng đọc mốc này: trễ một nhịp 250ms là học viên
-            // nghe lố sang cả phần đầu của câu sau.
+            // Bốn mươi lần mỗi giây: bộ dừng cuối câu sai tối đa khoảng 25ms,
+            // đủ ngắn để không nghe lọt âm đầu của câu kế tiếp.
             ticker = window.setInterval(() => {
               if (player.current) onTime?.(player.current.getCurrentTime());
-            }, 100);
+            }, 25);
           },
           onError: () => alive && setFailed(true),
         },
@@ -120,8 +125,13 @@ export default function YouTubePlayer({
     return () => {
       alive = false;
       if (ticker) window.clearInterval(ticker);
-      player.current?.destroy();
+      try {
+        player.current?.destroy();
+      } catch {
+        // YouTube có thể đã tự tháo iframe khi trang đổi quá nhanh.
+      }
       player.current = null;
+      container?.replaceChildren();
     };
     // Đổi video là dựng lại trình phát; các hàm gọi lại cố tình không nằm trong
     // danh sách phụ thuộc để không dựng lại mỗi lần cha vẽ lại.
@@ -138,5 +148,5 @@ export default function YouTubePlayer({
       </div>
     );
 
-  return <div className="yt-player"><div ref={holder} /></div>;
+  return <div className="yt-player" ref={holder} />;
 }

@@ -264,7 +264,7 @@
     "number": 30,
     "term": "firefighter",
     "partOfSpeech": "n",
-    "ipa": "/ˈfaɪərfaɪtər/ FRUIT - TRÁI CÂY",
+    "ipa": "/ˈfaɪərfaɪtər/",
     "meaning": "lính cứu hỏa",
     "topic": "JOB - NGHỀ NGHIỆP",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -471,7 +471,7 @@
     "number": 53,
     "term": "blueberry",
     "partOfSpeech": "n",
-    "ipa": "/ˈbluːˌbər.i/ /ˈbluːˌber.i/ FAMILY - GIA ĐÌNH",
+    "ipa": "/ˈbluːˌbər.i/ /ˈbluːˌber.i/",
     "meaning": "quả việt quất",
     "topic": "FRUIT - TRÁI CÂY",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -499,7 +499,7 @@
     "term": "father",
     "partOfSpeech": "n",
     "ipa": "/ˈfɑː.ðɚ/",
-    "meaning": "bố, cha bố hoặc mẹ",
+    "meaning": "bố, cha",
     "topic": "FAMILY - GIA ĐÌNH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -508,7 +508,7 @@
     "term": "parent",
     "partOfSpeech": "n",
     "ipa": "/ˈpeərənt/",
-    "meaning": "(parents: bố mẹ, phụ huynh)",
+    "meaning": "bố hoặc mẹ; bố mẹ, phụ huynh",
     "topic": "FAMILY - GIA ĐÌNH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -517,7 +517,7 @@
     "term": "daughter",
     "partOfSpeech": "n",
     "ipa": "/ˈdɑː.t̬ ɚ/",
-    "meaning": "con gái 1",
+    "meaning": "con gái",
     "topic": "FAMILY - GIA ĐÌNH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -571,7 +571,7 @@
     "term": "grandfather",
     "partOfSpeech": "n",
     "ipa": "/ˈɡræn.fɑː.ðɚ/",
-    "meaning": "ông nội (ngoại) ông hoặc bà",
+    "meaning": "ông nội, ông ngoại",
     "topic": "FAMILY - GIA ĐÌNH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -580,7 +580,7 @@
     "term": "grandparent",
     "partOfSpeech": "n",
     "ipa": "/ˈɡræn.per.ənt/",
-    "meaning": "(grandparents: ông bà)",
+    "meaning": "ông hoặc bà; ông bà",
     "topic": "FAMILY - GIA ĐÌNH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -651,7 +651,7 @@
     "number": 73,
     "term": "husband",
     "partOfSpeech": "n",
-    "ipa": "/ˈhʌz.bənd/ ANIMAL - ĐỘNG VẬT",
+    "ipa": "/ˈhʌz.bənd/",
     "meaning": "chồng",
     "topic": "FAMILY - GIA ĐÌNH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -787,7 +787,7 @@
     "term": "buffalo",
     "partOfSpeech": "n",
     "ipa": "/ˈbʌfələʊ/",
-    "meaning": "con trâu 2",
+    "meaning": "con trâu",
     "topic": "ANIMAL - ĐỘNG VẬT",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -1075,7 +1075,7 @@
     "term": "bee",
     "partOfSpeech": "n",
     "ipa": "/biː/",
-    "meaning": "ong 3",
+    "meaning": "ong",
     "topic": "ANIMAL - ĐỘNG VẬT",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -1200,7 +1200,7 @@
     "number": 134,
     "term": "swallow",
     "partOfSpeech": "n",
-    "ipa": "/ˈswɑː.loʊ/ COLOR - MÀU SẮC",
+    "ipa": "/ˈswɑː.loʊ/",
     "meaning": "chim nhạn, én",
     "topic": "ANIMAL - ĐỘNG VẬT",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -1354,7 +1354,7 @@
     "term": "ivory (n, adj)",
     "partOfSpeech": "",
     "ipa": "/ˈaɪ.vɚ.i/",
-    "meaning": "màu trắng ngà 4",
+    "meaning": "màu trắng ngà",
     "topic": "COLOR - MÀU SẮC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -1380,7 +1380,7 @@
     "number": 154,
     "term": "blond (n, adj) BODY",
     "partOfSpeech": "",
-    "ipa": "/blɑnd/ PART - BỘ PHẬN CƠ THỂ",
+    "ipa": "/blɑnd/",
     "meaning": "vàng hoe",
     "topic": "COLOR - MÀU SẮC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -1624,7 +1624,7 @@
     "term": "finger",
     "partOfSpeech": "n",
     "ipa": "/ˈfɪŋ.ɡɚ/",
-    "meaning": "ngón tay 5",
+    "meaning": "ngón tay",
     "topic": "BODY PART - BỘ PHẬN CƠ THỂ",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -1668,7 +1668,7 @@
     "number": 186,
     "term": "heel",
     "partOfSpeech": "n",
-    "ipa": "/hiːl/ SCHOOL - TRƯỜNG HỌC",
+    "ipa": "/hiːl/",
     "meaning": "gót chân",
     "topic": "BODY PART - BỘ PHẬN CƠ THỂ",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -1857,7 +1857,7 @@
     "number": 207,
     "term": "public school CHARACTER",
     "partOfSpeech": "n",
-    "ipa": "/ˌpʌblɪk ˈskuːl/ - TÍNH CÁCH",
+    "ipa": "/ˌpʌblɪk ˈskuːl/",
     "meaning": "trường công",
     "topic": "SCHOOL - TRƯỜNG HỌC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -1876,7 +1876,7 @@
     "term": "alert",
     "partOfSpeech": "adj",
     "ipa": "/əˈlɝːt/",
-    "meaning": "tỉnh táo, cảnh giác 6",
+    "meaning": "tỉnh táo, cảnh giác",
     "topic": "CHARACTER - TÍNH CÁCH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -2137,7 +2137,7 @@
     "term": "honest",
     "partOfSpeech": "adj",
     "ipa": "/ˈɑː.nɪst/",
-    "meaning": "chân thật, trung thành",
+    "meaning": "trung thực, chân thật",
     "topic": "CHARACTER - TÍNH CÁCH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -2164,7 +2164,7 @@
     "term": "impartial",
     "partOfSpeech": "adj",
     "ipa": "/ɪmˈpɑːr.ʃəl/",
-    "meaning": "trung lập, ngay thẳng 7",
+    "meaning": "trung lập, ngay thẳng",
     "topic": "CHARACTER - TÍNH CÁCH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -2326,7 +2326,7 @@
     "term": "passive",
     "partOfSpeech": "adj",
     "ipa": "/ˈpæs.ɪv/",
-    "meaning": "nhiệt huyết",
+    "meaning": "thụ động",
     "topic": "CHARACTER - TÍNH CÁCH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -2452,7 +2452,7 @@
     "term": "shallow",
     "partOfSpeech": "adj",
     "ipa": "/ˈʃæl.oʊ/",
-    "meaning": "nông cạn 8",
+    "meaning": "nông cạn",
     "topic": "CHARACTER - TÍNH CÁCH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -2650,7 +2650,7 @@
     "term": "unscrupulous",
     "partOfSpeech": "adj",
     "ipa": "/ʌnˈskruː.pjə.ləs/",
-    "meaning": "cẩu thả",
+    "meaning": "vô nguyên tắc, vô đạo đức",
     "topic": "CHARACTER - TÍNH CÁCH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -2667,8 +2667,8 @@
     "number": 297,
     "term": "weak SCHOOL",
     "partOfSpeech": "adj",
-    "ipa": "/wiːk/ OBJECT - ĐỒ DÙNG HỌC",
-    "meaning": "yếu đuối TẬP",
+    "ipa": "/wiːk/",
+    "meaning": "yếu đuối",
     "topic": "CHARACTER - TÍNH CÁCH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -2731,7 +2731,7 @@
     "term": "book",
     "partOfSpeech": "n",
     "ipa": "/bʊk/",
-    "meaning": "quyển sách 9",
+    "meaning": "quyển sách",
     "topic": "SCHOOL OBJECT - ĐỒ DÙNG HỌC TẬP",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -2847,7 +2847,7 @@
     "number": 317,
     "term": "blackboard",
     "partOfSpeech": "n",
-    "ipa": "/ˈblæk.bɔːrd/ NATURE - THIÊN NHIÊN",
+    "ipa": "/ˈblæk.bɔːrd/",
     "meaning": "bảng đen",
     "topic": "SCHOOL OBJECT - ĐỒ DÙNG HỌC TẬP",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -3010,7 +3010,7 @@
     "term": "savanna",
     "partOfSpeech": "n",
     "ipa": "/səˈvæn.ə/",
-    "meaning": "hoang mạc, thảo nguyên 10",
+    "meaning": "hoang mạc, thảo nguyên",
     "topic": "NATURE - THIÊN NHIÊN",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -3216,7 +3216,7 @@
     "number": 358,
     "term": "scenery",
     "partOfSpeech": "n",
-    "ipa": "/ˈsiː.nɚ.i/ LEISURE - GIẢI TRÍ",
+    "ipa": "/ˈsiː.nɚ.i/",
     "meaning": "phong cảnh, cảnh vật",
     "topic": "NATURE - THIÊN NHIÊN",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -3280,7 +3280,7 @@
     "term": "opera",
     "partOfSpeech": "n",
     "ipa": "/ˈɑː.pɚ.ə/",
-    "meaning": "nhạc kịch 11",
+    "meaning": "nhạc kịch",
     "topic": "LEISURE - GIẢI TRÍ",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -3540,7 +3540,7 @@
     "number": 394,
     "term": "photography",
     "partOfSpeech": "n",
-    "ipa": "/fəˈtɑːɡrəfi/ HOUSE - NHÀ CỬA",
+    "ipa": "/fəˈtɑːɡrəfi/",
     "meaning": "nhiếp ảnh",
     "topic": "LEISURE - GIẢI TRÍ",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -3550,7 +3550,7 @@
     "term": "living room",
     "partOfSpeech": "n",
     "ipa": "/ˈlɪvɪŋ ruːm/",
-    "meaning": "phòng khách 12",
+    "meaning": "phòng khách",
     "topic": "HOUSE - NHÀ CỬA",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -3630,7 +3630,7 @@
     "number": 404,
     "term": "entrance",
     "partOfSpeech": "n",
-    "ipa": "/ˈen.trəns",
+    "ipa": "/ˈen.trəns/",
     "meaning": "lối vào, cổng vào",
     "topic": "HOUSE - NHÀ CỬA",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -3838,7 +3838,7 @@
     "term": "cooker",
     "partOfSpeech": "n",
     "ipa": "/ˈkʊkər/",
-    "meaning": "nồi cơm điện 13",
+    "meaning": "nồi cơm điện",
     "topic": "HOUSE - NHÀ CỬA",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -4089,7 +4089,7 @@
     "number": 455,
     "term": "hanger",
     "partOfSpeech": "n",
-    "ipa": "/ˈhæŋər/ VEGETABLE - RAU CỦ",
+    "ipa": "/ˈhæŋər/",
     "meaning": "móc treo quần áo",
     "topic": "HOUSE - NHÀ CỬA",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -4117,7 +4117,7 @@
     "term": "cabbage",
     "partOfSpeech": "n",
     "ipa": "/ˈkæb.ɪdʒ/",
-    "meaning": "bắp cải 14",
+    "meaning": "bắp cải",
     "topic": "VEGETABLE - RAU CỦ",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -4350,7 +4350,7 @@
     "number": 484,
     "term": "herb",
     "partOfSpeech": "n",
-    "ipa": "/hɜːb/ DRINK - ĐỒ UỐNG",
+    "ipa": "/hɜːb/",
     "meaning": "rau thơm (nói chung)",
     "topic": "VEGETABLE - RAU CỦ",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -4396,7 +4396,7 @@
     "term": "coffee",
     "partOfSpeech": "n",
     "ipa": "/ˈkɑː.fi/",
-    "meaning": "cà phê 15",
+    "meaning": "cà phê",
     "topic": "DRINK - ĐỒ UỐNG",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -4467,7 +4467,7 @@
     "number": 497,
     "term": "ice cream",
     "partOfSpeech": "n",
-    "ipa": "/ˈaɪs ˌkriːm/ FOOD - ĐỒ ĂN",
+    "ipa": "/ˈaɪs ˌkriːm/",
     "meaning": "kem",
     "topic": "DRINK - ĐỒ UỐNG",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -4675,7 +4675,7 @@
     "term": "chicken nugget",
     "partOfSpeech": "n",
     "ipa": "/ˈtʃɪk.ɪn ˈnʌɡ.ɪt/",
-    "meaning": "gà viên chiên 16",
+    "meaning": "gà viên chiên",
     "topic": "FOOD - ĐỒ ĂN",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -4737,7 +4737,7 @@
     "number": 527,
     "term": "porridge BODY",
     "partOfSpeech": "n",
-    "ipa": "/ˈpɔːr.ɪdʒ/ MOVEMENT - ĐỘNG TÁC",
+    "ipa": "/ˈpɔːr.ɪdʒ/",
     "meaning": "cháo",
     "topic": "FOOD - ĐỒ ĂN",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -4954,7 +4954,7 @@
     "term": "cry",
     "partOfSpeech": "v",
     "ipa": "/kraɪ/",
-    "meaning": "khóc lóc 17",
+    "meaning": "khóc lóc",
     "topic": "BODY MOVEMENT - ĐỘNG TÁC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -5151,7 +5151,7 @@
     "number": 573,
     "term": "slip",
     "partOfSpeech": "v",
-    "ipa": "/slɪp/ CLOTHES - TRANG PHỤC",
+    "ipa": "/slɪp/",
     "meaning": "trượt, tuột",
     "topic": "BODY MOVEMENT - ĐỘNG TÁC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -5233,7 +5233,7 @@
     "term": "pants",
     "partOfSpeech": "n",
     "ipa": "/pænts/",
-    "meaning": "quần 18",
+    "meaning": "quần",
     "topic": "CLOTHES - TRANG PHỤC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -5521,7 +5521,7 @@
     "term": "cuff",
     "partOfSpeech": "n",
     "ipa": "/kʌf/",
-    "meaning": "cổ tay áo 19",
+    "meaning": "cổ tay áo",
     "topic": "CLOTHES - TRANG PHỤC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -5610,7 +5610,7 @@
     "number": 624,
     "term": "silver",
     "partOfSpeech": "n",
-    "ipa": "/ˈsɪlvər/ FEELING - CẢM XÚC",
+    "ipa": "/ˈsɪlvər/",
     "meaning": "bạc",
     "topic": "CLOTHES - TRANG PHỤC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -5800,7 +5800,7 @@
     "term": "upset",
     "partOfSpeech": "adj",
     "ipa": "/ˌʌpˈset/",
-    "meaning": "buồn bực 20",
+    "meaning": "buồn bực",
     "topic": "FEELING - CẢM XÚC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -6079,7 +6079,7 @@
     "term": "irritated",
     "partOfSpeech": "adj",
     "ipa": "/ˈɪr.ə.teɪ.t̬ ɪd/",
-    "meaning": "tức tối, khó chịu 21",
+    "meaning": "tức tối, khó chịu",
     "topic": "FEELING - CẢM XÚC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -6240,7 +6240,7 @@
     "number": 694,
     "term": "offended",
     "partOfSpeech": "adj",
-    "ipa": "/əˈfendɪd",
+    "ipa": "/əˈfendɪd/",
     "meaning": "phật ý, cảm thấy bị xúc phạm",
     "topic": "FEELING - CẢM XÚC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -6367,7 +6367,7 @@
     "term": "shameful",
     "partOfSpeech": "adj",
     "ipa": "/ˈʃeɪm.fəl/",
-    "meaning": "đáng hổ thẹn, ngượng 22",
+    "meaning": "đáng hổ thẹn, ngượng",
     "topic": "FEELING - CẢM XÚC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -6438,7 +6438,7 @@
     "number": 716,
     "term": "uptight",
     "partOfSpeech": "adj",
-    "ipa": "/ˌʌpˈtaɪt/ COOKING - NẤU ĂN",
+    "ipa": "/ˌʌpˈtaɪt/",
     "meaning": "căng thẳng, lo lắng",
     "topic": "FEELING - CẢM XÚC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -6646,7 +6646,7 @@
     "term": "blanch",
     "partOfSpeech": "v",
     "ipa": "/blæntʃ/",
-    "meaning": "chần thức ăn 23",
+    "meaning": "chần thức ăn",
     "topic": "COOKING - NẤU ĂN",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -6736,7 +6736,7 @@
     "term": "chill",
     "partOfSpeech": "v",
     "ipa": "/tʃɪl/",
-    "meaning": "làm tan giá, rã đông",
+    "meaning": "làm lạnh, để lạnh",
     "topic": "COOKING - NẤU ĂN",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -6816,7 +6816,7 @@
     "number": 758,
     "term": "roll VEHICLES automobile",
     "partOfSpeech": "v",
-    "ipa": "/roʊl/ - PHƯƠNG TIỆN GIAO THÔNG /ˈɔːtəməbiːl/",
+    "ipa": "/roʊl/",
     "meaning": "cuộn",
     "topic": "COOKING - NẤU ĂN",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -6898,7 +6898,7 @@
     "term": "subway",
     "partOfSpeech": "n",
     "ipa": "/ˈsʌbweɪ/",
-    "meaning": "tàu điện ngầm 24",
+    "meaning": "tàu điện ngầm",
     "topic": "VEHICLES - PHƯƠNG TIỆN GIAO THÔNG",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -7005,7 +7005,7 @@
     "number": 779,
     "term": "submarine",
     "partOfSpeech": "n",
-    "ipa": "/ˌsʌbməˈriːn/ TRAVEL - DU LỊCH",
+    "ipa": "/ˌsʌbməˈriːn/",
     "meaning": "tàu ngầm",
     "topic": "VEHICLES - PHƯƠNG TIỆN GIAO THÔNG",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -7177,7 +7177,7 @@
     "term": "passport",
     "partOfSpeech": "n",
     "ipa": "/ˈpæspɔːrt/",
-    "meaning": "hộ chiếu 25",
+    "meaning": "hộ chiếu",
     "topic": "TRAVEL - DU LỊCH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -7203,7 +7203,7 @@
     "number": 801,
     "term": "luggage",
     "partOfSpeech": "n",
-    "ipa": "/ˈlʌɡɪdʒ/ SUBJECT - MÔN HỌC",
+    "ipa": "/ˈlʌɡɪdʒ/",
     "meaning": "hành lý",
     "topic": "TRAVEL - DU LỊCH",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -7212,7 +7212,7 @@
     "number": 802,
     "term": "English Mathematics",
     "partOfSpeech": "n",
-    "ipa": "/ˈɪŋɡlɪʃ/ /ˌmæθəˈmætɪks/",
+    "ipa": "/ˈɪŋɡlɪʃ/",
     "meaning": "tiếng Anh",
     "topic": "SUBJECT - MÔN HỌC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -7383,7 +7383,7 @@
     "number": 821,
     "term": "Economics",
     "partOfSpeech": "n",
-    "ipa": "/ˌiːkəˈnɑːmɪks/ SHAPE - HÌNH KHỐI",
+    "ipa": "/ˌiːkəˈnɑːmɪks/",
     "meaning": "kinh tế học",
     "topic": "SUBJECT - MÔN HỌC",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -7438,7 +7438,7 @@
     "term": "trapezoid",
     "partOfSpeech": "n",
     "ipa": "/ˈtræp.ɪ.zɔɪd/",
-    "meaning": "hình thang 26",
+    "meaning": "hình thang",
     "topic": "SHAPE - HÌNH KHỐI",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -7536,7 +7536,7 @@
     "number": 838,
     "term": "cube soccer",
     "partOfSpeech": "n",
-    "ipa": "/kjuːb/ SPORTS - THỂ THAO /ˈsɑːkər/",
+    "ipa": "/kjuːb/",
     "meaning": "hình lập phương",
     "topic": "SHAPE - HÌNH KHỐI",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -7708,7 +7708,7 @@
     "term": "billiards",
     "partOfSpeech": "n",
     "ipa": "/ˈbɪljərdz/",
-    "meaning": "bi-a 27",
+    "meaning": "bi-a",
     "topic": "SPORTS - THỂ THAO",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -7716,7 +7716,7 @@
     "number": 858,
     "term": "weightlifting",
     "partOfSpeech": "n",
-    "ipa": "/ˈweɪtlɪftɪŋ/ TIME - THỜI GIAN",
+    "ipa": "/ˈweɪtlɪftɪŋ/",
     "meaning": "cử tạ",
     "topic": "SPORTS - THỂ THAO",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -7978,7 +7978,7 @@
     "term": "March",
     "partOfSpeech": "n",
     "ipa": "/mɑːrtʃ/",
-    "meaning": "tháng 3 28",
+    "meaning": "tháng",
     "topic": "TIME - THỜI GIAN",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -8085,7 +8085,7 @@
     "number": 899,
     "term": "Autumn / Fall",
     "partOfSpeech": "n",
-    "ipa": "/ˈɔtəm/ – /fɔl/",
+    "ipa": "/ˈɔtəm/ /fɔl/",
     "meaning": "Mùa Thu",
     "topic": "TIME - THỜI GIAN",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -8094,7 +8094,7 @@
     "number": 900,
     "term": "Winter",
     "partOfSpeech": "n",
-    "ipa": "/ˈwɪntər/ PLANTS - CÂY VÀ HOA",
+    "ipa": "/ˈwɪntər/",
     "meaning": "Mùa Đông",
     "topic": "TIME - THỜI GIAN",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -8257,7 +8257,7 @@
     "term": "petal",
     "partOfSpeech": "n",
     "ipa": "/ˈpetl/",
-    "meaning": "cánh hoa 29",
+    "meaning": "cánh hoa",
     "topic": "PLANTS - CÂY VÀ HOA",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -8391,7 +8391,7 @@
     "number": 933,
     "term": "maple",
     "partOfSpeech": "n",
-    "ipa": "/ˈmeɪpl/ WEATHER - THỜI TIẾT",
+    "ipa": "/ˈmeɪpl/",
     "meaning": "cây phong",
     "topic": "PLANTS - CÂY VÀ HOA",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
@@ -8527,7 +8527,7 @@
     "term": "clear",
     "partOfSpeech": "adj",
     "ipa": "/klɪr/",
-    "meaning": "trời trong trẻo, quang đãng 30",
+    "meaning": "trời trong trẻo, quang đãng",
     "topic": "WEATHER - THỜI TIẾT",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },
@@ -8815,7 +8815,7 @@
     "term": "thermometer",
     "partOfSpeech": "n",
     "ipa": "/θərˈmɑːmɪtər/",
-    "meaning": "nhiệt kế 31",
+    "meaning": "nhiệt kế",
     "topic": "WEATHER - THỜI TIẾT",
     "source": "1000 từ vựng tiếng Anh cơ bản - MochiMochi"
   },

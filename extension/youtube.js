@@ -35,15 +35,58 @@ function round(value) {
  *     theo từ, nên đoạn hụt mấy chữ cuối còn đoạn sau ôm thêm phần đầu câu trước.
  * 5 — đoạn phải đủ dài mới đóng. Đủ số câu thôi thì chưa: hội thoại nhiều câu
  *     rất ngắn, đóng ngay ở đó ra đoạn năm chữ, nhại chưa vào nhịp đã hết.
+ * 6 — dấu ba chấm là ý đang tiếp diễn, không phải hết câu.
+ * 7 — dùng timestamp từng từ khi json3 có tOffsetMs; transcript DOM mốc tròn
+ *     giây dùng MỘT ranh giới chung ở giữa giây cho cuối câu trước/đầu câu sau,
+ *     không còn vùng chồng khiến cuối đoạn trước lọt vào đầu đoạn kế tiếp.
+ * 8 — không đóng đoạn chỉ vì đã gặp đủ dấu câu khi dòng hiện tại còn dang dở;
+ *     dọn ký hiệu >>/[Music], bỏ cue lặp và sửa ranh giới xé tên riêng/cụm từ.
+ * 9 — transcript DOM dùng thẳng mốc giây YouTube hiển thị, không tự cộng 0,5s
+ *     khiến cuối câu trước phát lấn sang những từ đầu của câu kế tiếp.
+ * 10 — giữ endMs thật khi hai cue YouTube chồng nhẹ. Bản 9 ép end về start của
+ *      cue sau nên có video bị mất 2–3 từ cuối dù phụ đề đã khai đúng mốc kết.
+ * 11 — chỉ cho phép chồng khi nguồn có timestamp TỪNG TỪ. Mốc mili-giây của cả
+ *      dòng vẫn có thể là thời gian hiển thị, cộng đệm làm lọt 2–3 từ câu sau.
  */
-export const CAPTION_VERSION = 5;
+export const CAPTION_VERSION = 11;
 
 /** Chậm hơn mức này thì gần như chắc chắn là khoảng lặng, không phải nói chậm. */
 export const MIN_WORDS_PER_SECOND = 1.2;
 /** Chừa chỗ cho phụ âm cuối và nhịp ngắt tự nhiên cuối câu. */
 export const TAIL_PAD = 0.6;
+/** YouTube có thể cho hai cue hiển thị chồng nhẹ; đây không phải lời bị lặp. */
+export const MAX_CUE_OVERLAP = 1.2;
 /** Đoạn ngắn hơn mức này thì bấm nghe cũng không kịp nhận ra gì. */
 const MIN_SPAN = 0.3;
+
+/**
+ * Nhận diện bài bản 8 lấy từ transcript DOM: từ câu thứ hai trở đi gần như mọi
+ * mốc bắt đầu đều nằm ở nửa giây vì bản đó từng tự cộng 0,5s. Chỉ dùng dấu hiệu
+ * này để phát tương thích; không sửa dữ liệu chính xác của nguồn word-timing.
+ */
+export function usesLegacyHalfSecondBoundaries(items, captionVersion) {
+  if (Number(captionVersion) !== 8) return false;
+  const starts = (Array.isArray(items) ? items : [])
+    .slice(1)
+    .map((item) => Number(item?.start))
+    .filter(Number.isFinite);
+  if (!starts.length) return false;
+  const halfSecond = starts.filter((value) => Math.abs(value - (Math.floor(value) + 0.5)) < 0.02).length;
+  return halfSecond / starts.length >= 0.75;
+}
+
+/** Mốc phát cuối câu; vá riêng phần +0,5s của bài bản 8 lấy từ transcript DOM. */
+export function segmentPlaybackEnd(start, declaredEnd, nextStart, legacyHalfSecond = false, nextStartPad = 0) {
+  const from = Number(start) || 0;
+  const declared = Number(declaredEnd);
+  let end = Number.isFinite(declared) && declared > from ? declared : from + MIN_SPAN;
+  const next = Number(nextStart);
+  if (Number.isFinite(next) && next > from) {
+    const boundary = next - (legacyHalfSecond ? 0.5 : 0) + Math.max(0, Number(nextStartPad) || 0);
+    end = Math.min(end, boundary);
+  }
+  return Math.max(from + 0.15, end);
+}
 
 export function countWords(value) {
   return String(value ?? "").split(/\s+/).filter(Boolean).length;
@@ -65,8 +108,10 @@ export function isSoundLabel(value) {
 /**
  * Mốc kết thúc hợp lý cho một đoạn.
  *
- * Lấy cái sớm nhất trong ba mốc: mốc phụ đề khai, mốc suy ra từ tốc độ nói, và
- * mốc bắt đầu của đoạn kế tiếp.
+ * Khi phụ đề có mốc kết thúc hợp lệ thì tin mốc đó. Ước lượng theo số từ chỉ là
+ * phương án cuối cùng cho dữ liệu thật sự thiếu mốc; dùng nó để rút ngắn một
+ * mốc hợp lệ sẽ cắt hụt người nói chậm. Mốc đoạn sau chỉ là hàng rào chống một
+ * cue hiển thị quá lâu, và có thể cho phép chồng nhẹ khi nguồn có endMs thật.
  *
  * @param {number} start mốc bắt đầu, tính bằng giây
  * @param {number} declaredEnd mốc kết thúc phụ đề khai
@@ -74,7 +119,7 @@ export function isSoundLabel(value) {
  * @param {number} [nextStart] mốc bắt đầu của đoạn kế tiếp, nếu có
  * @returns {number}
  */
-export function spokenEnd(start, declaredEnd, text, nextStart) {
+export function spokenEnd(start, declaredEnd, text, nextStart, nextStartPad = 0) {
   const from = Number(start) || 0;
   const declared = Number(declaredEnd);
   const bySpeech = from + countWords(text) / MIN_WORDS_PER_SECOND + TAIL_PAD;
@@ -82,9 +127,10 @@ export function spokenEnd(start, declaredEnd, text, nextStart) {
   // mốc kết thúc sẽ bị hiểu thành "kết thúc ở giây 0" và đoạn nào cũng cụt.
   // Mốc kết thúc nằm trước mốc bắt đầu cũng là dữ liệu hỏng, xử như thiếu.
   const hasDeclared = Number.isFinite(declared) && declared > from;
-  let end = hasDeclared ? Math.min(declared, bySpeech) : bySpeech;
+  // Nhãn âm thanh không phải lời nói nên không cần giữ suốt thời gian hiển thị.
+  let end = hasDeclared && !isSoundLabel(text) ? declared : bySpeech;
   const next = Number(nextStart);
-  if (Number.isFinite(next) && next > from) end = Math.min(end, next);
+  if (Number.isFinite(next) && next > from) end = Math.min(end, next + Math.max(0, Number(nextStartPad) || 0));
   return Math.max(end, from + MIN_SPAN);
 }
 
@@ -94,11 +140,11 @@ export function spokenEnd(start, declaredEnd, text, nextStart) {
  * @param {T[]} items
  * @returns {T[]}
  */
-export function trimSilentTails(items) {
+export function trimSilentTails(items, { nextStartPad = 0 } = {}) {
   const list = Array.isArray(items) ? items : [];
   return list.map((item, index) => {
     const next = list[index + 1];
-    const end = spokenEnd(item?.start, item?.end, item?.text, next ? Number(next.start) : undefined);
+    const end = spokenEnd(item?.start, item?.end, item?.text, next ? Number(next.start) : undefined, nextStartPad);
     return { ...item, end: Math.round(end * 100) / 100 };
   });
 }
@@ -126,8 +172,15 @@ export function splitSentences(text) {
 
   const out = [];
   let buffer = "";
-  const parts = clean.split(/(?<=[.!?]["'”’)\]]?)\s+/);
-  for (const part of parts) {
+  // Dấu ba chấm diễn tả ngập ngừng hoặc ý còn tiếp ("the first thing I saw was
+  // ... Meta laid off..."). Che nó trước khi tách để dấu chấm cuối không bị coi
+  // là hết câu, rồi khôi phục nguyên ký tự sau đó.
+  const protectedText = clean
+    .replace(/\.{2,}/g, (value) => "\uE000".repeat(value.length))
+    .replace(/…/g, "\uE001");
+  const parts = protectedText.split(/(?<=[.!?]["'”’)\]]?)\s+/);
+  for (const raw of parts) {
+    const part = raw.replace(/\uE000/g, ".").replace(/\uE001/g, "…");
     buffer = buffer ? `${buffer} ${part}` : part;
     // Dấu chấm của chữ viết tắt hoặc của số thứ tự thì chưa phải hết câu.
     if (ABBREVIATIONS.test(buffer) || /\b\d+\.$/.test(buffer)) continue;
@@ -229,7 +282,40 @@ export function groupForPractice(text, maxWords = 30, maxSentences = 2) {
 
 /** Đoạn có kết thúc trọn vẹn không — dùng để kiểm tra chất lượng phần cắt. */
 export function endsCleanly(text) {
-  return /[.!?]["'”’)\]]?$/.test(String(text ?? "").trim());
+  const clean = String(text ?? "").trim();
+  if (/(?:\.{2,}|…)["'”’)\]]?$/.test(clean)) return false;
+  return /[.!?]["'”’)\]]?$/.test(clean);
+}
+
+/**
+ * Ranh giới có đang xé một cụm/câu làm đôi hay không.
+ *
+ * Phụ đề tự động thường cắt đúng lúc đổi dòng, kể cả giữa "New York City" hay
+ * sau mạo từ/giới từ. Không thể chỉ nhìn chữ hoa ở đầu đoạn sau: tên riêng vẫn
+ * viết hoa dù nó rõ ràng thuộc cùng câu. Danh sách dưới đây chỉ chứa những từ
+ * gần như luôn cần một thành phần theo sau, vì vậy nối lại an toàn hơn việc để
+ * người học luyện một mẩu cụt.
+ */
+const HANGING_WORDS = new Set([
+  "a", "an", "the", "this", "that", "these", "those", "my", "your", "his", "her", "its", "our", "their",
+  "some", "any", "each", "every", "no", "another", "such",
+  "and", "but", "or", "so", "because", "although", "though", "while", "if", "when", "which", "who", "whose",
+  "of", "to", "for", "from", "with", "without", "in", "on", "at", "by", "about", "into", "through", "during",
+  "before", "after", "above", "below", "between", "under", "over", "around", "towards",
+  "is", "am", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
+  "can", "could", "will", "would", "shall", "should", "may", "might", "must",
+  // Tiền tố thường gặp của tên địa lý/tổ chức nhiều từ.
+  "new", "north", "south", "east", "west", "los", "las", "san", "santa", "saint", "st", "united", "hong",
+]);
+
+export function hasAwkwardBoundary(left, right) {
+  const before = String(left ?? "").trim();
+  const after = String(right ?? "").trim();
+  if (!before || !after || endsCleanly(before)) return false;
+  if (/(?:[,;:—–]|\.{2,}|…)["'”’)\]]?$/.test(before)) return true;
+  if (/^[\p{Ll}]/u.test(after)) return true;
+  const last = before.match(/([\p{L}']+)[^\p{L}']*$/u)?.[1]?.toLowerCase() ?? "";
+  return HANGING_WORDS.has(last);
 }
 
 /**
@@ -268,19 +354,93 @@ export function pickEnglishTrack(tracks) {
   return list.find((track) => track.kind !== "asr") ?? list[0] ?? null;
 }
 
+/** Bỏ chỉ dẫn âm thanh/ký hiệu người nói nhưng giữ nguyên lời thực. */
+export function cleanCaptionText(value) {
+  return String(value ?? "")
+    .replace(/(?:^|\s)>>(?=\s|$)/g, " ")
+    .replace(/\[(?:music|applause|laughter|laughs?|cheering|cheers?|silence|noise|sound|inaudible)\]/gi, " ")
+    .replace(/[♪♫]+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function removeCueDuplicates(items) {
+  const out = [];
+  for (const raw of items) {
+    const cue = { ...raw, text: cleanCaptionText(raw?.text) };
+    if (!cue.text) continue;
+    const previous = out[out.length - 1];
+    if (previous && previous.text.toLowerCase() === cue.text.toLowerCase()) {
+      // JSON3 tự động đôi khi lặp cùng một dòng ở hai event kế tiếp. Giữ một
+      // bản và phủ trọn khoảng giờ thay vì bắt người học chép lại hai lần.
+      previous.end = Math.max(Number(previous.end) || 0, Number(cue.end) || 0);
+      continue;
+    }
+    out.push(cue);
+  }
+  return out;
+}
+
 export function cuesFromJson3(payload) {
   const events = payload?.events ?? [];
   const cues = [];
   for (const event of events) {
-    const text = (event.segs ?? []).map((seg) => seg.utf8 ?? "").join("").replace(/\s+/g, " ").trim();
+    const segments = event.segs ?? [];
+    const text = cleanCaptionText(segments.map((seg) => seg.utf8 ?? "").join(""));
     if (!text || text === "\n") continue;
     // Dòng chỉ mô tả âm thanh thì không có lời nào để nhại; giữ lại chỉ tạo ra
     // một thẻ câu bấm vào là nghe nhạc.
     if (isSoundLabel(text)) continue;
-    const start = (event.tStartMs ?? 0) / 1000;
-    cues.push({ start, end: start + (event.dDurationMs ?? 0) / 1000, text });
+    const eventStartMs = Number(event.tStartMs) || 0;
+    const eventEndMs = eventStartMs + (Number(event.dDurationMs) || 0);
+    // Phụ đề tự động json3 thường cho tOffsetMs ở từng từ/cụm từ. Đây là mốc
+    // chính xác nhất YouTube công khai cho trình phát, nên giữ nguyên các ranh
+    // giới đó thay vì gộp cả hàng rồi đoán vị trí theo số từ.
+    const textualSegments = segments
+      .map((seg) => ({
+        offsetMs: Number(seg?.tOffsetMs),
+        hasOffset: seg?.tOffsetMs !== undefined && Number.isFinite(Number(seg.tOffsetMs)),
+        text: cleanCaptionText(seg?.utf8),
+      }))
+      .filter((seg) => seg.text);
+    const hasWordTiming = textualSegments.length > 1 && textualSegments.every((seg) => seg.hasOffset);
+    if (hasWordTiming) {
+      const timed = [];
+      for (const seg of textualSegments) {
+        const startMs = eventStartMs + Math.max(0, seg.offsetMs || 0);
+        const previous = timed[timed.length - 1];
+        // Có file đặt dấu câu và từ đứng trước cùng một offset. Chúng là một
+        // mảnh âm thanh, gộp chữ lại để không tạo hai cue chồng thời gian.
+        if (previous?.startMs === startMs) previous.text = `${previous.text} ${seg.text}`.replace(/\s+/g, " ").trim();
+        else timed.push({ startMs, text: seg.text });
+      }
+      for (let index = 0; index < timed.length; index += 1) {
+        const item = timed[index];
+        const next = timed.slice(index + 1).find((candidate) => candidate.startMs > item.startMs);
+        const endMs = Math.max(item.startMs + 50, next?.startMs ?? eventEndMs);
+        cues.push({ start: item.startMs / 1000, end: endMs / 1000, text: item.text });
+      }
+    } else {
+      const start = eventStartMs / 1000;
+      cues.push({ start, end: eventEndMs / 1000, text });
+    }
   }
-  return trimSilentTails(cues);
+  // Transcript đọc từ DOM chỉ hiện 0:16, 0:20... YouTube dùng chính số đang
+  // hiện làm mốc bắt đầu của hàng mới. Bản cũ tự cộng 0,5s để lấy trung điểm
+  // của giây, khiến câu trước phát lấn nửa giây và lọt cả "Today we are" của
+  // hàng sau. Giữ nguyên ranh giới thô an toàn hơn: có thể dừng hơi sớm vài
+  // phần trăm giây, nhưng tuyệt đối không nuốt lời của câu kế tiếp.
+  if (payload?.timingPrecision === "second") {
+    return trimSilentTails(removeCueDuplicates(cues));
+  }
+  // Chỉ timestamp TỪNG TỪ mới đủ chứng cứ để giữ phần cue chồng nhẹ. `endMs`
+  // của một dòng transcript có độ phân giải mili-giây nhưng vẫn có thể chỉ là
+  // thời gian chữ nằm trên màn hình; cộng đệm cho nó sẽ phát lọt 2–3 từ câu sau.
+  if (payload?.timingPrecision === "word") {
+    return trimSilentTails(removeCueDuplicates(cues), { nextStartPad: MAX_CUE_OVERLAP });
+  }
+  return trimSilentTails(removeCueDuplicates(cues));
 }
 
 /**
@@ -302,7 +462,15 @@ export function cuesFromJson3(payload) {
  */
 export function sentencesFrom(cues, { maxWords = 30, maxSentences = 2, minWords = 10 } = {}) {
   const wordsOf = (value) => String(value ?? "").split(/\s+/).filter(Boolean);
-  const endersIn = (value) => (String(value ?? "").match(/[.!?]["')\]]?(?:\s|$)/g) ?? []).length;
+  const endsThought = (value) => {
+    const clean = String(value ?? "").trim();
+    if (/(?:\.{2,}|…)["')\]]?$/.test(clean)) return false;
+    return /[.!?]["')\]]?$/.test(clean);
+  };
+  const endsClause = (value) => /[,;:—–]["')\]]?$/.test(String(value ?? "").trim());
+  // Cho phép vượt trần mềm khi ý chưa khép. Một đoạn 34 từ trọn nghĩa dễ nhại
+  // hơn hai đoạn 20/14 từ mà đoạn đầu kết bằng "and", "because" hay dấu ba chấm.
+  const hardWords = Math.max(maxWords, maxWords + Math.min(12, Math.max(4, Math.round(maxWords * 0.4))));
 
   const list = (cues ?? []).filter((cue) => String(cue?.text ?? "").trim());
   const sentences = [];
@@ -313,7 +481,6 @@ export function sentencesFrom(cues, { maxWords = 30, maxSentences = 2, minWords 
 
   let group = [];
   let words = 0;
-  let enders = 0;
 
   const flush = () => {
     if (!group.length) return;
@@ -341,23 +508,38 @@ export function sentencesFrom(cues, { maxWords = 30, maxSentences = 2, minWords 
 
     group = [];
     words = 0;
-    enders = 0;
   };
 
   for (const cue of list) {
     const count = wordsOf(cue.text).length;
-    // Đóng cụm TRƯỚC khi thêm dòng làm tràn, không phải sau. Đóng sau thì cụm
-    // vọt lên tới gần gấp rưỡi trần — đo được một đoạn 39 từ với trần 30, dài
-    // quá mức ai nhại nổi trong một hơi.
-    if (group.length && words + count > maxWords) flush();
+    const currentText = group.map((item) => item.text).join(" ");
+    // Nếu ý hiện tại đã khép thì giữ trần mềm. Chỉ cho phép tràn khi nó còn dang
+    // dở, và vẫn có trần cứng để phụ đề không dấu câu không dài vô tận.
+    if (group.length && words + count > maxWords && (endsThought(currentText) || words + count > hardWords)) flush();
     group.push(cue);
     words += count;
-    enders += endersIn(cue.text);
-    // Đủ số câu THÔI thì chưa đóng — phải đủ dài nữa. Hội thoại có nhiều câu rất
-    // ngắn ("Hi Neil. How are you?" là hai câu, năm chữ); đóng ngay ở đó thì
-    // người học được một đoạn vụn, nhại xong chưa kịp vào nhịp đã hết.
-    if (words >= maxWords || (enders >= maxSentences && words >= minWords)) flush();
+    const text = group.map((item) => item.text).join(" ");
+    const complete = endsThought(text);
+    // Ưu tiên một ý đã trọn. Dấu phẩy chỉ được dùng làm chỗ lấy hơi khi đoạn đã
+    // chạm trần mềm; dấu ba chấm không bao giờ tự đóng đoạn.
+    if (
+      (complete && words >= minWords) ||
+      (words >= maxWords && endsClause(text)) ||
+      words >= hardWords
+    ) flush();
   }
   flush();
-  return sentences;
+
+  // Kiểm tra lại TOÀN BỘ kết quả. Nếu một giới hạn cứng vẫn vô tình xé cụm
+  // (đặc biệt tên riêng như "New / York City"), nối hai mục khi tổng độ dài vẫn
+  // nằm trong ngưỡng khẩn cấp. Không nối vô hạn transcript không có dấu câu.
+  const repaired = [];
+  for (const sentence of sentences) {
+    const previous = repaired[repaired.length - 1];
+    const combinedWords = previous ? wordsOf(`${previous.text} ${sentence.text}`).length : 0;
+    if (previous && combinedWords <= hardWords && hasAwkwardBoundary(previous.text, sentence.text)) {
+      repaired[repaired.length - 1] = { ...previous, end: sentence.end, text: `${previous.text} ${sentence.text}`.replace(/\s+/g, " ").trim() };
+    } else repaired.push({ ...sentence });
+  }
+  return repaired.map((sentence, position) => ({ ...sentence, index: position + 1 }));
 }

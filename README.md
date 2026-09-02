@@ -45,6 +45,29 @@ NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 ```
 
+### Góp ý của người dùng
+
+Nút **Góp ý** ở thanh trên cùng và cuối Trang chủ ghi vào bảng `feedback`:
+
+1. Chạy [`supabase/feedback.sql`](supabase/feedback.sql) trong Supabase SQL Editor.
+2. Đặt `SUPABASE_SERVICE_ROLE_KEY` — route ghi bằng service role để khách chưa
+   đăng nhập cũng góp ý được, và để bảng không phải mở quyền đọc cho ai.
+3. Đọc lại qua `GET /api/feedback` khi tài khoản nằm trong `ADMIN_EMAILS`.
+
+Chưa cấu hình thì nút vẫn hiện nhưng báo "máy chủ chưa cấu hình để nhận góp ý"
+thay vì lỗi trắng màn.
+
+### Ký ức học tập RAG
+
+Để AI truy xuất lỗi dịch cũ và nội dung bài học liên quan theo từng tài khoản:
+
+1. Chạy [`supabase/rag-schema.sql`](supabase/rag-schema.sql) trong Supabase SQL Editor.
+2. Đặt `GEMINI_API_KEY`; mặc định app dùng `gemini-embedding-001` với 768 chiều.
+3. Có thể kiểm tra trạng thái khi đã đăng nhập qua `GET /api/ai/rag/status`.
+
+RAG có đường lui an toàn: nếu chưa chạy migration hoặc embedding tạm lỗi, chấm bài,
+luyện nói và tóm tắt vẫn chạy bằng ngữ cảnh trực tiếp như trước.
+
 Các file dữ liệu dựng sẵn trong `public/`:
 
 | File | Nội dung |

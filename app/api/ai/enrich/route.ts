@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import ieltsAreaData from "../../../../lib/ielts-areas.json";
 import { topicalWords } from "../../../../lib/topical-words.mjs";
+import { normalizeIpa } from "../../../../lib/arpabet.mjs";
 
 type DictionaryEntry = { word?:string; phonetic?:string; phonetics?:{text?:string}[]; meanings?:{partOfSpeech?:string;synonyms?:string[];antonyms?:string[];definitions?:{definition?:string;example?:string;synonyms?:string[];antonyms?:string[]}[]}[] };
 type DatamuseEntry = {word?:string;tags?:string[];defs?:string[]};
@@ -9,6 +10,33 @@ const verifiedVietnamese:Record<string,string>={
   comfortable:"thoải mái; dễ chịu",
   uncomfortable:"không thoải mái; khó chịu",
 };
+
+// Mọi lệnh gọi ra ngoài đều phải có hạn giờ: dictionaryapi.dev và tatoeba.org có
+// lúc treo 20–30 giây, nhân với hàng chục từ khi bấm "Bổ sung" là chờ cả tiếng.
+// Quá hạn thì coi như không có dữ liệu và đi tiếp.
+async function timedFetch(url:string,init?:RequestInit,ms=3500):Promise<Response|null>{
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),ms);
+  try{
+    return await fetch(url,{...init,signal:controller.signal});
+  }catch{
+    return null;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+// Nhớ kết quả trong bộ nhớ isolate ~10 phút. Khi bấm "Bổ sung" cho cả kho, rất
+// nhiều từ dùng chung một từ đồng nghĩa / một câu dịch — tra lại là phí thời gian.
+const memo=new Map<string,{at:number;value:unknown}>();
+async function cached<T>(key:string,make:()=>Promise<T>):Promise<T>{
+  const hit=memo.get(key);
+  if(hit&&Date.now()-hit.at<600_000) return hit.value as T;
+  const value=await make();
+  if(memo.size>2000) memo.clear();
+  memo.set(key,{at:Date.now(),value});
+  return value;
+}
 
 // Cụm từ đời thường được ưu tiên hơn câu trích từ điển. Một từ nên được học cùng
 // những từ thường đứng cạnh nó để người học có thể dùng ngay trong câu thật.
@@ -73,8 +101,8 @@ async function antonymsFor(word:string) {
 
 async function relatedWords(word:string,relation:"rel_syn"|"rel_ant"|"rel_trg"|"ml") {
   try{
-    const response=await fetch(`https://api.datamuse.com/words?${relation}=${encodeURIComponent(word)}&max=8`);
-    if(!response.ok) return [];
+    const response=await timedFetch(`https://api.datamuse.com/words?${relation}=${encodeURIComponent(word)}&max=8`);
+    if(!response||!response.ok) return [];
     const data=await response.json() as {word?:string}[];
     return data.map(item=>item.word?.trim()??"").filter(Boolean);
   }catch{return [];}
@@ -84,8 +112,8 @@ async function relatedWords(word:string,relation:"rel_syn"|"rel_ant"|"rel_trg"|"
 // viên vì qua bộ lọc sẽ rụng quá nửa. Xem lib/topical-words.mjs.
 async function triggerCandidates(word:string) {
   try{
-    const response=await fetch(`https://api.datamuse.com/words?rel_trg=${encodeURIComponent(word)}&md=fp&max=20`);
-    if(!response.ok) return [];
+    const response=await timedFetch(`https://api.datamuse.com/words?rel_trg=${encodeURIComponent(word)}&md=fp&max=20`);
+    if(!response||!response.ok) return [];
     return await response.json() as DatamuseEntry[];
   }catch{return [];}
 }
@@ -147,8 +175,8 @@ function ieltsApplications(word:string,definition:string,meaningVi:string,trigge
 
 async function lookupDatamuseEntry(word:string):Promise<DictionaryEntry[]> {
   try{
-    const response=await fetch(`https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&md=dpr&max=3`);
-    if(!response.ok) return [];
+    const response=await timedFetch(`https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&md=dpr&max=3`);
+    if(!response||!response.ok) return [];
     const matches=await response.json() as DatamuseEntry[];
     const exact=matches.find(item=>item.word?.trim().toLowerCase()===word.toLowerCase());
     if(!exact?.defs?.length) return [];
@@ -161,18 +189,21 @@ async function lookupDatamuseEntry(word:string):Promise<DictionaryEntry[]> {
       if(!definition) continue;
       groups.set(part,[...(groups.get(part)??[]),{definition}]);
     }
-    const pronunciation=exact.tags?.find(tag=>tag.startsWith("pron:"))?.slice(5).trim();
-    return [{word:exact.word,phonetic:pronunciation?`/${pronunciation}/`:undefined,meanings:[...groups].map(([partOfSpeech,definitions])=>({partOfSpeech,definitions}))}];
+    // Datamuse `pron:` là ARPABET ("M AA1 R K S"), đổi sang IPA.
+    const pronunciation=normalizeIpa(exact.tags?.find(tag=>tag.startsWith("pron:"))?.slice(5)??"");
+    return [{word:exact.word,phonetic:pronunciation||undefined,meanings:[...groups].map(([partOfSpeech,definitions])=>({partOfSpeech,definitions}))}];
   }catch{return [];}
 }
 
-async function lookupEntries(word:string):Promise<DictionaryEntry[]> {
-  try{
-    const response=await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,{headers:{Accept:"application/json"}});
-    if(!response.ok) return lookupDatamuseEntry(word);
-    const entries=await response.json() as DictionaryEntry[];
-    return Array.isArray(entries)&&entries.length?entries:lookupDatamuseEntry(word);
-  }catch{ return lookupDatamuseEntry(word); }
+function lookupEntries(word:string):Promise<DictionaryEntry[]> {
+  return cached(`dict:${word.toLowerCase()}`,async()=>{
+    try{
+      const response=await timedFetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,{headers:{Accept:"application/json"}});
+      if(!response||!response.ok) return lookupDatamuseEntry(word);
+      const entries=await response.json() as DictionaryEntry[];
+      return Array.isArray(entries)&&entries.length?entries:lookupDatamuseEntry(word);
+    }catch{ return lookupDatamuseEntry(word); }
+  });
 }
 
 async function lookupEntry(word:string):Promise<DictionaryEntry|undefined> {
@@ -192,8 +223,8 @@ function usableTranslation(text:string, source:string) {
 // Đây là endpoint không chính thức, không cần khoá, nên luôn có nguồn dự phòng phía dưới.
 async function translateViaGoogle(text:string,from="en",to="vi") {
   try{
-    const response=await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${from}&tl=${to}&dt=t&q=${encodeURIComponent(text)}`);
-    if(!response.ok) return "";
+    const response=await timedFetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${from}&tl=${to}&dt=t&q=${encodeURIComponent(text)}`);
+    if(!response||!response.ok) return "";
     const data=await response.json() as unknown;
     if(!Array.isArray(data)||!Array.isArray(data[0])) return "";
     const joined=(data[0] as unknown[]).map(part=>(Array.isArray(part)?String(part[0]??""):"")).join("");
@@ -204,7 +235,8 @@ async function translateViaGoogle(text:string,from="en",to="vi") {
 
 async function translateViaMyMemory(text:string) {
   try{
-    const response=await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|vi`);
+    const response=await timedFetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|vi`);
+    if(!response) return "";
     const translated=await response.json() as {responseData?:{translatedText?:string}};
     return usableTranslation(translated.responseData?.translatedText??"",text);
   }catch{ return ""; }
@@ -279,33 +311,38 @@ function scoreSenseAgainstMeaning(definitionVi:string|undefined,meaningVi:string
 // "hockey", "maple" thì không và rơi vào khung câu "We talked about the importance
 // of X in daily life" — từ nào cũng giống nhau. Tatoeba là kho câu do người học và
 // người bản ngữ đóng góp, nhiều câu đã có sẵn bản dịch tiếng Việt do người dịch.
+async function tatoebaRound(word:string,withVietnamese:boolean,meaningVi?:string):Promise<CorpusSentence|undefined>{
+  try{
+    const url=`https://tatoeba.org/en/api_v0/search?query=${encodeURIComponent(word)}&from=eng${withVietnamese?"&to=vie":""}&sort=relevance&limit=12`;
+    const response=await timedFetch(url,{headers:{"User-Agent":"Lexilo/1.0"}},6000);
+    if(!response||!response.ok) return undefined;
+    const data=await response.json() as {results?:{text?:string;translations?:{lang?:string;text?:string}[][]}[]};
+    const picked=(data.results??[])
+      .map(item=>{
+        const text=cleanExample(item.text??"");
+        const vi=(item.translations??[]).flat().find(entry=>entry.lang==="vie")?.text?.normalize("NFC").trim();
+        return {text,vi:vi||undefined};
+      })
+      .filter(item=>isUsableSentence(item.text,word)&&(!withVietnamese||item.vi))
+      // Câu 8–14 chữ vừa đủ ngữ cảnh mà không quá dài; "That's a maple." thì học được ít.
+      // Có nghĩa người dùng thì ưu tiên câu mà bản dịch tiếng Việt nhắc đúng nghĩa đó:
+      // "fixed = đã sửa" sẽ chuộng câu dịch ra có chữ "sửa" hơn câu nói về bữa tối.
+      .sort((a,b)=>{
+        const byMeaning=meaningVi?scoreSenseAgainstMeaning(b.vi,meaningVi)-scoreSenseAgainstMeaning(a.vi,meaningVi):0;
+        return byMeaning||sentenceScore(b.text)-sentenceScore(a.text);
+      });
+    return picked[0];
+  }catch{ return undefined; }
+}
 async function tatoebaSentence(word:string,meaningVi?:string):Promise<CorpusSentence|undefined> {
-  // Vòng 1 xin luôn câu đã có bản dịch tiếng Việt (khỏi phải dịch máy, và không sai
-  // nghĩa như khi máy dịch "drafted" thành "soạn thảo"); vòng 2 nới ra lấy câu tiếng Anh.
-  for(const withVietnamese of [true,false]){
-    try{
-      const url=`https://tatoeba.org/en/api_v0/search?query=${encodeURIComponent(word)}&from=eng${withVietnamese?"&to=vie":""}&sort=relevance&limit=12`;
-      const response=await fetch(url,{headers:{"User-Agent":"Lexilo/1.0"}});
-      if(!response.ok) continue;
-      const data=await response.json() as {results?:{text?:string;translations?:{lang?:string;text?:string}[][]}[]};
-      const picked=(data.results??[])
-        .map(item=>{
-          const text=cleanExample(item.text??"");
-          const vi=(item.translations??[]).flat().find(entry=>entry.lang==="vie")?.text?.normalize("NFC").trim();
-          return {text,vi:vi||undefined};
-        })
-        .filter(item=>isUsableSentence(item.text,word)&&(!withVietnamese||item.vi))
-        // Câu 8–14 chữ vừa đủ ngữ cảnh mà không quá dài; "That's a maple." thì học được ít.
-        // Có nghĩa người dùng thì ưu tiên câu mà bản dịch tiếng Việt nhắc đúng nghĩa đó:
-        // "fixed = đã sửa" sẽ chuộng câu dịch ra có chữ "sửa" hơn câu nói về bữa tối.
-        .sort((a,b)=>{
-          const byMeaning=meaningVi?scoreSenseAgainstMeaning(b.vi,meaningVi)-scoreSenseAgainstMeaning(a.vi,meaningVi):0;
-          return byMeaning||sentenceScore(b.text)-sentenceScore(a.text);
-        });
-      if(picked[0]) return picked[0];
-    }catch{ /* hết cách thì để tầng dưới lo */ }
-  }
-  return undefined;
+  // Vòng "có bản dịch tiếng Việt" (khỏi dịch máy, tránh sai nghĩa như "drafted" →
+  // "soạn thảo") và vòng "câu tiếng Anh bất kỳ" chạy SONG SONG cho nhanh; ưu tiên
+  // kết quả vòng có tiếng Việt.
+  const [withVi,anyEn]=await Promise.all([
+    tatoebaRound(word,true,meaningVi),
+    tatoebaRound(word,false,meaningVi),
+  ]);
+  return withVi ?? anyEn;
 }
 // Đúng một câu trọn vẹn, đủ dài để có ngữ cảnh mà không thành cả đoạn.
 function isSentenceShape(text:string) {
@@ -402,7 +439,19 @@ async function usageDetails(items:string[],translate:(text:string)=>Promise<stri
 
 function phoneticOf(entry?:DictionaryEntry) {
   const raw=entry?.phonetic||entry?.phonetics?.find(item=>item.text)?.text||"";
-  return raw.replace(/^\/|\/$/g,"").trim();
+  return normalizeIpa(raw).replace(/^\/|\/$/g,"").trim();
+}
+
+// IPA cho cụm nhiều từ: tra IPA của TỪNG từ rồi nối bằng dấu cách. Nối liền không
+// cách ("/ˈmɑrʃəlɑrts/") rất khó đọc. Chỉ trả khi lấy được của mọi từ có nghĩa.
+async function phraseIpa(parts:string[]):Promise<string> {
+  const pieces=await Promise.all(parts.map(async(part)=>{
+    if(functionWords.has(part)) return part; // giữ "of", "to"… nguyên chữ
+    const entries=await lookupEntries(part);
+    const hit=entries.find(item=>item.word?.trim().toLowerCase()===part);
+    return phoneticOf(hit??entries[0]);
+  }));
+  return pieces.every(Boolean)?`/${pieces.join(" ")}/`:"";
 }
 
 // Từ nối/mạo từ không mang nghĩa riêng nên bỏ khỏi phần giải nghĩa từng từ.
@@ -418,7 +467,7 @@ export async function POST(request:Request) {
   // từ điển nhưng dịch và giữ nguyên toàn bộ biểu thức cho thẻ học.
   const lookupWord=word.split("/")[0].trim();
   const isPhrase=word.includes(" ");
-  const translate=async(text:string)=>(await translateViaGoogle(text))||(await translateViaMyMemory(text));
+  const translate=(text:string)=>cached(`tr:${text.toLowerCase()}`,async()=>(await translateViaGoogle(text))||(await translateViaMyMemory(text)));
   try{
     // Từ điển chỉ có mục từ cho từ đơn và một vài cụm cố định.
     const entries=await lookupEntries(lookupWord);
@@ -458,8 +507,7 @@ export async function POST(request:Request) {
       // Cụm từ không có mục từ riêng: dựng IPA và phần giải nghĩa từ dữ liệu thật của từng từ thành phần.
       const parts=word.split(" ");
       const partEntries=await Promise.all(parts.map(lookupEntry));
-      const phonetics=partEntries.map(phoneticOf);
-      const ipa=phonetics.every(Boolean)?`/${phonetics.join(" ")}/`:"";
+      const ipa=await phraseIpa(parts);
       const glossary=parts
         .map((part,index)=>{
           if(functionWords.has(part)) return "";
@@ -511,7 +559,9 @@ export async function POST(request:Request) {
     const exampleVi=practical?.exampleVi??(corpus&&example===corpus.text&&corpus.vi?corpus.vi:await translate(example));
     const topic=topicFor(word,definitionEn,meaningVi);
     const paraphrases=uniqueWords([phrase,...synonyms.map(item=>`${item} (${meaningVi||definitionEn})`)],word).slice(0,5);
-    return NextResponse.json({term:word,ipa:entry.phonetic||entry.phonetics?.find(p=>p.text)?.text||"/…/",part_of_speech:ranked?.part||meaning?.partOfSpeech||"",meaning_vi:meaningVi||definitionEn,definition_en:definitionEn,example,example_vi:exampleVi,collocation:phrase,collocation_vi:phraseVi||meaningVi,synonyms,antonyms,related,synonym_details:synonymDetails,antonym_details:antonymDetails,related_details:relatedDetails,paraphrases,ielts_topics:ieltsApplications(word,definitionEn,meaningVi,triggers),topic,partial:false,example_source:practical?"practical":senseExample?"sense":realExample?"dictionary":corpus?"corpus":"generated_phrase",
+    // Cụm nhiều từ: ghép IPA từng từ (có dấu cách) thay vì lấy chuỗi dính của cả cụm.
+    const ipa=(isPhrase?await phraseIpa(word.split(" ")):"")||normalizeIpa(entry.phonetic||entry.phonetics?.find(p=>p.text)?.text||"")||"/…/";
+    return NextResponse.json({term:word,ipa,part_of_speech:ranked?.part||meaning?.partOfSpeech||"",meaning_vi:meaningVi||definitionEn,definition_en:definitionEn,example,example_vi:exampleVi,collocation:phrase,collocation_vi:phraseVi||meaningVi,synonyms,antonyms,related,synonym_details:synonymDetails,antonym_details:antonymDetails,related_details:relatedDetails,paraphrases,ielts_topics:ieltsApplications(word,definitionEn,meaningVi,triggers),topic,partial:false,example_source:practical?"practical":senseExample?"sense":realExample?"dictionary":corpus?"corpus":"generated_phrase",
       sense:ranked?.index,
       senses:senses.map(item=>({index:item.index,part_of_speech:item.part,definition_en:item.definition,definition_vi:item.definitionVi,example:item.example}))});
   }catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Không thể tự động điền từ."},{status:404});}

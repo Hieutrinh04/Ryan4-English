@@ -2,6 +2,13 @@
 
 Lấy phụ đề của video YouTube đang mở rồi tạo bài nghe chép chính tả và nói nhại trong Lexilo.
 
+## Dán link ngay trong Lexilo
+
+Từ bản 0.2.0, mở Lexilo và bấm **Thêm video YouTube**, dán link rồi chọn
+**Lấy video**. Website sẽ nhờ tiện ích mở video trong một tab nền, lấy phụ đề có
+timestamp, đóng tab và đưa bản xem trước trở lại Lexilo. Người dùng không còn
+phải mở video trước rồi bấm biểu tượng tiện ích.
+
 ## Vì sao cần một tiện ích riêng
 
 Máy chủ không tải được phụ đề YouTube. Đây là kết quả đo thật, không phải phỏng đoán:

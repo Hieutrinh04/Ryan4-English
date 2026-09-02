@@ -11,10 +11,31 @@
 import { localDateString } from "./srs.mjs";
 import { isPdfVocabulary, isSeedWord, type ExamGoal, type Rating, type ReviewMode, type UsageDetail, type WordCard } from "./types";
 import { appendEntry as appendLogEntry } from "./review-log.mjs";
+import { sanitiseVocabularyCard } from "./vocabulary-quality.mjs";
+import { normalizeIpa } from "./arpabet.mjs";
+import { scopedStorageKey, setAccountStorageScope } from "./account-storage.mjs";
 
 export const localWordsKey = "lexilo:words:v1";
 export const localWordsBackupKey = "lexilo:words:backup:v1";
 export const weeklyImportKey = "lexilo:weekly-import:v1";
+
+/** Trả về khoá đã tách theo tài khoản đang đăng nhập. */
+export const accountStorageKey = scopedStorageKey;
+
+/**
+ * Chọn kho local của một tài khoản. `migrateLegacy` chỉ bật cho chủ dữ liệu cũ:
+ * sao chép kho chưa phân vùng nếu kho riêng chưa tồn tại, không xoá bản dự phòng.
+ */
+export function setStorageScope(userId: string | null, migrateLegacy = false) {
+  setAccountStorageScope(userId, migrateLegacy, [
+    localWordsKey, localWordsBackupKey, weeklyImportKey, deletedIdsKey,
+    progressKey, relatedResetKey, examKey, streakKey, reviewLogKey, sessionKey,
+    "lexilo:practice:v1", "lexilo:practice:migrated:v1", "lexilo:speaking:v1",
+    "lexilo:translation-log:v1", "lexilo:writing:v1", "lexilo:lessons:v1",
+    "lexilo:lesson-progress:v1", "lexilo:caption-reports:v1", "lexilo:catalogue:v1",
+    "lexilo:saved-sentences:v1", "lexilo:dictionary-history:v1",
+  ]);
+}
 // Danh sách từ đã xoá. writeLocalWords chỉ gộp thêm chứ không bao giờ bớt (để một lần nạp
 // lỗi không thổi bay cả kho), nên nếu không ghi nhận riêng thì từ đã xoá sẽ sống lại sau F5.
 export const activeTabKey = "lexilo:tab:v1";
@@ -44,7 +65,7 @@ export function writeAppNavigation(value: AppNavigation) {
 export const deletedIdsKey = "lexilo:deleted:v1";
 export function readDeletedIds(): Set<string> {
   try {
-    const raw = localStorage.getItem(deletedIdsKey);
+    const raw = localStorage.getItem(accountStorageKey(deletedIdsKey));
     const parsed = raw ? (JSON.parse(raw) as string[]) : [];
     return new Set(Array.isArray(parsed) ? parsed : []);
   } catch {
@@ -56,14 +77,14 @@ export function markDeleted(id: string) {
     const ids = readDeletedIds();
     ids.add(id);
     // Giữ 500 mục gần nhất là thừa đủ, tránh phình vô hạn.
-    localStorage.setItem(deletedIdsKey, JSON.stringify([...ids].slice(-500)));
+    localStorage.setItem(accountStorageKey(deletedIdsKey), JSON.stringify([...ids].slice(-500)));
   } catch {
     // Bỏ qua khi trình duyệt chặn.
   }
 }
 export function readLocalWords(): WordCard[] {
   try {
-    const raw = localStorage.getItem(localWordsKey) || localStorage.getItem(localWordsBackupKey);
+    const raw = localStorage.getItem(accountStorageKey(localWordsKey)) || localStorage.getItem(accountStorageKey(localWordsBackupKey));
     const parsed = raw ? (JSON.parse(raw) as WordCard[]) : [];
     if (!Array.isArray(parsed)) return [];
     const deleted = readDeletedIds();
@@ -97,6 +118,14 @@ export function composeVietnamese(word: WordCard): WordCard {
       changed = true;
     }
   }
+  // Phiên âm cũ có thể đang là ARPABET ("/M AA1 R K S/") — đổi về IPA đọc được.
+  if (typeof word.ipa === "string" && word.ipa) {
+    const ipa = normalizeIpa(word.ipa);
+    if (ipa && ipa !== word.ipa) {
+      fixed.ipa = ipa;
+      changed = true;
+    }
+  }
   const fixList = (list?: UsageDetail[]) =>
     list?.map((item) => {
       const next = { ...item, term: item.term.normalize("NFC"), meaningVi: item.meaningVi?.normalize("NFC") ?? item.meaningVi, example: item.example?.normalize("NFC") ?? item.example, exampleVi: item.exampleVi?.normalize("NFC") ?? item.exampleVi };
@@ -109,8 +138,8 @@ export function composeVietnamese(word: WordCard): WordCard {
 
 export function clearLegacyRelated(words: WordCard[]) {
   try {
-    if (localStorage.getItem(relatedResetKey)) return words;
-    localStorage.setItem(relatedResetKey, new Date().toISOString());
+    if (localStorage.getItem(accountStorageKey(relatedResetKey))) return words;
+    localStorage.setItem(accountStorageKey(relatedResetKey), new Date().toISOString());
   } catch {
     return words;
   }
@@ -125,7 +154,11 @@ export function mergeStoredWords(loaded: WordCard[]) {
   const deleted = readDeletedIds();
   const kept = loaded.filter((word) => !deleted.has(word.id));
   const ids = new Set(kept.map((word) => word.id));
-  return applyProgress(clearLegacyRelated([...readLocalWords().filter((word) => !ids.has(word.id)), ...kept]).map(composeVietnamese));
+  return applyProgress(
+    clearLegacyRelated([...readLocalWords().filter((word) => !ids.has(word.id)), ...kept])
+      .map(composeVietnamese)
+      .map((word) => sanitiseVocabularyCard(word) as WordCard),
+  );
 }
 export function writeLocalWords(words: WordCard[]) {
   try {
@@ -138,8 +171,8 @@ export function writeLocalWords(words: WordCard[]) {
     // Chốt chặn cuối: không bao giờ ghi chữ tiếng Việt dạng tổ hợp xuống máy, dù
     // nó đến từ đường nào (tra từ mới, bổ sung hàng loạt, đồng bộ cloud).
     const serialized = JSON.stringify([...merged.values()].map(composeVietnamese));
-    localStorage.setItem(localWordsKey, serialized);
-    localStorage.setItem(localWordsBackupKey, serialized);
+    localStorage.setItem(accountStorageKey(localWordsKey), serialized);
+    localStorage.setItem(accountStorageKey(localWordsBackupKey), serialized);
   } catch {
     // Hết dung lượng hoặc trình duyệt chặn — bỏ qua, dữ liệu vẫn còn trong phiên hiện tại.
   }
@@ -150,7 +183,7 @@ export type WordProgress = Pick<WordCard, "box" | "lapses" | "dueDate" | "status
 export const progressKey = "lexilo:progress:v1";
 export function readProgress(): Record<string, WordProgress> {
   try {
-    const raw = localStorage.getItem(progressKey);
+    const raw = localStorage.getItem(accountStorageKey(progressKey));
     const parsed = raw ? (JSON.parse(raw) as Record<string, WordProgress>) : {};
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
@@ -168,7 +201,7 @@ export function writeProgress(words: WordCard[]) {
       if (!hasProgress(word)) continue;
       store[word.id] = { box: word.box, lapses: word.lapses, dueDate: word.dueDate, status: word.status, intervalDays: word.intervalDays, reviewCount: word.reviewCount, lastReviewedAt: word.lastReviewedAt, starred: word.starred, studyDay: word.studyDay };
     }
-    localStorage.setItem(progressKey, JSON.stringify(store));
+    localStorage.setItem(accountStorageKey(progressKey), JSON.stringify(store));
   } catch {
     // Bỏ qua như trên.
   }
@@ -189,7 +222,7 @@ export function applyProgress(words: WordCard[]) {
 export const examKey = "lexilo:exam:v1";
 export function readExam(): ExamGoal | null {
   try {
-    const raw = localStorage.getItem(examKey);
+    const raw = localStorage.getItem(accountStorageKey(examKey));
     const parsed = raw ? (JSON.parse(raw) as ExamGoal) : null;
     return parsed?.date ? parsed : null;
   } catch {
@@ -198,8 +231,8 @@ export function readExam(): ExamGoal | null {
 }
 export function writeExam(goal: ExamGoal | null) {
   try {
-    if (goal) localStorage.setItem(examKey, JSON.stringify(goal));
-    else localStorage.removeItem(examKey);
+    if (goal) localStorage.setItem(accountStorageKey(examKey), JSON.stringify(goal));
+    else localStorage.removeItem(accountStorageKey(examKey));
   } catch {
     // Bỏ qua khi trình duyệt chặn.
   }
@@ -214,7 +247,7 @@ export const reviewLogKey = "lexilo:reviews:v1";
 export type ReviewEntry = { at: string; id: string; term: string; rating: Rating; boxBefore: number; boxAfter: number; firstTime: boolean };
 export function readReviewLog(): ReviewEntry[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(reviewLogKey) || "[]") as ReviewEntry[];
+    const parsed = JSON.parse(localStorage.getItem(accountStorageKey(reviewLogKey)) || "[]") as ReviewEntry[];
     return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.at === "string") : [];
   } catch {
     return [];
@@ -222,14 +255,14 @@ export function readReviewLog(): ReviewEntry[] {
 }
 export function logReview(entry: ReviewEntry) {
   try {
-    localStorage.setItem(reviewLogKey, JSON.stringify(appendLogEntry(readReviewLog(), entry)));
+    localStorage.setItem(accountStorageKey(reviewLogKey), JSON.stringify(appendLogEntry(readReviewLog(), entry)));
   } catch {
     // Hết dung lượng thì bỏ qua — không được để việc ghi nhật ký chặn phiên học.
   }
 }
 export function readStudyDays(): string[] {
   try {
-    const raw = localStorage.getItem(streakKey);
+    const raw = localStorage.getItem(accountStorageKey(streakKey));
     const parsed = raw ? (JSON.parse(raw) as string[]) : [];
     return Array.isArray(parsed) ? [...new Set(parsed.filter((item) => typeof item === "string"))].sort() : [];
   } catch {
@@ -243,7 +276,7 @@ export function markStudiedToday(): string[] {
   // Giữ hai năm gần nhất là đủ cho mọi thống kê hiện có.
   const next = [...days, today].slice(-730);
   try {
-    localStorage.setItem(streakKey, JSON.stringify(next));
+    localStorage.setItem(accountStorageKey(streakKey), JSON.stringify(next));
   } catch {
     // Bỏ qua khi trình duyệt chặn.
   }
@@ -256,7 +289,7 @@ export type StoredSession = { ids: string[]; index: number; mode: ReviewMode };
 export const sessionKey = "lexilo:session:v1";
 export function readSession(): StoredSession | null {
   try {
-    const raw = localStorage.getItem(sessionKey);
+    const raw = localStorage.getItem(accountStorageKey(sessionKey));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredSession;
     return Array.isArray(parsed?.ids) && parsed.ids.length && typeof parsed.index === "number" ? parsed : null;
@@ -266,8 +299,8 @@ export function readSession(): StoredSession | null {
 }
 export function writeSession(session: StoredSession | null) {
   try {
-    if (session) localStorage.setItem(sessionKey, JSON.stringify(session));
-    else localStorage.removeItem(sessionKey);
+    if (session) localStorage.setItem(accountStorageKey(sessionKey), JSON.stringify(session));
+    else localStorage.removeItem(accountStorageKey(sessionKey));
   } catch {
     // Bỏ qua như trên.
   }
@@ -276,3 +309,22 @@ export function writeSession(session: StoredSession | null) {
 
 // Bộ đếm thời gian luyện nói nằm ở lib/speaking-log.mjs (để test Node nạp được).
 export { logSpeaking, readSpeaking, speakingKey, speakingMinutes } from "./speaking-log.mjs";
+
+// Phiên bản nhật ký cập nhật mà người dùng đã xem, để chấm dấu "có gì mới".
+// Không gắn với tài khoản: dấu này nói về THIẾT BỊ này đã đọc chưa, nên dùng
+// khoá trần thay vì accountStorageKey().
+export const seenReleaseKey = "lexilo:seen-release:v1";
+export function readSeenRelease(): string {
+  try {
+    return localStorage.getItem(seenReleaseKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+export function writeSeenRelease(version: string) {
+  try {
+    localStorage.setItem(seenReleaseKey, version);
+  } catch {
+    // Bỏ qua khi trình duyệt chặn.
+  }
+}

@@ -1,22 +1,31 @@
 "use client";
 
-import { Dispatch, FormEvent, Fragment, useSyncExternalStore, PointerEvent as ReactPointerEvent, type ReactNode, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, Dispatch, FormEvent, Fragment, useCallback, useContext, useSyncExternalStore, PointerEvent as ReactPointerEvent, type ReactNode, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { aiFetch, supabase } from "../lib/supabase";
 import ieltsAreaData from "../lib/ielts-areas.json";
 import VocabPractice from "../components/VocabPractice";
 import Dictionary, { type NewWord } from "../components/Dictionary";
+import Upgrade from "../components/Upgrade";
+import AdminPanel from "../components/AdminPanel";
+import AuthModal from "../components/AuthModal";
+import FeedbackModal from "../components/FeedbackModal";
+import LandingPage from "../components/LandingPage";
+import { usePlan } from "../lib/use-plan";
 import Icon, { type IconName } from "../components/Icon";
 import { useEscape } from "../components/useEscape";
-import VideoLesson from "../components/VideoLesson";
+import VideoLesson, { type LookupVocab } from "../components/VideoLesson";
 import LessonLibrary from "../components/LessonLibrary";
 import WritingPractice from "../components/WritingPractice";
 import SpeakingPractice from "../components/SpeakingPractice";
 import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
-import { lessonFromHash, readLessons, saveLesson } from "../lib/lessons.mjs";
-import { addLessonsToCatalogue } from "../lib/catalogue.mjs";
+import { lessonFromHash, mergeLessonSources, promoteSystemLessons, readLessonProgress, readLessons, readSystemDrafts, saveLesson } from "../lib/lessons.mjs";
+import { addLessonsToCatalogue, videoProgress } from "../lib/catalogue.mjs";
+import { fetchGlance } from "../lib/glance.mjs";
+import { CHANGE_LABEL, RELEASES, hasUnseenRelease, latestRelease } from "../lib/changelog.mjs";
 import { MAX_FOLDERS, addFolder, addWords, editFolder, folderDate, folderPath,
   commitFolders, foldersOf, foldersServerSnapshot, foldersSnapshot, foldersWithCounts,
-  removeFolder, subscribeFolders, toggleWord,
+  removeFolder, setFolderScope, subscribeFolders, toggleWord,
   wordsIn } from "../lib/folders.mjs";
 // Kiểu lấy ngay từ module JS: khai báo lại ở đây thì sớm muộn cũng lệch nhau.
 type FolderStore = ReturnType<typeof foldersSnapshot>;
@@ -28,6 +37,8 @@ type AiGrade = { correct: boolean; score: number; suggestion: string; comment: s
 import { PASSAGE_SIZE, buildPassages, gradeTranslation } from "../lib/translation-check.mjs";
 import { SKILLS, logPractice, minutesInRange, minutesPerDay, readPractice, totalTime } from "../lib/practice-log.mjs";
 import { levelFor, xpBreakdown, xpFrom } from "../lib/level.mjs";
+import { LEADERBOARD_METRICS, LEADERBOARD_PERIODS, leaderboardSnapshot, rankLeaderboard, safeDisplayName } from "../lib/leaderboard.mjs";
+import { initialsFor } from "../lib/auth.mjs";
 import { attemptAdvice, attemptsSince, logAttempt, makeAttempt, readAttempts, summariseAttempts,
   typesFromIssues, typesFromNotes } from "../lib/error-log.mjs";
 import { pushTranslationAttempt } from "../lib/cloud-sync";
@@ -38,24 +49,27 @@ import { advice, byDay, entriesSince, summarise, weakest } from "../lib/review-l
 // Lịch ôn và các phép tính ngày: nguồn duy nhất ở lib/srs.mjs, giao diện chỉ gọi.
 import { daysUntil, isDueForReview, localDateString, scheduleFor, streakFrom, weekdayIndex, wordState } from "../lib/srs.mjs";
 import { deckStats, primaryTopic, setsFor } from "../lib/word-sets.mjs";
+import { cleanStudyVietnamese } from "../lib/vietnamese-text.mjs";
 import { DAILY_NEW_LIMIT, DAILY_REVIEW_LIMIT, buildDailyQueue, buildFullCollectionQueue } from "../lib/study-queue.mjs";
 import { clozeFor } from "../lib/cloze.mjs";
 // Kiểu dùng chung và tầng lưu trữ đã tách khỏi file này.
-import { detailsFrom, exampleFor, fallbackExample, fallbackExampleVi, isPdfVocabulary, isSeedWord, withMeanings,
+import { detailsFrom, exampleFor, fallbackExample, fallbackExampleVi, isLegacyOwnerVocabulary, isPdfVocabulary, isSeedWord, withMeanings,
   type EnrichmentMap, type ExamGoal, type ExampleMap, type ImportedVocabulary, type Rating, type ReviewMode,
   type UsageDetail, type UsageMap, type WeeklyVocabulary, type WordCard } from "../lib/types";
-import { activeTabKey, composeVietnamese, logReview, markDeleted, markStudiedToday, mergeStoredWords, readAppNavigation, readDeletedIds,
-  readExam, readLocalWords, readReviewLog, readSession, readSpeaking, readStudyDays, speakingMinutes, weeklyImportKey, writeExam, writeLocalWords,
+import { accountStorageKey, activeTabKey, composeVietnamese, logReview, markDeleted, markStudiedToday, mergeStoredWords, readAppNavigation, readDeletedIds,
+  readExam, readLocalWords, readReviewLog, readSeenRelease, readSession, readSpeaking, readStudyDays, setStorageScope, speakingMinutes, weeklyImportKey, writeExam, writeLocalWords,
+  writeSeenRelease,
   writeAppNavigation, writeProgress, writeSession, type ReviewEntry, type StoredSession } from "../lib/storage";
 
-// Kiểu thẻ trong phiên ôn. "mixed" xoay vòng 4 kiểu còn lại theo thứ tự thẻ.
-const reviewModes: { value: ReviewMode; label: string }[] = [
-  { value: "card", label: "Thẻ flashcard" },
-  { value: "vi_en", label: "Gõ từ" },
-  { value: "listen", label: "Nghe" },
-  { value: "en_vi", label: "Đảo ngược" },
-  { value: "quiz", label: "Trắc nghiệm" },
-  { value: "mixed", label: "Hỗn hợp" },
+// Mỗi chế độ nói rõ đầu vào và việc người học cần làm; "mixed" xoay vòng
+// các kiểu có chấm điểm để tránh học thuộc vị trí câu trả lời.
+const reviewModes: { value: ReviewMode; label: string; description: string; icon: IconName; badge?: string }[] = [
+  { value: "card", label: "Thẻ ghi nhớ", description: "Lật thẻ và tự đánh giá", icon: "cards" },
+  { value: "vi_en", label: "Nhớ từ", description: "Nghĩa Việt → gõ tiếng Anh", icon: "keyboard" },
+  { value: "listen", label: "Nghe – viết", description: "Nghe phát âm → gõ lại từ", icon: "volume" },
+  { value: "en_vi", label: "Nhớ nghĩa", description: "Tiếng Anh → nhớ nghĩa Việt", icon: "swap" },
+  { value: "quiz", label: "Chọn đáp án", description: "Chọn nghĩa đúng trong 4 đáp án", icon: "target" },
+  { value: "mixed", label: "Luyện tổng hợp", description: "Luân phiên nhiều kỹ năng", icon: "shuffle", badge: "Đề xuất" },
 ];
 // "Trộn" chỉ đảo giữa các kiểu có chấm điểm; thẻ ghi nhớ là kiểu xem lại tự do nên đứng ngoài.
 const rotatingModes: ReviewMode[] = ["vi_en", "en_vi", "quiz", "listen"];
@@ -93,7 +107,6 @@ function isGeneratedExample(word: WordCard) {
   if (!example) return true;
   return example === naturalExample(word.term) || example === fallbackExample(word.term);
 }
-
 // Từ thêm từ trước khi có các trường mới (cụm, đồng/trái nghĩa, chủ đề IELTS…) sẽ thiếu dữ liệu.
 function missingFields(word: WordCard) {
   const missing: string[] = [];
@@ -104,18 +117,21 @@ function missingFields(word: WordCard) {
   if (!word.exampleVi?.trim()) missing.push("nghĩa câu ví dụ");
   if (!word.collocation?.trim() || !word.collocationVi?.trim()) missing.push("cụm nên học");
   if (!word.synonyms?.length) missing.push("đồng nghĩa");
-  if (!word.related?.length) missing.push("từ cùng chủ đề");
   if (word.synonyms?.length && !word.synonymDetails?.length) missing.push("ngữ cảnh từ đồng nghĩa");
   if (word.antonyms?.length && !word.antonymDetails?.length) missing.push("ngữ cảnh từ trái nghĩa");
-  if (word.related?.length && !word.relatedDetails?.length) missing.push("ngữ cảnh từ cùng chủ đề");
   if (!word.paraphrases?.length) missing.push("paraphrase");
   if (!word.ieltsTopics?.length) missing.push("chủ đề IELTS");
+  if (!word.cefr) missing.push("cấp độ CEFR");
   return missing;
 }
+// Số lần tra tối đa: từ hiếm có thể không bao giờ đủ dữ liệu, tra mãi chỉ tổ đợi.
+const MAX_ENRICH_TRIES = 3;
 function needsEnrichment(word: WordCard) {
-  const missingMeaning = !word.meaning?.trim() || word.meaning === "Chưa bổ sung nghĩa" || word.meaning === "Chưa có nghĩa";
-  const missingUsageDetails = (!!word.synonyms?.length && !word.synonymDetails?.length) || (!!word.antonyms?.length && !word.antonymDetails?.length) || (!!word.related?.length && !word.relatedDetails?.length);
-  return !isPdfVocabulary(word) && !isSeedWord(word) && (missingMeaning || missingUsageDetails || (!word.enrichmentCheckedAt && missingFields(word).length > 0));
+  if (isPdfVocabulary(word) || isSeedWord(word)) return false;
+  // Bỏ chốt "đã tra rồi thì thôi": nếu vẫn thiếu trường thì tra lại, tối đa vài
+  // lần. Nhờ vậy nút "Bổ sung" quét lại được cả từ từng tra hụt hoặc thiếu
+  // trường mới thêm sau này (ví dụ cấp độ CEFR).
+  return missingFields(word).length > 0 && (word.enrichmentTries ?? 0) < MAX_ENRICH_TRIES;
 }
 // Một nghĩa trong từ điển, kèm bản dịch tiếng Việt để người dùng đọc mà chọn.
 type DictionarySense = { index: number; part_of_speech?: string; definition_en?: string; definition_vi?: string; example?: string };
@@ -235,7 +251,7 @@ function takeWeeklyImport(items: WeeklyVocabulary[], examples: ExampleMap) {
         // chính bộ Excel, đồng thời giữ nguyên tiến độ và các trường đã bổ sung khác.
         return existing ? { ...word, ...existing, example: word.example, exampleVi: word.exampleVi, cloze: word.cloze, studyDay: word.studyDay, source: word.source, topic: "Từ vựng chung" } : word;
       });
-    localStorage.setItem(weeklyImportKey, JSON.stringify({ importedAt: new Date().toISOString(), count: fresh.length }));
+    localStorage.setItem(accountStorageKey(weeklyImportKey), JSON.stringify({ importedAt: new Date().toISOString(), count: fresh.length }));
     return fresh;
   } catch {
     return weeklyWordCards(items, examples);
@@ -323,10 +339,15 @@ export default function Home() {
   // danh sách, và số đó phải đổi ngay khi người dùng tạo hay xoá bên trong.
   const folders: FolderStore = useSyncExternalStore(subscribeFolders, foldersSnapshot, foldersServerSnapshot);
   const [wordsView, setWordsView] = useState<"root" | "daily" | "pdf">("root");
+  // Kỹ năng đang mở ở màn tổng quan của nó. null = đang xem một công cụ cụ thể.
+  // Đứng riêng với `tab` để không phải đụng vào union đã lưu xuống localStorage.
+  const [skillHub, setSkillHub] = useState<SkillId | null>(null);
   const updateFolders = commitFolders;
   // Bài nghe lấy từ video. Tiện ích trình duyệt mở app kèm bài trong phần neo địa chỉ.
   const [lessons, setLessons] = useState<VideoLesson[]>([]);
+  const systemLessonsRef = useRef<VideoLesson[]>([]);
   const [imported, setImported] = useState("");
+  const [importedVideoId, setImportedVideoId] = useState("");
   const [showVideoAdd, setShowVideoAdd] = useState(false);
   const [theme, setTheme] = useState<string>(DEFAULT_THEME);
   const [reviewing, setReviewing] = useState(false);
@@ -334,18 +355,109 @@ export default function Home() {
   const [revealed, setRevealed] = useState(false);
   const [index, setIndex] = useState(0);
   const [words, setWords] = useState(initialWords);
+  // Luồng tra từ cần trả về đúng một mã ổn định ngay trong cùng một nhịp bấm.
+  // Chỉ đọc `words` từ closure có thể tạo hai UUID nếu người dùng bấm Lưu rồi
+  // mở Danh sách rất nhanh, khiến danh sách giữ một mã không có trong kho.
+  const wordsRef = useRef(words);
+  wordsRef.current = words;
   const [showAdd, setShowAdd] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [showBulkAdd, setShowBulkAdd] = useState(false);
   // Chế độ luyện tập chọn thẳng từ thanh bên; null nghĩa là trang công cụ ngoài.
   const [practiceIntent, setPracticeIntent] = useState<Exclude<PracticeMode, "menu"> | null>(null);
   const [practiceLaunch, setPracticeLaunch] = useState(0);
+  // Yêu cầu mở thẳng bài vừa nhập. Tách khỏi `lessons` vì chỉ đổi danh sách bài
+  // không đủ để màn Practice biết người dùng muốn mở bài nào.
+  const [lessonLaunch, setLessonLaunch] = useState<{ videoId: string; mode: "dictation" | "shadow"; nonce: number } | null>(null);
+  const lessonLaunchNonce = useRef(0);
+  const [libraryLaunch, setLibraryLaunch] = useState<{ filter: "video"; nonce: number } | null>(null);
+  const libraryLaunchNonce = useRef(0);
+  const openVideoLesson = useCallback((videoId: string, mode: "dictation" | "shadow" = "dictation") => {
+    if (!videoId) return;
+    // Bài đang dở được mở từ màn tổng quan kỹ năng. Nếu không đóng tổng quan ở
+    // đây thì `tab` đã đổi sang practice nhưng SkillHub vẫn phủ lên trên, khiến
+    // người dùng có cảm giác nút "Học tiếp" không hoạt động.
+    setSkillHub(null);
+    setLibraryLaunch(null);
+    setPracticeIntent(mode);
+    setPracticeLaunch((value) => value + 1);
+    lessonLaunchNonce.current += 1;
+    setLessonLaunch({ videoId, mode, nonce: lessonLaunchNonce.current });
+    setTab("practice");
+  }, []);
+  const withSystemLessons = useCallback((personal: VideoLesson[]) => (
+    mergeLessonSources(systemLessonsRef.current, personal) as VideoLesson[]
+  ), []);
+  const promoteSystemLesson = useCallback(async (lesson: VideoLesson | VideoLesson[]) => {
+    const drafts = promoteSystemLessons(lesson) as VideoLesson[];
+    systemLessonsRef.current = mergeLessonSources(systemLessonsRef.current, drafts) as VideoLesson[];
+    addLessonsToCatalogue(systemLessonsRef.current);
+    setLessons(withSystemLessons(readLessons() as VideoLesson[]));
+  }, [withSystemLessons]);
   // Rời khỏi mục luyện tập thì bỏ chế độ đang chọn, để lần sau quay lại không nhảy
   // thẳng vào chế độ cũ một cách bất ngờ.
   const goTab = (next: typeof tab) => {
     if (reviewing) exitReview();
+    if (next !== "practice") setLibraryLaunch(null);
+    // Mở một công cụ cụ thể thì đóng màn tổng quan kỹ năng đang che nội dung.
+    setSkillHub(null);
     setTab(next);
   };
+
+  /** Mở màn tổng quan của một kỹ năng. */
+  const openSkill = (id: SkillId) => {
+    if (reviewing) exitReview();
+    setLibraryLaunch(null);
+    // Viết chỉ có một cửa vào với ba lộ trình bên trong. Mở thẳng cửa đó để
+    // không bắt người dùng đi qua thêm một màn "Luyện viết" trùng nội dung.
+    if (id === "write") {
+      setSkillHub(null);
+      setLessonLaunch(null);
+      try { localStorage.removeItem(practiceShellSessionKey); } catch { /* bộ nhớ bị chặn */ }
+      setPracticeIntent("translate");
+      setPracticeLaunch((value) => value + 1);
+      setTab("practice");
+      return;
+    }
+    setSkillHub(id);
+  };
+
+  /** Mở một công cụ bên trong kỹ năng tại đúng điểm bắt đầu của công cụ đó. */
+  /** Kho video riêng của người dùng — một mục đứng riêng ở cột trái. */
+  const openMyVideos = () => {
+    if (reviewing) exitReview();
+    setSkillHub(null);
+    setLessonLaunch(null);
+    // Người dùng vừa chủ động chọn, nên không khôi phục bài/chế độ còn sót lại.
+    try { localStorage.removeItem(practiceShellSessionKey); } catch { /* bộ nhớ bị chặn */ }
+    setPracticeIntent("dictation");
+    setPracticeLaunch((value) => value + 1);
+    libraryLaunchNonce.current += 1;
+    setLibraryLaunch({ filter: "video", nonce: libraryLaunchNonce.current });
+    setTab("practice");
+  };
+
+  const openTool = (tool: SkillTool) => {
+    if (reviewing) exitReview();
+    setSkillHub(null);
+    if (tool.kind === "tab") {
+      setLibraryLaunch(null);
+      if (tool.value === "words") setWordsView("root");
+      setTab(tool.value);
+      return;
+    }
+    setLibraryLaunch(null);
+    setLessonLaunch(null);
+    // Hai thẻ Nói nhại/Luyện nói phải mở luồng mới tương ứng, không dính
+    // lessonVideoId hay mode đã lưu từ phiên công cụ cũ.
+    try { localStorage.removeItem(practiceShellSessionKey); } catch { /* bộ nhớ bị chặn */ }
+    setPracticeIntent(tool.value);
+    setPracticeLaunch((value) => value + 1);
+    setTab("practice");
+  };
   const [detailWord, setDetailWord] = useState<WordCard | null>(null);
+  // Từ được nạp sẵn khi mở trang Từ điển AI từ chỗ khác (ô tra nhanh trong bài học).
+  const [dictionaryWord, setDictionaryWord] = useState("");
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState("");
   const [reviewMode, setReviewMode] = useState<ReviewMode>("vi_en");
@@ -355,10 +467,21 @@ export default function Home() {
   // Bản sao dạng ref để handler onAuthStateChange (đăng ký một lần) luôn đọc được id hiện tại.
   const userIdRef = useRef<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string>("");
   const [showAuth, setShowAuth] = useState(false);
+  const [authMode, setAuthMode] = useState<"signin" | "signup" | "magic" | "forgot" | "recovery">("signin");
+  const openAuth = useCallback((mode: "signin" | "signup" | "magic" | "forgot" | "recovery" = "signin") => {
+    setAuthMode(mode);
+    setShowAuth(true);
+  }, []);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const { plan: planInfo, refresh: refreshPlan } = usePlan(userId);
+  const [legacyCollections, setLegacyCollections] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [pendingSession, setPendingSession] = useState<StoredSession | null>(null);
   const [backfill, setBackfill] = useState<{ done: number; total: number; failed: number } | null>(null);
+  const [leveling, setLeveling] = useState<{ done: number; total: number } | null>(null);
   const [exam, setExam] = useState<ExamGoal | null>(null);
   const [studyDays, setStudyDays] = useState<string[]>([]);
   // Điểm số của phiên đang chạy, dùng để quyết định có chúc mừng ở màn tổng kết hay không.
@@ -367,6 +490,7 @@ export default function Home() {
   const card = reviewQueue[index];
 
   const filtered = useMemo(() => words.filter((word) => `${word.term} ${word.meaning} ${word.topic}`.toLowerCase().includes(query.toLowerCase())), [words, query]);
+  const personalLessonCount = useMemo(() => lessons.filter((lesson) => lesson.source !== "system").length, [lessons]);
   const activeMode: ReviewMode = reviewMode === "mixed" ? rotatingModes[index % rotatingModes.length] : reviewMode;
   // Ba đáp án nhiễu lấy tất định theo vị trí thẻ, để không xáo lại mỗi lần render.
   const quizChoices = useMemo(() => {
@@ -425,12 +549,17 @@ export default function Home() {
           sentences: data.sentences ?? [],
         };
         addLessonsToCatalogue([lesson]);
-        const list = saveLesson(lesson) as { id: string; sentences: unknown[] }[];
-        setLessons(list as VideoLesson[]);
+        const personal = saveLesson(lesson) as VideoLesson[];
+        const list = withSystemLessons(personal);
+        setLessons(list);
         // Đếm theo bài ĐÃ LƯU, không theo số đoạn AI trả về: bước lưu còn gộp
         // các mẩu ngắn lại, nên hai con số lệch nhau và người học thấy sai.
         const saved = list.find((item) => item.id === `yt-${lesson.videoId}`);
-        setImported(`AI đã nghe xong "${lesson.title}" · ${saved?.sentences.length ?? 0} câu · mốc giờ là ước lượng.`);
+        setImported(`AI đã nghe xong "${lesson.title}" · ${saved?.sentences.length ?? 0} câu · đang mở bài để luyện.`);
+        if (lesson.videoId) {
+          setImportedVideoId(lesson.videoId);
+          openVideoLesson(lesson.videoId);
+        }
       } catch (problem) {
         setImported(problem instanceof Error ? problem.message : "Không đọc được lời thoại.");
       }
@@ -441,21 +570,44 @@ export default function Home() {
       const lesson = lessonFromHash(window.location.hash, decode) as { title: string; sentences: unknown[] } | null;
       if (!lesson) return;
       addLessonsToCatalogue([lesson]);
-      setLessons(saveLesson(lesson));
-      setImported(`Đã thêm bài "${lesson.title}" · ${lesson.sentences.length} câu`);
+      const next = withSystemLessons(saveLesson(lesson) as VideoLesson[]);
+      setLessons(next);
+      const opened = "videoId" in lesson ? next.find((item) => item.videoId === lesson.videoId) : null;
+      setImported(`Đã thêm bài "${lesson.title}" · ${opened?.sentences.length ?? 0} câu · đang mở bài để luyện`);
+      if ("videoId" in lesson && typeof lesson.videoId === "string") {
+        setImportedVideoId(lesson.videoId);
+        openVideoLesson(lesson.videoId);
+      }
       // Dọn neo đi để tải lại trang không thêm bài lần nữa.
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     };
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
-    setLessons(readLessons());
-    void takeTranscribe().then((done) => {
-      if (!done) take();
-    });
-    // Tiện ích mở thẻ mới thì nhánh trên đủ. Nhưng nếu nó rơi vào thẻ Lexilo đang
-    // mở sẵn, chỉ neo đổi chứ trang không dựng lại — thiếu nhánh này là bài rơi mất.
-    window.addEventListener("hashchange", take);
-    return () => window.removeEventListener("hashchange", take);
-  }, []);
+    const personal = readLessons() as VideoLesson[];
+    systemLessonsRef.current = readSystemDrafts() as VideoLesson[];
+    setLessons(withSystemLessons(personal));
+    void fetch("/system-lessons.json")
+      .then(async (response) => {
+        const data = (await response.json()) as VideoLesson[];
+        if (!response.ok) return;
+        systemLessonsRef.current = mergeLessonSources(data, readSystemDrafts()) as VideoLesson[];
+        addLessonsToCatalogue(systemLessonsRef.current);
+        setLessons(withSystemLessons(readLessons() as VideoLesson[]));
+      })
+      .catch(() => {
+        // Kho mặc định không đọc được thì kho cá nhân vẫn hoạt động bình thường.
+      });
+    const takeIncoming = () => {
+      void takeTranscribe().then((done) => {
+        if (!done) take();
+      });
+    };
+    takeIncoming();
+    // Cả bài có phụ đề lẫn bài cần AI nghe đều phải chạy khi tiện ích gửi vào tab
+    // đang mở. Trước đây hashchange chỉ gọi `take`, nên nhánh transcribe báo thành
+    // công ở tiện ích nhưng Lexilo không dựng màn video.
+    window.addEventListener("hashchange", takeIncoming);
+    return () => window.removeEventListener("hashchange", takeIncoming);
+  }, [openVideoLesson, withSystemLessons]);
 
   useEffect(() => {
     const saved = readTheme();
@@ -494,48 +646,62 @@ export default function Home() {
         return {};
       }
     }
-    async function loadLocalVocabulary() {
-      const [response, weeklyResponse, weeklyExamplesResponse, examples, extras, usage] = await Promise.all([fetch("/vocabulary-1000.json"), fetch("/weekly-vocabulary.json"), fetch("/weekly-examples.json"), loadExamples(), loadEnrichment(), loadUsage()]);
+    async function loadPdfCards(): Promise<WordCard[]> {
+      const [response, examples, extras, usage] = await Promise.all([
+        fetch("/vocabulary-1000.json"), loadExamples(), loadEnrichment(), loadUsage(),
+      ]);
+      if (!response.ok) return [];
       const vocabulary = (await response.json()) as ImportedVocabulary[];
+      return vocabulary.map((item) => {
+        const { example, exampleVi } = exampleFor(item.term, examples);
+        const extra = extras[item.term.trim().toLowerCase()];
+        return {
+          id: `pdf-${item.number}`,
+          term: item.term,
+          ipa: item.ipa || "/…/",
+          meaning: item.meaning,
+          example,
+          exampleVi,
+          cloze: clozeFor(item.term, example),
+          definition: extra?.definition || "Vocabulary imported from the MochiMochi topic list.",
+          topic: item.topic,
+          box: 1,
+          lapses: 0,
+          partOfSpeech: item.partOfSpeech,
+          status: "new" as const,
+          reviewCount: 0,
+          source: item.source,
+          synonyms: extra?.synonyms ?? [],
+          antonyms: extra?.antonyms ?? [],
+          related: extra?.related ?? [],
+          ieltsTopics: extra?.ieltsTopics ?? [],
+          collocation: extra?.collocation ?? "",
+          collocationVi: extra?.collocationVi ?? "",
+          paraphrases: extra?.paraphrases ?? [],
+          synonymDetails: detailsFrom(extra?.synonyms, usage),
+          antonymDetails: detailsFrom(extra?.antonyms, usage),
+        };
+      });
+    }
+    async function loadLocalVocabulary(includeLegacy = false) {
+      if (!includeLegacy) {
+        if (active) setWords(mergeStoredWords([]).filter((word) => !isLegacyOwnerVocabulary(word)));
+        return;
+      }
+      const [pdfCards, weeklyResponse, weeklyExamplesResponse] = await Promise.all([loadPdfCards(), fetch("/weekly-vocabulary.json"), fetch("/weekly-examples.json")]);
       const weeklyVocabulary = weeklyResponse.ok ? ((await weeklyResponse.json()) as WeeklyVocabulary[]) : [];
       const weeklyExamples = weeklyExamplesResponse.ok ? ((await weeklyExamplesResponse.json()) as ExampleMap) : {};
       if (!active) return;
       setWords(
-        mergeStoredWords([...takeWeeklyImport(weeklyVocabulary, weeklyExamples), ...vocabulary.map((item) => {
-          const { example, exampleVi } = exampleFor(item.term, examples);
-          const extra = extras[item.term.trim().toLowerCase()];
-          return {
-            id: `pdf-${item.number}`,
-            term: item.term,
-            ipa: item.ipa || "/…/",
-            meaning: item.meaning,
-            example,
-            exampleVi,
-            cloze: clozeFor(item.term, example),
-            definition: extra?.definition || "Vocabulary imported from the MochiMochi topic list.",
-            topic: item.topic,
-            box: 1,
-            lapses: 0,
-            partOfSpeech: item.partOfSpeech,
-            status: "new" as const,
-            reviewCount: 0,
-            source: item.source,
-            synonyms: extra?.synonyms ?? [],
-            antonyms: extra?.antonyms ?? [],
-            related: extra?.related ?? [],
-            ieltsTopics: extra?.ieltsTopics ?? [],
-            collocation: extra?.collocation ?? "",
-            collocationVi: extra?.collocationVi ?? "",
-            paraphrases: extra?.paraphrases ?? [],
-            synonymDetails: detailsFrom(extra?.synonyms, usage),
-            antonymDetails: detailsFrom(extra?.antonyms, usage),
-          };
-        })]),
+        mergeStoredWords([...takeWeeklyImport(weeklyVocabulary, weeklyExamples), ...pdfCards]),
       );
     }
     async function connect() {
       if (!supabase) {
-        await loadLocalVocabulary();
+        setStorageScope(null);
+        setFolderScope(null);
+        setLegacyCollections(false);
+        await loadLocalVocabulary(false);
         setCloudStatus("demo");
         return;
       }
@@ -543,22 +709,47 @@ export default function Home() {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session) {
-        await loadLocalVocabulary();
+        setStorageScope(null);
+        setFolderScope(null);
+        setLegacyCollections(false);
+        await loadLocalVocabulary(false);
         if (active) setCloudStatus("demo");
         return;
       }
+      let ownsLegacyLibrary = false;
+      try {
+        const response = await aiFetch("/api/me/entitlement");
+        if (response.ok) {
+          const entitlement = (await response.json()) as { legacyLibrary?: boolean };
+          ownsLegacyLibrary = entitlement.legacyLibrary === true;
+        }
+      } catch {
+        // Mặc định an toàn: không công khai bộ cá nhân cũ khi chưa xác minh được chủ sở hữu.
+      }
+      setStorageScope(session.user.id, ownsLegacyLibrary);
+      setFolderScope(session.user.id, ownsLegacyLibrary);
+      setLegacyCollections(ownsLegacyLibrary);
+      const scopedLessons = readLessons() as VideoLesson[];
+      addLessonsToCatalogue(systemLessonsRef.current);
+      setLessons(withSystemLessons(scopedLessons));
       setUserId(session.user.id);
       userIdRef.current = session.user.id;
       setUserEmail(session.user.email ?? null);
-      const { data, error } = await supabase.from("words").select("*, word_states(box,lapse_count,direction,due_date,status,interval_days,review_count,last_reviewed_at)").is("deleted_at", null).order("created_at", { ascending: false });
+      setUserName(safeDisplayName(session.user.user_metadata?.full_name ?? session.user.user_metadata?.name, session.user.id));
+      let { data, error } = await supabase.from("words").select("*, word_states(box,lapse_count,direction,due_date,status,interval_days,review_count,last_reviewed_at)").is("deleted_at", null).order("created_at", { ascending: false });
+      if (error) {
+        // Schema cũ có thể chưa có deleted_at hoặc một trường lịch ôn mới. Vẫn
+        // đọc được kho từ cốt lõi; tiến độ thiếu sẽ dùng giá trị mặc định/local.
+        ({ data, error } = await supabase.from("words").select("*").order("created_at", { ascending: false }));
+      }
       if (!active) return;
       if (error) {
-        await loadLocalVocabulary();
+        await loadLocalVocabulary(ownsLegacyLibrary);
         setCloudStatus("demo");
         return;
       }
       let cloudWords = data ?? [];
-      try {
+      if (ownsLegacyLibrary) try {
         const [vocabularyResponse, examples, extras, usage] = await Promise.all([fetch("/vocabulary-1000.json"), loadExamples(), loadEnrichment(), loadUsage()]);
         const vocabulary = (await vocabularyResponse.json()) as ImportedVocabulary[];
         const mergedVocabulary = new Map<string, ImportedVocabulary>();
@@ -616,11 +807,11 @@ export default function Home() {
         console.error("Không thể nhập bộ từ vựng PDF", importError);
       }
       try {
-        const localPersonal = readLocalWords().filter((word) => !isPdfVocabulary(word) && !isSeedWord(word));
+        const localPersonal = readLocalWords().filter((word) => !isLegacyOwnerVocabulary(word) && !isSeedWord(word));
         const existingTerms = new Set(cloudWords.map((row) => String(row.term).trim().toLowerCase()));
         const missingPersonal = localPersonal.filter((word) => !existingTerms.has(word.term.trim().toLowerCase()));
         for (const word of missingPersonal) {
-          const { data: inserted, error: insertError } = await supabase.from("words").insert({
+          const personalPayload = {
             id: word.id,
             user_id: session.user.id,
             term: word.term,
@@ -645,8 +836,14 @@ export default function Home() {
             ielts_topics: word.ieltsTopics || [],
             study_day: word.studyDay ?? null,
             is_starred: !!word.starred,
-          }).select().single();
+          };
+          let { data: inserted, error: insertError } = await supabase.from("words").insert(personalPayload).select().single();
+          if (insertError) {
+            const compatiblePayload = Object.fromEntries(Object.entries(personalPayload).filter(([column]) => !["synonym_details", "antonym_details", "related_details"].includes(column)));
+            ({ data: inserted, error: insertError } = await supabase.from("words").insert(compatiblePayload).select().single());
+          }
           if (insertError) throw insertError;
+          if (!inserted) throw new Error("Supabase không trả về từ vừa lưu.");
           const { error: stateError } = await supabase.from("word_states").insert(
             ["vi_en", "en_vi"].map((direction) => ({
               word_id: inserted.id,
@@ -704,11 +901,17 @@ export default function Home() {
               lastReviewedAt: state?.last_reviewed_at,
               source: row.source ?? "",
               enrichmentCheckedAt: row.enrichment_checked_at ?? undefined,
+              cefr: typeof row.cefr === "string" && row.cefr ? row.cefr : undefined,
             };
-          });
+          }).filter((word) => ownsLegacyLibrary || !isLegacyOwnerVocabulary(word));
       // Luôn hợp nhất dữ liệu trên máy, kể cả khi cloud trả về rỗng hoặc chỉ có bộ PDF.
       // Nếu không làm vậy, từ cá nhân có thể biến mất khỏi giao diện sau khi phiên ẩn danh thay đổi.
-      const [weeklyResponse, weeklyExamplesResponse] = await Promise.all([fetch("/weekly-vocabulary.json"), fetch("/weekly-examples.json")]);
+      if (!ownsLegacyLibrary) {
+        setWords(mergeStoredWords(mappedCloudWords).filter((word) => !isLegacyOwnerVocabulary(word)));
+        setCloudStatus("synced");
+        return;
+      }
+      const [weeklyResponse, weeklyExamplesResponse, pdfCards] = await Promise.all([fetch("/weekly-vocabulary.json"), fetch("/weekly-examples.json"), loadPdfCards()]);
       const weeklyVocabulary = weeklyResponse.ok ? ((await weeklyResponse.json()) as WeeklyVocabulary[]) : [];
       const weeklyExamples = weeklyExamplesResponse.ok ? ((await weeklyExamplesResponse.json()) as ExampleMap) : {};
       const weeklyTerms = new Set(weeklyVocabulary.map((word) => word.term.trim().toLowerCase()));
@@ -717,8 +920,31 @@ export default function Home() {
         if (!pair || (!word.source?.endsWith(".xlsx") && !weeklyTerms.has(word.term.trim().toLowerCase()))) return word;
         return { ...word, example: pair[0], exampleVi: pair[1], cloze: clozeFor(word.term, pair[0]) };
       });
-      const cloudTerms = new Set(correctedCloudWords.map((word) => word.term.trim().toLowerCase()));
-      setWords(mergeStoredWords([...takeWeeklyImport(weeklyVocabulary, weeklyExamples).filter((word) => !cloudTerms.has(word.term.trim().toLowerCase())), ...correctedCloudWords]));
+      // Nội dung PDF luôn lấy từ file gốc để đủ 983 mục và giữ mã pdf-* ổn định.
+      // Nếu cloud có tiến độ của bản PDF đã nhập trước đây, ghép phần tiến độ vào
+      // thẻ gốc thay vì dùng bản cloud thay thế rồi làm mất thư mục/chủ đề.
+      const cloudPdfByTerm = new Map(correctedCloudWords.filter(isPdfVocabulary).map((word) => [word.term.trim().toLowerCase(), word]));
+      const restoredPdfCards = pdfCards.map((word) => {
+        const cloud = cloudPdfByTerm.get(word.term.trim().toLowerCase());
+        return cloud ? {
+          ...word,
+          box: cloud.box,
+          lapses: cloud.lapses,
+          starred: cloud.starred,
+          dueDate: cloud.dueDate,
+          status: cloud.status,
+          intervalDays: cloud.intervalDays,
+          reviewCount: cloud.reviewCount,
+          lastReviewedAt: cloud.lastReviewedAt,
+        } : word;
+      });
+      const personalCloudWords = correctedCloudWords.filter((word) => !isPdfVocabulary(word));
+      const cloudTerms = new Set(personalCloudWords.map((word) => word.term.trim().toLowerCase()));
+      setWords(mergeStoredWords([
+        ...takeWeeklyImport(weeklyVocabulary, weeklyExamples).filter((word) => !cloudTerms.has(word.term.trim().toLowerCase())),
+        ...restoredPdfCards,
+        ...personalCloudWords,
+      ]));
       setCloudStatus("synced");
     }
     connect().finally(() => {
@@ -745,11 +971,23 @@ export default function Home() {
     if (!supabase) return;
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       const nextId = session?.user?.id ?? null;
-      // Supabase phát lại SIGNED_IN mỗi lần tab được focus để làm mới token. Nếu cứ thế tải lại
-      // thì rời tab rồi quay lại là mất trang đang xem — chỉ tải lại khi danh tính thật sự đổi.
+      // Bấm liên kết khôi phục mật khẩu từ email → mở luôn màn đặt mật khẩu mới.
+      if (event === "PASSWORD_RECOVERY") {
+        setAuthMode("recovery");
+        setShowAuth(true);
+        return;
+      }
+      // Nạp lại đúng một lần khi khách vừa đăng nhập hoặc đổi tài khoản để hàm connect
+      // phía trên tải dữ liệu cloud. Các lần làm mới token sau đó không làm mất màn đang học.
+      const freshSignIn = event === "SIGNED_IN" && !userIdRef.current && !!nextId;
       const changedAccount = event === "SIGNED_IN" && !!userIdRef.current && !!nextId && nextId !== userIdRef.current;
-      if (event === "SIGNED_OUT" || changedAccount) window.location.reload();
-      else if (nextId) userIdRef.current = nextId;
+      if (event === "SIGNED_OUT" || freshSignIn || changedAccount) window.location.reload();
+      else if (nextId && session?.user) {
+        userIdRef.current = nextId;
+        setUserId(nextId);
+        setUserEmail(session.user.email ?? null);
+        setUserName(safeDisplayName(session.user.user_metadata?.full_name ?? session.user.user_metadata?.name, nextId));
+      }
     });
     return () => data.subscription.unsubscribe();
   }, []);
@@ -784,13 +1022,70 @@ export default function Home() {
     if (reviewQueue.length && index < reviewQueue.length) setPendingSession({ ids: reviewQueue.map((word) => word.id), index, mode: reviewMode });
     setReviewing(false);
   }
+  // Đẩy bậc CEFR lên cloud để lần tải sau (kể cả trên máy khác) không phải xếp lại.
+  // Cột `cefr` có thể chưa tồn tại ở database cũ — lỗi thì bỏ qua, bản trên máy vẫn giữ.
+  const saveCefrToCloud = useCallback((updates: { id: string; cefr: string }[]) => {
+    if (!supabase || !userIdRef.current) return;
+    for (const { id, cefr } of updates) {
+      if (id.startsWith("pdf-")) continue; // từ bộ PDF không nằm trên cloud
+      void supabase.from("words").update({ cefr }).eq("id", id).then(({ error }) => {
+        if (error) console.warn("Chưa đồng bộ được cấp độ (có thể database chưa có cột cefr)", error.message);
+      });
+    }
+  }, []);
+  const levelingRef = useRef(false);
+  const ipaFillRef = useRef(false);
+
+  // Đắp phiên âm IPA cho các từ đang trống (kể cả bộ PDF và cụm nhiều từ). Dùng
+  // /api/ipa — từ điển CMU đóng gói sẵn nên phần lớn xong ngay tại chỗ, rất nhanh.
+  const fillIpa = useCallback(async (targets: WordCard[]) => {
+    const need = targets.filter((word) => word.term && (!word.ipa || word.ipa === "/…/" || word.ipa === "//"));
+    if (!need.length || ipaFillRef.current) return;
+    ipaFillRef.current = true;
+    try {
+      for (let start = 0; start < need.length; start += 100) {
+        const batch = need.slice(start, start + 100);
+        const response = await fetch("/api/ipa", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ words: batch.map((word) => word.term) }),
+        });
+        const data = (await response.json().catch(() => ({}))) as { ipa?: Record<string, string>; estimated?: Record<string, string> };
+        const found = { ...(data.ipa ?? {}), ...(data.estimated ?? {}) };
+        setWords((current) => current.map((word) => {
+          const key = word.term.replace(/\s+/g, " ").trim().toLowerCase();
+          const ipa = found[key];
+          return ipa && (!word.ipa || word.ipa === "/…/" || word.ipa === "//") ? { ...word, ipa } : word;
+        }));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+    } catch (error) {
+      console.error("Không đắp được phiên âm", error);
+    } finally {
+      ipaFillRef.current = false;
+    }
+  }, []);
+
   // Tra lại lần lượt từng từ còn thiếu dữ liệu và đắp vào các ô trống.
   // Chạy tuần tự có giãn nhịp vì mỗi lần tra gọi tới từ điển, Datamuse và dịch máy.
   // Không truyền gì thì quét cả kho; truyền danh sách thì chỉ tra đúng những từ đó
   // (dùng ngay sau khi dán danh sách, lúc state chưa kịp cập nhật).
   async function fillMissingFields(only?: WordCard[]) {
-    const targets = (only ?? words).filter(needsEnrichment);
-    if (!targets.length || backfill) return;
+    if (backfill) return;
+    const scope = only ?? words;
+    // Bước 0: xếp cấp độ CEFR + đắp phiên âm IPA cho MỌI từ còn thiếu (kể cả bộ
+    // PDF) — chạy nền song song, không chặn vòng tra bên dưới. Cả hai đều tra dữ
+    // liệu đóng gói sẵn tại chỗ nên nhanh.
+    void assignLevels(scope.filter((word) => !isSeedWord(word)), true);
+    void fillIpa(scope.filter((word) => !isSeedWord(word)));
+    // Bước 1: các trường còn lại của TỪ TỰ THÊM (nghĩa, câu ví dụ, đồng nghĩa,
+    // chủ đề IELTS…) — bộ PDF đã có sẵn dữ liệu dựng trước. CEFR đã lo ở bước 0.
+    const pool = scope.filter((word) => !isPdfVocabulary(word) && !isSeedWord(word));
+    const targets = pool.filter((word) => {
+      if ((word.enrichmentTries ?? 0) >= MAX_ENRICH_TRIES) return false;
+      return missingFields(word).filter((field) => field !== "cấp độ CEFR").length > 0;
+    });
+    if (!targets.length) return;
     setBackfill({ done: 0, total: targets.length, failed: 0 });
     let failed = 0;
     for (const [position, word] of targets.entries()) {
@@ -803,7 +1098,7 @@ export default function Home() {
         const data = (await response.json()) as EnrichPayload & { error?: string };
         if (!response.ok) throw new Error(data.error ?? "Tra từ thất bại");
         const enriched = mergeEnrichment(word, data);
-        setWords((current) => current.map((item) => (item.id === word.id ? mergeEnrichment(item, data) : item)));
+        setWords((current) => current.map((item) => (item.id === word.id ? { ...mergeEnrichment(item, data), enrichmentTries: (item.enrichmentTries ?? 0) + 1 } : item)));
         // setWords được lưu xuống máy bởi effect phía trên; tài khoản đã đăng nhập cần
         // cập nhật trực tiếp lên cloud để lần tải lại không lấy bản cũ từ database đè lên.
         if (supabase && userIdRef.current) {
@@ -844,6 +1139,8 @@ export default function Home() {
         }
       } catch (error) {
         failed += 1;
+        // Tra hỏng cũng tính là một lần thử, để từ hiếm không kẹt lại mãi.
+        setWords((current) => current.map((item) => (item.id === word.id ? { ...item, enrichmentTries: (item.enrichmentTries ?? 0) + 1 } : item)));
         console.error(`Không bổ sung được dữ liệu cho “${word.term}”`, error);
       }
       setBackfill({ done: position + 1, total: targets.length, failed });
@@ -853,15 +1150,55 @@ export default function Home() {
     setTimeout(() => setBackfill(null), 4000);
   }
 
-  function resumeSession() {
-    if (!pendingSession) return;
-    const byId = new Map(words.map((word) => [word.id, word]));
-    const queue = pendingSession.ids.map((id) => byId.get(id)).filter((word): word is WordCard => !!word);
-    setPendingSession(null);
-    if (!queue.length) {
-      writeSession(null);
-      return;
+  const assignLevels = useCallback(async (targets: WordCard[], quiet = false) => {
+    const list = targets.filter((word) => !word.cefr && word.term);
+    if (!list.length || levelingRef.current) return;
+    levelingRef.current = true;
+    if (!quiet) setLeveling({ done: 0, total: list.length });
+    for (let start = 0; start < list.length; start += 120) {
+      const batch = list.slice(start, start + 120);
+      try {
+        const response = await fetch("/api/ai/level", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ terms: batch.map((word) => word.term) }),
+        });
+        const data = (await response.json()) as { levels?: Record<string, string | null>; error?: string };
+        if (!response.ok || !data.levels) throw new Error(data.error ?? "Không xếp được cấp độ.");
+        const levels = data.levels;
+        setWords((current) => current.map((word) => {
+          if (word.cefr || !(word.term in levels)) return word;
+          // "?" = đã xét nhưng không xếp được (cụm nhiều từ) — để không hỏi lại mãi.
+          return { ...word, cefr: levels[word.term] ?? "?" };
+        }));
+        saveCefrToCloud(
+          batch
+            .filter((word) => !word.cefr && levels[word.term] && levels[word.term] !== "?")
+            .map((word) => ({ id: word.id, cefr: levels[word.term] as string })),
+        );
+      } catch (error) {
+        console.error("Không xếp được cấp độ cho lô từ", error);
+      }
+      if (!quiet) setLeveling({ done: Math.min(start + batch.length, list.length), total: list.length });
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
+    levelingRef.current = false;
+    if (!quiet) setTimeout(() => setLeveling(null), 3500);
+  }, [saveCefrToCloud]);
+
+  // Từ trong phiên dở còn khôi phục được — dùng để hiện/ẩn thanh "Học tiếp" và
+  // hiện đúng số. Khi mới đăng nhập, `words` còn đang tải từ cloud nên phiên có
+  // thể tạm chưa khớp; lúc đó ẩn thanh đi rồi hiện lại khi dữ liệu về, tốt hơn là
+  // hiện một nút bấm vào không làm gì.
+  const resumableQueue = useMemo(() => {
+    if (!pendingSession) return [];
+    const byId = new Map(words.map((word) => [word.id, word]));
+    return pendingSession.ids.map((id) => byId.get(id)).filter((word): word is WordCard => !!word);
+  }, [pendingSession, words]);
+  function resumeSession() {
+    if (!pendingSession || !resumableQueue.length) return;
+    const queue = resumableQueue;
+    setPendingSession(null);
     setReviewMode(pendingSession.mode ?? "vi_en");
     setReviewQueue(queue);
     setIndex(Math.min(pendingSession.index, queue.length - 1));
@@ -1045,6 +1382,53 @@ export default function Home() {
       }),
     );
   }
+  // Lưu một từ vừa tra vào kho, đi đúng đường thêm từ như mọi nơi để từ đó vào
+  // luôn lịch ôn Leitner. Trả về mã từ: đã có thì trả mã cũ, chưa có thì tạo mới.
+  function saveFoundWord(found: NewWord): string {
+    const key = found.term.trim().toLowerCase();
+    const existing = wordsRef.current.find((word) => word.term.trim().toLowerCase() === key);
+    if (existing) return existing.id;
+    const created: WordCard = {
+      id: crypto.randomUUID(),
+      term: found.term,
+      ipa: found.ipa,
+      meaning: found.meaning,
+      partOfSpeech: found.partOfSpeech,
+      definition: found.definition,
+      example: fallbackExample(found.term),
+      exampleVi: fallbackExampleVi(found.term),
+      cloze: clozeFor(found.term, fallbackExample(found.term)),
+      topic: "Từ điển",
+      box: 1,
+      lapses: 0,
+      status: "new",
+      reviewCount: 0,
+      addedDate: localDateString(),
+      studyDay: legacyCollections ? weekdayIndex() : undefined,
+    };
+    // Chốt mã trước khi React render lại để mọi lần bấm kế tiếp trong cùng một
+    // frame đều nhận đúng mã của từ vừa được thêm.
+    wordsRef.current = [created, ...wordsRef.current];
+    setWords((current) =>
+      current.some((word) => word.term.trim().toLowerCase() === key) ? current : [created, ...current],
+    );
+    void persistWord(created);
+    return created.id;
+  }
+
+  function setWordStudyDay(id: string, day: number | null) {
+    const safeDay = typeof day === "number" ? Math.min(6, Math.max(0, Math.trunc(day))) : undefined;
+    setWords((current) => current.map((word) => (word.id !== id ? word : { ...word, studyDay: safeDay })));
+    if (supabase) void supabase.from("words").update({ study_day: safeDay ?? null, updated_at: new Date().toISOString() }).eq("id", id);
+  }
+
+  // Ghi lại bậc CEFR khi thẻ chi tiết tự tra. Ổn định qua useCallback để effect
+  // trong WordDetail không chạy lại vòng vòng.
+  const markWordLevel = useCallback((id: string, level: string) => {
+    setWords((current) => current.map((word) => (word.id === id && (!word.cefr || word.cefr === "?") ? { ...word, cefr: level } : word)));
+    saveCefrToCloud([{ id, cefr: level }]);
+  }, [saveCefrToCloud]);
+
   async function persistReview(before: WordCard, after: WordCard, rating: Rating, durationMs: number) {
     if (!supabase || !userId) return;
     await supabase
@@ -1076,7 +1460,7 @@ export default function Home() {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return;
-    const { error } = await supabase.from("words").insert({
+    const cloudWord = {
       id: word.id,
       user_id: user.id,
       term: word.term,
@@ -1103,13 +1487,22 @@ export default function Home() {
       is_starred: !!word.starred,
       enrichment_checked_at: word.enrichmentCheckedAt || null,
       created_at: word.addedDate ? new Date(word.addedDate).toISOString() : undefined,
-    });
+    };
+    let { error } = await supabase.from("words").insert(cloudWord);
+    if (error) {
+      // Một số dự án Supabase cũ chưa chạy migration cho các trường enrichment.
+      // Lưu phần cốt lõi trước để từ không chỉ nằm trên một máy; nội dung mở rộng
+      // vẫn được giữ trong localStorage và có thể đồng bộ sau khi nâng schema.
+      const optionalColumns = new Set(["synonym_details", "antonym_details", "related_details", "enrichment_checked_at"]);
+      const compatibleWord = Object.fromEntries(Object.entries(cloudWord).filter(([column]) => !optionalColumns.has(column)));
+      ({ error } = await supabase.from("words").insert(compatibleWord));
+    }
     if (error) {
       console.error("Không lưu được từ lên Supabase, từ vẫn được giữ trên máy này.", error);
       setCloudStatus("demo");
       return;
     }
-    await supabase.from("word_states").insert([
+    const { error: stateError } = await supabase.from("word_states").insert([
       {
         word_id: word.id,
         user_id: user.id,
@@ -1131,73 +1524,141 @@ export default function Home() {
         last_reviewed_at: word.lastReviewedAt || null,
       },
     ]);
+    if (stateError) {
+      console.error("Đã lưu từ nhưng chưa tạo được lịch ôn trên Supabase.", stateError);
+      setCloudStatus("demo");
+      return;
+    }
     setCloudStatus("synced");
+  }
+  async function deleteWordFromCloud(id: string) {
+    if (!supabase) return;
+    const { error } = await supabase.from("words").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+    // Schema cũ chưa có deleted_at: thao tác xoá mà người dùng vừa xác nhận vẫn
+    // phải có hiệu lực sau khi tải lại, nên lùi về xoá bản ghi thật.
+    if (error) {
+      const { error: deleteError } = await supabase.from("words").delete().eq("id", id);
+      if (deleteError) console.error("Không xoá được từ trên Supabase.", deleteError);
+    }
   }
   function speak(term: string) {
     window.speechSynthesis?.speak(new SpeechSynthesisUtterance(term));
   }
 
+  // Tên màn đang mở. Một nguồn duy nhất cho thanh trên cùng và cho góp ý, nhờ
+  // vậy góp ý không bao giờ khai sai màn so với thứ người dùng đang nhìn.
+  const screenLabel = skillHub
+    ? (SKILL_SPACES.find((item) => item.id === skillHub)?.label ?? "Kỹ năng")
+    : tab === "home" ? "Tổng quan hôm nay"
+      : tab === "words" ? "Kho từ vựng"
+        : tab === "practice" ? (libraryLaunch ? "Video của tôi" : practiceNav.find((item) => item.value === practiceIntent)?.label ?? "Luyện tập")
+          : tab === "stats" ? "Tiến độ học tập" : "Từ điển AI";
+
+  // Trang công khai là cổng vào của ứng dụng. Chỉ dựng workspace học sau khi đã
+  // có phiên Supabase; nhờ vậy khách không nhìn thấy sidebar rồi mới được hỏi đăng nhập.
+  if (!userId) {
+    return (
+      <>
+        <LandingPage
+          loading={!hydrated || cloudStatus === "connecting"}
+          openSignIn={() => openAuth("signin")}
+          openSignUp={() => openAuth("signup")}
+        />
+        {showAuth && <AuthModal close={() => setShowAuth(false)} signedInEmail={null} startMode={authMode} />}
+      </>
+    );
+  }
+
   return (
-    <main className="app-shell">
+    <LookupActionsContext.Provider value={{ saveWord: saveFoundWord, openDictionary: (term: string) => { setDictionaryWord(term); goTab("dictionary"); } }}>
+    <main className="app-shell lexilo-workspace" data-section={tab} data-practice={practiceIntent ?? undefined}>
+      <a className="skip-link" href="#workspace-content">Bỏ qua điều hướng</a>
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark">L</span>
-          <span>Lexilo</span>
+          <span className="brand-copy"><b>Lexilo</b><small>English workspace</small></span>
         </div>
-        {/* Mọi chức năng nằm thẳng ở cột trái, chia theo nhóm. Trước đây bảy chế độ
-            luyện tập bị giấu sau một trang lưới, phải bấm hai lần mới tới. */}
-        <nav aria-label="Điều hướng chính">
-          <span className="nav-group">TỔNG QUAN</span>
-          <button className={tab === "home" ? "nav-item active" : "nav-item"} onClick={() => goTab("home")}>
+        {/* Bốn kỹ năng thay cho mười mục phẳng. Mỗi kỹ năng mở ra không gian
+            riêng chứa đủ công cụ của nó — xem SKILLS. Không mất chức năng nào,
+            chỉ đổi cách tìm tới chúng. */}
+        <nav aria-label="Điều hướng chính" className="skill-nav">
+          <button className={tab === "home" && !skillHub ? "nav-item active" : "nav-item"} onClick={() => goTab("home")}>
             <Icon name="home" /> Trang chủ
           </button>
-          <button className={tab === "stats" ? "nav-item active" : "nav-item"} onClick={() => goTab("stats")}>
+
+          <span className="nav-group">KỸ NĂNG</span>
+          {SKILL_SPACES.map((item) => {
+            // Sáng đèn khi đang ở màn tổng quan của kỹ năng, HOẶC đang dùng một
+            // công cụ thuộc kỹ năng đó — để người dùng luôn biết mình đang ở đâu.
+            const insideTool =
+              !skillHub &&
+              item.tools.some((tool) =>
+                tool.kind === "practice"
+                  ? tab === "practice" && practiceIntent === tool.value && !libraryLaunch
+                  : tab === tool.value,
+              );
+            const active = skillHub === item.id || insideTool;
+            return (
+              <button
+                key={item.id}
+                className={active ? "nav-item nav-skill active" : "nav-item nav-skill"}
+                aria-current={active ? "page" : undefined}
+                onClick={() => openSkill(item.id)}
+              >
+                <Icon name={item.icon} /> {item.label}
+              </button>
+            );
+          })}
+
+          <span className="nav-group">THEO DÕI</span>
+          <button className={tab === "stats" && !skillHub ? "nav-item active" : "nav-item"} onClick={() => goTab("stats")}>
             <Icon name="chart" /> Tiến độ
           </button>
-
-          <span className="nav-group">LUYỆN TẬP</span>
-          {practiceNav.map((item) => (
-            <button
-              key={item.value}
-              className={tab === "practice" && practiceIntent === item.value ? "nav-item active" : "nav-item"}
-              onClick={() => {
-                if (reviewing) exitReview();
-                // Quay lại đúng chế độ đang học thì giữ nguyên phiên. Chỉ tạo phiên
-                // mới khi người dùng chủ động chọn một chế độ khác.
-                if (practiceIntent !== item.value) {
-                  setPracticeIntent(item.value);
-                  setPracticeLaunch((value) => value + 1);
-                }
-                setTab("practice");
-              }}
-            >
-              <Icon name={item.icon} /> {item.label}
-            </button>
-          ))}
-
+          {/* Kho video riêng đứng tách khỏi bốn kỹ năng: nó không phải một cách
+              luyện, mà là nguồn tư liệu dùng chung cho cả Nghe lẫn Nói. Vì vậy
+              nó cũng không thuộc nhóm THEO DÕI — cho nó nhãn riêng. */}
           <span className="nav-group">THƯ VIỆN</span>
-          <button className={tab === "words" ? "nav-item active" : "nav-item"} onClick={() => { goTab("words"); setWordsView("root"); }}>
-            <Icon name="list" /> Kho từ vựng
-            <em className="nav-count">{words.length}</em>
-          </button>
-          <button className={tab === "dictionary" ? "nav-item active" : "nav-item"} onClick={() => goTab("dictionary")}>
-            <Icon name="search" /> Từ điển AI
+          <button
+            className={tab === "practice" && !!libraryLaunch && !skillHub ? "nav-item active" : "nav-item"}
+            onClick={openMyVideos}
+          >
+            <Icon name="play" /> Video của tôi
+            {personalLessonCount > 0 && <em className="nav-count">{personalLessonCount}</em>}
           </button>
         </nav>
         <div className="sidebar-bottom">
+          {planInfo?.plan === "admin" ? (
+            <button className="upgrade-cta is-admin" onClick={() => setShowAdmin(true)}>
+              <Icon name="sparkles" size={15} />
+              <span>Quản trị Premium</span>
+            </button>
+          ) : (
+            <button className={`upgrade-cta${planInfo?.plan === "premium" ? " is-premium" : ""}`} onClick={() => setShowUpgrade(true)}>
+              <Icon name="sparkles" size={15} />
+              <span>
+                {planInfo?.plan === "premium" ? "Đang dùng Premium" : "Nâng cấp Premium"}
+                {planInfo && planInfo.plan !== "premium" && planInfo.monthly.aiLookups
+                  ? ` · Truy vấn AI ${planInfo.monthly.aiLookups.used}/${planInfo.monthly.aiLookups.cap}`
+                  : ""}
+              </span>
+            </button>
+          )}
           <ThemeMenu current={theme} choose={chooseTheme} />
-          <button className="profile" onClick={() => setShowAuth(true)}>
-            <span className="avatar">RY</span>
+          <button className="profile" onClick={() => openAuth()}>
+            <span className="avatar">{initialsFor(userName, userEmail ?? "")}</span>
             <span>
-              <b>{userEmail ?? "Đăng nhập"}</b>
-              <small>{cloudStatus === "synced" ? "● Đã đồng bộ theo tài khoản" : cloudStatus === "connecting" ? "Đang kết nối…" : "◐ Chưa đăng nhập · chỉ lưu trên máy"}</small>
+              <b>{userId ? userName : "Đăng nhập"}</b>
+              {userEmail && <small className="profile-email">{userEmail}</small>}
+              <small className="profile-status">{userId
+                ? cloudStatus === "synced" ? "● Đã đồng bộ" : cloudStatus === "connecting" ? "Đang đồng bộ…" : "◐ Đã đăng nhập · chờ đồng bộ"
+                : cloudStatus === "connecting" ? "Đang kết nối…" : "◐ Chưa đăng nhập · chỉ lưu trên máy"}</small>
             </span>
             <span>•••</span>
           </button>
         </div>
       </aside>
 
-      <section className="content">
+      <section className="content" id="workspace-content">
         {reviewing ? (
           !reviewQueue.length || index >= reviewQueue.length ? (
             <SessionSummary total={reviewQueue.length} ratings={sessionRatings} streak={streakFrom(studyDays)} close={() => setReviewing(false)} restart={() => { setIndex(0); setRevealed(false); setAnswer(""); setChoice(null); setSessionRatings([]); startedAt.current = Date.now(); }} />
@@ -1227,19 +1688,56 @@ export default function Home() {
           )
         ) : (
         <>
+        <header className="workspace-topbar">
+          <div className="workspace-location">
+            <span>Không gian học</span>
+            <b>{screenLabel}</b>
+          </div>
+          <div className="workspace-quick-actions">
+            <button onClick={() => setShowFeedback(true)}><Icon name="flag" size={16} /><span>Góp ý</span></button>
+            <button onClick={() => goTab("dictionary")}><Icon name="search" size={16} /><span>Tra từ</span></button>
+            <button className="primary" onClick={() => setShowAdd(true)}><Icon name="plus" size={16} /><span>Thêm từ</span></button>
+          </div>
+        </header>
         {imported && (
           <div className="import-banner">
             <Icon name="check" size={17} />
             <span>{imported}</span>
-            <button onClick={() => setImported("")} aria-label="Đóng thông báo">×</button>
+            {importedVideoId && (
+              <button
+                className="import-open"
+                onClick={() => openVideoLesson(importedVideoId, practiceIntent === "shadow" ? "shadow" : "dictation")}
+              >
+                Mở video
+              </button>
+            )}
+            <button className="import-close" onClick={() => setImported("")} aria-label="Đóng thông báo">×</button>
           </div>
         )}
         <header className="mobile-head">
           <div className="brand">
             <span className="brand-mark">L</span>
-            <span>Lexilo</span>
+            <span className="brand-copy"><b>Lexilo</b><small>{skillHub ? (SKILL_SPACES.find((item) => item.id === skillHub)?.label ?? "Kỹ năng") : tab === "home" ? "Trang chủ" : tab === "words" ? "Kho từ" : tab === "practice" ? (libraryLaunch ? "Video của tôi" : practiceNav.find((item) => item.value === practiceIntent)?.label ?? "Luyện tập") : tab === "stats" ? "Tiến độ" : "Từ điển"}</small></span>
           </div>
           <div className="mobile-head-actions">
+            {/* Tiến độ mất chỗ ở thanh dưới khi bốn kỹ năng vào — đưa lên đây để
+                vẫn tới được trong một lần bấm. */}
+            <button
+              className={tab === "stats" && !skillHub ? "is-on" : ""}
+              onClick={() => goTab("stats")}
+              aria-label="Xem tiến độ học tập"
+            >
+              <Icon name="chart" size={18} />
+            </button>
+            {/* Kho video riêng chỉ nằm ở cột trái, mà cột trái bị ẩn dưới 900px —
+                không đưa lên đây thì trên điện thoại nó không tới được. */}
+            <button
+              className={tab === "practice" && !!libraryLaunch && !skillHub ? "is-on" : ""}
+              onClick={openMyVideos}
+              aria-label="Video của tôi"
+            >
+              <Icon name="play" size={18} />
+            </button>
             <button
               onClick={() => {
                 const now = themeById(theme);
@@ -1253,13 +1751,16 @@ export default function Home() {
             <button onClick={() => setShowAdd(true)} aria-label="Thêm từ">＋</button>
           </div>
         </header>
-        {pendingSession && tab === "home" && (
+        {pendingSession && resumableQueue.length > 0 && tab === "home" && (
           <div className="resume-bar">
             <span><Icon name="clock" size={18} /></span>
             <div>
               <b>Phiên học đang dở</b>
               <small>
-                Đã ôn {pendingSession.index}/{pendingSession.ids.length} thẻ · còn {pendingSession.ids.length - pendingSession.index} thẻ
+                {(() => {
+                  const done = Math.min(pendingSession.index, resumableQueue.length);
+                  return `Đã ôn ${done}/${resumableQueue.length} thẻ · còn ${resumableQueue.length - done} thẻ`;
+                })()}
               </small>
             </div>
             <button className="primary" onClick={resumeSession}>
@@ -1276,14 +1777,28 @@ export default function Home() {
             </button>
           </div>
         )}
-        {tab === "home" && <Dashboard openVideoAdd={() => setShowVideoAdd(true)} addMenu={<AddMenu onManual={() => setShowAdd(true)} onPaste={() => setShowBulkAdd(true)} onDictionary={() => goTab("dictionary")} />} words={words} startReview={startReview} startTopicReview={startTopicReview} openWords={() => setTab("words")} openPractice={(mode) => {
+        {/* Màn tổng quan kỹ năng: che nội dung tab bên dưới cho tới khi chọn
+            một công cụ. Đặt trước mọi nhánh tab nên không nhánh nào phải sửa. */}
+        {skillHub && <SkillHub
+          skill={SKILL_SPACES.find((item) => item.id === skillHub)!}
+          words={words}
+          lessons={lessons}
+          dueCount={words.filter(isDueAgain).length}
+          open={openTool}
+          openLesson={openVideoLesson}
+          startReview={() => launchReview(words.filter(isDueAgain))}
+          extra={skillHub === "vocab" ? <DailyStudy words={words} startReview={startReview} startTopicReview={startTopicReview} /> : null}
+        />}
+        {!skillHub && tab === "home" && <Dashboard openVideoAdd={() => setShowVideoAdd(true)} addMenu={<AddMenu onManual={() => setShowAdd(true)} onPaste={() => setShowBulkAdd(true)} onDictionary={() => goTab("dictionary")} />} words={words} lessons={lessons} openLesson={openVideoLesson} userId={userId} userName={userName} openSignIn={() => openAuth("signin")} openPractice={(mode) => {
           setPracticeIntent(mode ?? "vocab");
           setPracticeLaunch((value) => value + 1);
           setTab("practice");
-        }} startWordReview={(id) => launchReview(words.filter((word) => word.id === id))} startDueReview={() => launchReview(words.filter(isDueAgain))} exam={exam} setExam={(goal) => { setExam(goal); writeExam(goal); }} streak={streakFrom(studyDays)} />}
-        {tab === "words" && (
+        }} exam={exam} setExam={(goal) => { setExam(goal); writeExam(goal); }} streak={streakFrom(studyDays)}
+          startReview={startReview} startDueReview={() => launchReview(words.filter(isDueAgain))} openFeedback={() => setShowFeedback(true)} />}
+        {!skillHub && tab === "words" && (
           <Words
             words={filtered}
+            legacyCollections={legacyCollections}
             query={query}
             setQuery={setQuery}
             toggleStar={toggleStar}
@@ -1297,14 +1812,13 @@ export default function Home() {
             startWordListReview={startWordListReview}
             fillMissingFields={() => void fillMissingFields()}
             backfill={backfill}
-            setStudyDay={(id, day) => {
-              setWords((current) => current.map((word) => (word.id !== id ? word : { ...word, studyDay: day })));
-              if (supabase) void supabase.from("words").update({ study_day: day, updated_at: new Date().toISOString() }).eq("id", id);
-            }}
+            assignLevels={assignLevels}
+            leveling={leveling}
+            setStudyDay={setWordStudyDay}
             remove={(id) => {
               markDeleted(id);
               setWords((current) => current.filter((w) => w.id !== id));
-              if (supabase) void supabase.from("words").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+              void deleteWordFromCloud(id);
             }}
             importWords={(items) => {
               items.forEach((item) => {
@@ -1321,35 +1835,47 @@ export default function Home() {
             openWordDetail={(id) => setDetailWord(words.find((word) => word.id === id) ?? null)}
           />
         )}
-        {tab === "practice" && <Practice launch={practiceLaunch} words={words} intent={practiceIntent} lessons={lessons} onAddVideo={() => setShowVideoAdd(true)} onStudied={() => markStudiedToday()} onResult={recordPracticeResult} onToggleStar={toggleStar} onStartReview={launchReview} />}
+        {!skillHub && tab === "practice" && <Practice key={`practice-${practiceLaunch}-${lessonLaunch?.nonce ?? libraryLaunch?.nonce ?? 0}`} launch={practiceLaunch} openLesson={lessonLaunch} initialLibraryFilter={libraryLaunch?.filter ?? null} words={words} intent={practiceIntent} lessons={lessons} onAddVideo={() => setShowVideoAdd(true)} onPromoteVideo={promoteSystemLesson} onStudied={() => markStudiedToday()} onResult={recordPracticeResult} onToggleStar={toggleStar} onStartReview={launchReview} onExitTool={() => {
+          setLessonLaunch(null);
+          setLibraryLaunch(null);
+          openSkill(skillHubForPractice(practiceIntent));
+        }}
+          lookupVocab={{
+            folders,
+            updateFolders,
+            legacyCollections,
+            wordId: (term) => words.find((word) => word.term.trim().toLowerCase() === term.trim().toLowerCase())?.id ?? null,
+            collectionOf: (term) => {
+              const found = words.find((word) => word.term.trim().toLowerCase() === term.trim().toLowerCase());
+              return found && isPdfVocabulary(found) ? "pdf" : "mine";
+            },
+            studyDayOf: (term) => {
+              const found = words.find((word) => word.term.trim().toLowerCase() === term.trim().toLowerCase());
+              return typeof found?.studyDay === "number" ? found.studyDay : null;
+            },
+            setStudyDay: setWordStudyDay,
+            saveWord: saveFoundWord,
+            openDictionary: (term) => { setDictionaryWord(term); goTab("dictionary"); },
+          }} />}
         {/* Thống kê tính trên toàn bộ thư viện, cùng phạm vi với các ô ở trang chủ. */}
-        {tab === "stats" && <Stats words={words} scopeLabel="toàn bộ thư viện" streak={streakFrom(studyDays)} />}
-        {tab === "dictionary" && (
+        {!skillHub && tab === "stats" && <Stats words={words} scopeLabel="toàn bộ thư viện" streak={streakFrom(studyDays)} />}
+        {!skillHub && tab === "dictionary" && (
           <Dictionary
-            has={(term) => words.some((word) => word.term.trim().toLowerCase() === term.trim().toLowerCase())}
-            onSave={(found: NewWord) => {
-              // Dùng đúng đường thêm từ như mọi chỗ khác, để từ tra được cũng vào
-              // lịch ôn Leitner ngay chứ không nằm ngoài hệ thống.
-              const created: WordCard = {
-                id: crypto.randomUUID(),
-                term: found.term,
-                ipa: found.ipa,
-                meaning: found.meaning,
-                partOfSpeech: found.partOfSpeech,
-                definition: found.definition,
-                example: fallbackExample(found.term),
-                exampleVi: fallbackExampleVi(found.term),
-                cloze: clozeFor(found.term, fallbackExample(found.term)),
-                topic: "Từ điển",
-                box: 1,
-                lapses: 0,
-                status: "new",
-                reviewCount: 0,
-                addedDate: localDateString(),
-              };
-              setWords((current) => [created, ...current]);
-              void persistWord(created);
+            initialWord={dictionaryWord}
+            legacyCollections={legacyCollections}
+            wordId={(term) => words.find((word) => word.term.trim().toLowerCase() === term.trim().toLowerCase())?.id ?? null}
+            collectionOf={(term) => {
+              const found = words.find((word) => word.term.trim().toLowerCase() === term.trim().toLowerCase());
+              return found && isPdfVocabulary(found) ? "pdf" : "mine";
             }}
+            studyDayOf={(term) => {
+              const found = words.find((word) => word.term.trim().toLowerCase() === term.trim().toLowerCase());
+              return typeof found?.studyDay === "number" ? found.studyDay : null;
+            }}
+            setStudyDay={setWordStudyDay}
+            onSave={saveFoundWord}
+            folders={folders}
+            updateFolders={updateFolders}
           />
         )}
         </>
@@ -1359,22 +1885,26 @@ export default function Home() {
       {/* Dùng đúng tên và đúng icon của thanh bên: trước đây chỗ này gọi là
           "Hôm nay / Từ vựng / Luyện tập / Thống kê" — bộ tên thứ ba trong cùng
           một app — và vẽ bằng ký tự Unicode nên lệch hẳn với phần còn lại. */}
-      <nav className="mobile-nav" aria-label="Điều hướng di động">
-        <button className={tab === "home" ? "active" : ""} onClick={() => goTab("home")}>
+      {/* Thanh dưới khớp đúng cột trái: Trang chủ + bốn kỹ năng. Tiến độ chuyển
+          lên thanh tiêu đề để không phải cắt mất một kỹ năng — năm ô là trần của
+          một thanh điều hướng đáy còn bấm được bằng ngón cái. */}
+      {!reviewing && <nav className="mobile-nav" aria-label="Điều hướng di động">
+        <button className={tab === "home" && !skillHub ? "active" : ""} onClick={() => goTab("home")}>
           <Icon name="home" size={18} />Trang chủ
         </button>
-        <button className={tab === "words" ? "active" : ""} onClick={() => goTab("words")}>
-          <Icon name="list" size={18} />Danh sách từ
-        </button>
-        <button className={tab === "practice" ? "active" : ""} onClick={() => goTab("practice")}>
-          <Icon name="compass" size={18} />Luyện tập
-        </button>
-        <button className={tab === "stats" ? "active" : ""} onClick={() => goTab("stats")}>
-          <Icon name="chart" size={18} />Tiến độ
-        </button>
-      </nav>
+        {SKILL_SPACES.map((item) => (
+          <button
+            key={item.id}
+            className={skillHub === item.id ? "active" : ""}
+            onClick={() => openSkill(item.id)}
+          >
+            <Icon name={item.icon} size={18} />{item.label}
+          </button>
+        ))}
+      </nav>}
       {showAdd && (
         <AddWord
+          legacyCollections={legacyCollections}
           existingWords={words.filter((word) => !isPdfVocabulary(word) && !isSeedWord(word))}
           close={() => setShowAdd(false)}
           save={(word) => {
@@ -1392,6 +1922,7 @@ export default function Home() {
       )}
       {showBulkAdd && (
         <BulkAddWords
+          legacyCollections={legacyCollections}
           existingWords={words.filter((word) => !isPdfVocabulary(word) && !isSeedWord(word))}
           close={() => setShowBulkAdd(false)}
           save={(items) => {
@@ -1410,39 +1941,256 @@ export default function Home() {
           close={() => setShowVideoAdd(false)}
           save={(lesson) => {
             addLessonsToCatalogue([lesson]);
-            const next = saveLesson(lesson) as VideoLesson[];
+            const next = withSystemLessons(saveLesson(lesson) as VideoLesson[]);
             setLessons(next);
-            setImported(`Đã thêm video “${lesson.title || "YouTube"}” · ${lesson.sentences.length} đoạn`);
+            const opened = next.find((item) => item.videoId === lesson.videoId);
+            setImported(`Đã thêm video “${lesson.title || "YouTube"}” · ${opened?.sentences.length ?? 0} đoạn · đang mở bài để luyện`);
+            setImportedVideoId(lesson.videoId);
             setShowVideoAdd(false);
+            const mode = practiceIntent === "shadow" ? "shadow" : "dictation";
+            openVideoLesson(lesson.videoId, mode);
           }}
         />
       )}
-      {detailWord && <WordDetail word={detailWord} close={() => setDetailWord(null)} study={() => { const selected = detailWord; setDetailWord(null); launchReview(words.filter((word) => word.id === selected.id)); }} speak={speak} folders={folders} updateFolders={updateFolders} />}
-      {showAuth && <AuthModal close={() => setShowAuth(false)} signedInEmail={userEmail} />}
+      {detailWord && <WordDetail word={detailWord} close={() => setDetailWord(null)} study={() => { const selected = detailWord; setDetailWord(null); launchReview(words.filter((word) => word.id === selected.id)); }} speak={speak} folders={folders} updateFolders={updateFolders} onLevel={markWordLevel} />}
+      {showAuth && <AuthModal close={() => setShowAuth(false)} signedIn={Boolean(userId)} signedInEmail={userEmail} signedInName={userName} startMode={authMode} syncStatus={cloudStatus} />}
+      {showFeedback && <FeedbackModal close={() => setShowFeedback(false)} screen={screenLabel} signedInEmail={userEmail} />}
+      {showUpgrade && (
+        <Upgrade
+          plan={planInfo}
+          signedIn={Boolean(userId)}
+          onClose={() => setShowUpgrade(false)}
+          onNeedSignIn={() => { setShowUpgrade(false); openAuth("signin"); }}
+          onPaid={() => { void refreshPlan(); }}
+        />
+      )}
+      {showAdmin && <AdminPanel onClose={() => setShowAdmin(false)} />}
     </main>
+    </LookupActionsContext.Provider>
   );
 }
 
-function Dashboard({ words, startReview, startTopicReview, openWords, openPractice, startWordReview, startDueReview, exam, setExam, streak, addMenu, openVideoAdd }: { words: WordCard[]; addMenu?: ReactNode; openVideoAdd: () => void; startReview: (dayIndex?: number | "pdf") => void; startTopicReview: (topic: string) => void; openWords: () => void; openPractice: (mode?: Exclude<PracticeMode, "menu">) => void; startWordReview: (id: string) => void; startDueReview: () => void; exam: ExamGoal | null; setExam: (goal: ExamGoal | null) => void; streak: { current: number; best: number; studiedToday: boolean } }) {
-  const personal = words.filter((word) => !isPdfVocabulary(word));
-  // Chưa có từ cá nhân thì phiên học hôm nay lấy từ bộ PDF, thay vì trống trơn.
-  const onlyPdf = !personal.length && words.length > 0;
-  // Các chỉ số ở đầu trang tính trên TOÀN BỘ thư viện, kể cả bộ PDF. Trước đây mỗi
-  // ô một phạm vi khác nhau — tổng số thì gồm PDF, "đang học" thì không, "lượt đã
-  // ôn" lại chỉ tính Từ của tôi — nên bốn con số không cộng trừ được với nhau.
-  const scheduledWords = words;
-  const pdfCount = words.length - personal.length;
-  // Danh sách từ đứng sau ô số liệu đang mở; null là chưa mở ô nào.
-  const [statList, setStatList] = useState<{ title: string; note: string; words: WordCard[] } | null>(null);
-  const masteredWords = words.filter((word) => wordState(word).key === "mastered");
-  const learningWords = words.filter((word) => wordState(word).key !== "mastered");
-  const reviewedWords = words.filter((word) => (word.reviewCount ?? 0) > 0).sort((a, b) => (b.reviewCount ?? 0) - (a.reviewCount ?? 0));
-  const mastered = scheduledWords.filter((w) => wordState(w).key === "mastered").length;
-  const todayQueue = onlyPdf ? buildCollectionQueue(words.filter(isPdfVocabulary)).slice(0, PDF_DAILY_PREVIEW_LIMIT) : buildTodayQueue(personal);
-  const todayNew = todayQueue.filter((word) => wordState(word).key === "new").length;
-  const todayReview = todayQueue.length - todayNew;
-  const reviewedThisWeek = scheduledWords.reduce((total, word) => total + (word.reviewCount ?? 0), 0);
-  const [showTip, setShowTip] = useState(true);
+/**
+ * Màn tổng quan của một kỹ năng.
+ *
+ * KHÔNG phải một menu. Các app học ngôn ngữ đang chạy tốt đều theo cùng một
+ * nguyên tắc: người học hiếm khi nên đối diện một bảng trống — màn hình phải chỉ
+ * thẳng vào việc kế tiếp (bài đang dở, thẻ tới hạn), rồi mới tới danh sách công
+ * cụ. Vì vậy bố cục ở đây là:
+ *
+ *   [ TIẾP TỤC — chiếm 2/3 ]  [ 7 NGÀY QUA — 1/3 ]
+ *   [ công cụ · công cụ · … ]
+ *
+ * Kích thước chênh nhau CÓ CHỦ ĐÍCH. Một lưới thẻ đều nhau đọc ra là "chọn đi",
+ * còn thứ người học cần là "làm tiếp cái này".
+ */
+function SkillHub({ skill, words, lessons, dueCount, open, openLesson, startReview, extra }: {
+  skill: (typeof SKILL_SPACES)[number];
+  words: WordCard[];
+  lessons: VideoLesson[];
+  dueCount: number;
+  open: (tool: SkillTool) => void;
+  openLesson: (videoId: string, mode?: "dictation" | "shadow") => void;
+  startReview: () => void;
+  /** Khối chỉ có nghĩa với một kỹ năng — ví dụ bộ chọn nhóm từ của Từ vựng. */
+  extra?: ReactNode;
+}) {
+  const [practice, setPractice] = useState<ReturnType<typeof readPractice> | null>(null);
+  const [progress, setProgress] = useState<Record<string, unknown>>({});
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
+    setPractice(readPractice());
+    setProgress(readLessonProgress() as Record<string, unknown>);
+  }, []);
+
+  // Phút luyện 7 ngày của RIÊNG kỹ năng này, cộng từ mọi khoá thống kê của nó.
+  const week = useMemo(() => {
+    if (!practice) return { total: 0, days: [] as number[] };
+    const days = skill.timeKeys
+      .map((key) => minutesPerDay(practice, 7, key) as { minutes: number }[])
+      .reduce<number[]>((sum, rows) => rows.map((row, index) => (sum[index] ?? 0) + (row?.minutes ?? 0)), []);
+    return { total: days.reduce((a, b) => a + b, 0), days };
+  }, [practice, skill.timeKeys]);
+
+  // Bài dở dang — chỉ có nghĩa với hai kỹ năng dùng video.
+  const mode: "dictation" | "shadow" = skill.id === "speak" ? "shadow" : "dictation";
+  const unfinished = useMemo(() => {
+    if (skill.id !== "listen" && skill.id !== "speak") return null;
+    return lessons
+      .map((lesson) => ({ lesson, ...videoProgress(lesson, progress, mode === "shadow" ? "shadowing" : "dictation") }))
+      .filter((item) => item.total > 0 && item.percent < 100)
+      .sort((a, b) => b.percent - a.percent)[0] ?? null;
+  }, [lessons, progress, skill.id, mode]);
+
+  const primary = skill.tools[0];
+  const max = Math.max(1, ...week.days);
+  const dayNames = ["H", "B", "T", "N", "S", "B", "C"];
+
+  /** Ô "tiếp tục": mỗi kỹ năng có một khái niệm việc-đang-dở khác nhau. */
+  function renderContinue() {
+    if (unfinished) {
+      return (
+        <button className="skill-continue" onClick={() => openLesson(unfinished.lesson.videoId, mode)}>
+          <span className="eyebrow">ĐANG DỞ</span>
+          <b>{unfinished.lesson.title}</b>
+          <span className="skill-continue-bar"><i style={{ width: `${unfinished.percent}%` }} /></span>
+          <small>{unfinished.done}/{unfinished.total} câu · {unfinished.percent}%</small>
+          <em>Học tiếp →</em>
+        </button>
+      );
+    }
+    if (skill.id === "vocab" && dueCount > 0) {
+      return (
+        <button className="skill-continue" onClick={startReview}>
+          <span className="eyebrow">HÔM NAY</span>
+          <b>{dueCount} thẻ tới hạn ôn</b>
+          <small>Ôn đúng hạn là cách rẻ nhất để không quên.</small>
+          <em>Ôn ngay →</em>
+        </button>
+      );
+    }
+    return (
+      <button className="skill-continue is-empty" onClick={() => open(primary)}>
+        <span className="eyebrow">BẮT ĐẦU</span>
+        <b>{primary.label}</b>
+        <small>{primary.note}</small>
+        <em>Mở ra →</em>
+      </button>
+    );
+  }
+
+  return (
+    <div className="page skill-hub">
+      <header className="skill-hub-head">
+        <span className="skill-hub-icon"><Icon name={skill.icon} size={22} /></span>
+        <div>
+          <h1>{skill.label}</h1>
+          <p>{skill.blurb}</p>
+        </div>
+      </header>
+
+      <div className="skill-hub-grid">
+        {renderContinue()}
+
+        <section className="skill-week">
+          <span className="eyebrow">7 NGÀY QUA</span>
+          <b>{week.total} <i>phút</i></b>
+          {/* Cột dựng từ nhật ký luyện tập thật — không phải hình trang trí. */}
+          <div className="skill-spark" aria-hidden="true">
+            {week.days.map((minutes, index) => (
+              <span key={index} title={`${minutes} phút`}>
+                <i style={{ height: `${Math.max(6, (minutes / max) * 100)}%`, opacity: minutes ? 1 : 0.28 }} />
+                <small>{dayNames[index] ?? ""}</small>
+              </span>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <section className="skill-tools-block">
+        <span className="eyebrow">CÔNG CỤ</span>
+        <div className="skill-tools">
+          {skill.tools.map((tool) => {
+            const badge =
+              tool.kind === "tab" && tool.value === "words" ? `${words.length} từ`
+                : tool.kind === "practice" && tool.value === "vocab" && dueCount > 0 ? `${dueCount} cần ôn`
+                  : "";
+            return (
+              <button key={tool.label} className="skill-tool" onClick={() => open(tool)}>
+                <span className="skill-tool-icon"><Icon name={tool.icon} size={19} /></span>
+                <b>{tool.label}</b>
+                <small>{tool.note}</small>
+                {badge && <em>{badge}</em>}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {extra}
+    </div>
+  );
+}
+
+
+/**
+ * Nhật ký cập nhật ở cuối Trang chủ.
+ *
+ * Người học không theo dõi repo, nên nếu không nói ra thì mọi cải tiến đều vô
+ * hình với họ. Mặc định chỉ mở bản mới nhất: danh sách đầy đủ là thứ để tra
+ * khi tò mò, không phải thứ đọc mỗi lần vào trang.
+ */
+function Changelog({ openFeedback }: { openFeedback: () => void }) {
+  const latest = latestRelease();
+  // null = chưa đọc xong localStorage. Phải phân biệt với chuỗi rỗng (người
+  // dùng mới, chưa xem bản nào) vì hai trường hợp này cho ra dấu khác nhau.
+  const [seen, setSeen] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
+    setSeen(readSeenRelease());
+  }, []);
+  if (!latest) return null;
+  // Chỉ chấm dấu SAU khi đã hydrate, nếu không thì lần vẽ trên máy chủ và trên
+  // trình duyệt khác nhau và React báo lệch.
+  const fresh = seen !== null && hasUnseenRelease(seen);
+  const shown = open ? RELEASES : RELEASES.slice(0, 1);
+
+  function markRead() {
+    writeSeenRelease(latest.version);
+    setSeen(latest.version);
+  }
+
+  return (
+    <section className="home-changelog" aria-labelledby="home-changelog-title">
+      <div className="home-section-head">
+        <div>
+          <h2 id="home-changelog-title">
+            Cập nhật
+            {fresh && <span className="changelog-new">Có gì mới</span>}
+          </h2>
+          <p>App vừa thay đổi những gì kể từ lần bạn ghé trước.</p>
+        </div>
+        <button
+          onClick={() => {
+            setOpen((value) => !value);
+            markRead();
+          }}
+          aria-expanded={open}
+        >
+          {open ? "Thu gọn ↑" : "Xem toàn bộ nhật ký →"}
+        </button>
+      </div>
+      <ol className="changelog-list">
+        {shown.map((release: { version: string; date: string; title: string; items: { kind: string; text: string }[] }) => (
+          <li key={release.version} className="changelog-release">
+            <div className="changelog-head">
+              <b>v{release.version}</b>
+              {release.version === latest.version && <em>Mới nhất</em>}
+              <time dateTime={release.date}>{new Date(release.date).toLocaleDateString("vi-VN")}</time>
+            </div>
+            <strong>{release.title}</strong>
+            <ul>
+              {release.items.map((item, position) => (
+                <li key={position}>
+                  <span className={`changelog-tag is-${item.kind}`}>{CHANGE_LABEL[item.kind as keyof typeof CHANGE_LABEL]}</span>
+                  {item.text}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ol>
+      <button className="changelog-ask" onClick={openFeedback}>
+        <Icon name="flag" size={15} />
+        <span><b>Bạn thấy chỗ nào chưa ổn?</b><small>Gửi góp ý — lỗi và ý tưởng đều được đọc.</small></span>
+        <em>Góp ý →</em>
+      </button>
+    </section>
+  );
+}
+
+function Dashboard({ words, lessons, openLesson, openPractice, exam, setExam, streak, addMenu, openVideoAdd, userId, userName, openSignIn, startReview, startDueReview, openFeedback }: { words: WordCard[]; lessons: VideoLesson[]; openLesson: (videoId: string, mode?: "dictation" | "shadow") => void; addMenu?: ReactNode; openVideoAdd: () => void; openPractice: (mode?: Exclude<PracticeMode, "menu">) => void; exam: ExamGoal | null; setExam: (goal: ExamGoal | null) => void; streak: { current: number; best: number; studiedToday: boolean }; userId: string | null; userName: string; openSignIn: () => void; startReview: (dayIndex?: number | "pdf") => void; startDueReview: () => void; openFeedback: () => void }) {
   // Ngày và lời chào chỉ có thể tính trên máy người dùng — cập nhật sau khi hydrate để không lệch với HTML dựng sẵn.
   const dateRef = useRef<HTMLDivElement>(null);
   const greetingRef = useRef<HTMLSpanElement>(null);
@@ -1451,18 +2199,20 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
     if (dateRef.current) dateRef.current.textContent = `${dayNames[(now.getDay() + 6) % 7]}, ${String(now.getDate()).padStart(2, "0")} THÁNG ${now.getMonth() + 1}`.toUpperCase();
     if (greetingRef.current) greetingRef.current.textContent = now.getHours() < 12 ? "Chào buổi sáng" : now.getHours() < 18 ? "Chào buổi chiều" : "Chào buổi tối";
   }, []);
-  const activityHeat = heat.map((_, index) => index < heat.length - 7 ? 0 : Math.min(4, Math.ceil(scheduledWords.filter((word) => addedDayIndex(word) === index - (heat.length - 7)).reduce((total, word) => total + (word.reviewCount ?? 0), 0) / 5)));
   // Giờ luyện và bài dịch chỉ đọc được trên máy, nên phải chờ hydrate xong.
   const [practice, setPractice] = useState<Record<string, Record<string, number>>>({});
-  const [attemptCount, setAttemptCount] = useState(0);
-  const [studiedDays, setStudiedDays] = useState<string[]>([]);
+  const [attempts, setAttempts] = useState<TranslationAttempt[]>([]);
+  const [reviewEntries, setReviewEntries] = useState<ReviewEntry[]>([]);
+  const [lessonProgress, setLessonProgress] = useState<Record<string, unknown>>({});
   const [chartSkill, setChartSkill] = useState<string>("");
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- đọc một lần sau khi hydrate
     setPractice(readPractice());
-    setAttemptCount(readAttempts().length);
-    setStudiedDays(readStudyDays());
+    setAttempts(readAttempts());
+    setReviewEntries(readReviewLog());
+    setLessonProgress(readLessonProgress() as Record<string, unknown>);
   }, []);
+  const attemptCount = attempts.length;
   const time = useMemo(() => totalTime(practice), [practice]);
   // XP được TÍNH LẠI từ nhật ký chứ không cộng dồn riêng, nên luôn khớp dữ liệu thật.
   const xpCounts = useMemo(
@@ -1479,31 +2229,74 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
   const [showXp, setShowXp] = useState(false);
   const chartRows = useMemo(() => minutesPerDay(practice, 7, chartSkill || undefined), [practice, chartSkill]);
   const chartPeak = Math.max(1, ...chartRows.map((row: { minutes: number }) => row.minutes));
-  // Dải điểm danh tuần này: Thứ Hai đến Chủ Nhật của tuần đang sống.
-  const weekCheckIn = useMemo(() => {
-    const now = new Date();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - weekdayIndex(now));
-    return Array.from({ length: 7 }, (_, step) => {
-      const date = new Date(monday);
-      date.setDate(monday.getDate() + step);
-      const day = localDateString(date);
-      // Dùng chung nguồn với chuỗi ngày học, nếu không thì cùng một màn hình có hai
-      // định nghĩa "đã học" khác nhau: một ngày ôn thẻ mà chưa đủ một phút luyện sẽ
-      // tính vào chuỗi nhưng lại hiện dấu chấm ở dải tuần.
-      return { day, label: "HBTNSBC"[step], studied: studiedDays.includes(day), today: day === localDateString() };
+  // Chỉ bài CÓ phụ đề và CHƯA xong mới "tiếp tục" được. Bài chưa có phụ đề mà đưa
+  // vào đây thì bấm vào không làm gì — xem lib/catalogue.mjs.
+  const continueLessons = useMemo(() => lessons
+    .map((lesson) => ({ lesson, ...videoProgress(lesson, lessonProgress, "dictation") }))
+    .filter((item) => item.total > 0 && item.percent < 100)
+    .sort((a, b) => Number(b.percent > 0) - Number(a.percent > 0) || b.percent - a.percent)
+    .slice(0, 6), [lessons, lessonProgress]);
+  const captionedLessons = useMemo(() => lessons.filter((lesson) => Array.isArray(lesson.sentences) && lesson.sentences.length > 0).length, [lessons]);
+  const [rankPeriod, setRankPeriod] = useState<"week" | "month">("week");
+  const [rankMetric, setRankMetric] = useState<"minutes" | "xp">("minutes");
+  const [rankRows, setRankRows] = useState<Record<string, unknown>[]>([]);
+  const [rankStatus, setRankStatus] = useState<"loading" | "ready" | "guest" | "setup">("loading");
+  const rankSnapshot = useMemo(
+    () => leaderboardSnapshot({ practice, reviews: reviewEntries, attempts }, rankPeriod),
+    [practice, reviewEntries, attempts, rankPeriod],
+  );
+  useEffect(() => {
+    let active = true;
+    const localRow = {
+      user_id: userId ?? "local-user",
+      display_name: userId ? safeDisplayName(userName, userId) : "Bạn",
+      ...rankSnapshot,
+    };
+    if (!userId || !supabase) {
+      setRankRows([localRow]);
+      setRankStatus("guest");
+      return () => { active = false; };
+    }
+    setRankStatus("loading");
+    void (async () => {
+      const payload = {
+        user_id: userId,
+        period_type: rankPeriod,
+        period_start: rankSnapshot.periodStart,
+        display_name: safeDisplayName(userName, userId),
+        xp: rankSnapshot.xp,
+        minutes: rankSnapshot.minutes,
+        reviews: rankSnapshot.reviews,
+        updated_at: new Date().toISOString(),
+      };
+      const { error: writeError } = await supabase.from("leaderboard_scores").upsert(payload, { onConflict: "user_id,period_type,period_start" });
+      if (writeError) throw writeError;
+      const { data, error } = await supabase.from("leaderboard_scores")
+        .select("user_id,display_name,xp,minutes,reviews")
+        .eq("period_type", rankPeriod)
+        .eq("period_start", rankSnapshot.periodStart)
+        .limit(100);
+      if (error) throw error;
+      if (!active) return;
+      setRankRows(data?.length ? data : [localRow]);
+      setRankStatus("ready");
+    })().catch(() => {
+      if (!active) return;
+      setRankRows([localRow]);
+      setRankStatus("setup");
     });
-  }, [studiedDays]);
+    return () => { active = false; };
+  }, [userId, userName, rankPeriod, rankSnapshot.periodStart, rankSnapshot.xp, rankSnapshot.minutes, rankSnapshot.reviews]);
+  const rankedRows = useMemo(() => rankLeaderboard(rankRows, rankMetric), [rankRows, rankMetric]);
+  const ownRank = rankedRows.find((row: { userId: string }) => row.userId === (userId ?? "local-user"));
+  const visibleRanks = ownRank && ownRank.rank > 4 ? [...rankedRows.slice(0, 4), ownRank] : rankedRows.slice(0, 5);
   const [editingExam, setEditingExam] = useState(false);
   useEscape(() => setEditingExam(false), editingExam);
   const [examDraft, setExamDraft] = useState<ExamGoal>({ date: exam?.date ?? "", label: exam?.label ?? "" });
   // Số từ chưa thuộc, dùng để gợi ý nhịp học mỗi ngày cho kịp ngày thi.
   const wordsLeft = words.filter((word) => wordState(word).key !== "mastered").length;
-  // Nhắc ôn: gom tất cả từ đã học nay đến hạn, kể cả bộ PDF, và ghi rõ chúng đến từ nhóm nào.
-  const dueAgain = words.filter(isDueAgain);
-  const today = localDateString();
-  const overdue = dueAgain.filter((word) => word.dueDate && word.dueDate < today).length;
-  const dueGroups = [...dueAgain.reduce((map, word) => map.set(groupLabelOf(word), (map.get(groupLabelOf(word)) ?? 0) + 1), new Map<string, number>())].sort((a, b) => b[1] - a[1]).slice(0, 4);
+  // Cùng nguồn với màn Tiến độ — xem todayPlan().
+  const plan = useMemo(() => todayPlan(words), [words]);
   return (
     <div className="page dashboard">
       <div className="eyebrow" ref={dateRef}>
@@ -1521,10 +2314,31 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
           {addMenu}
         </div>
       </div>
+      <h2 className="screen-group">Việc hôm nay</h2>
+      {/* Hai khối dưới đây trước nằm ở Tiến độ. Chúng là VIỆC CỦA HÔM NAY, không
+          phải số đo — để ở Tiến độ vừa làm màn đó rối, vừa khiến Trang chủ trống.
+          Số liệu lấy từ todayPlan() dùng chung, nên hai màn không lệch nhau.
+          Khối chọn nhóm từ đi kèm chúng nay nằm trong chính kỹ năng Từ vựng. */}
+      {!!plan.dueAgain.length && (
+        <section className="due-reminder">
+          <span className="due-reminder-icon">⏰</span>
+          <div>
+            <b>{plan.dueAgain.length} từ đã học đến hạn ôn lại hôm nay</b>
+            <small>{plan.dueGroups.map(([label, count]) => `${label}: ${count} từ`).join(" · ")}{plan.overdue > 0 && ` · ${plan.overdue} từ đã quá hạn`}</small>
+          </div>
+          <button className="primary" onClick={startDueReview}>Ôn ngay {plan.dueAgain.length} từ →</button>
+        </section>
+      )}
+      <LearningPlan reviewCount={plan.reviewCount} newCount={plan.newCount} startVocabulary={() => startReview(plan.onlyPdf ? "pdf" : undefined)} openPractice={() => openPractice("dictation")} />
+      <h2 className="screen-group">Bạn đang ở đâu</h2>
       <div className="home-stats">
-        <div className="home-stat">
+        <div className={streak.studiedToday ? "home-stat is-live" : "home-stat"}>
           <span className="home-stat-icon flame"><Icon name="flame" /></span>
-          <div><b>{streak.current}</b><small>ngày · chuỗi hiện tại</small></div>
+          <div>
+            <b>{streak.current}</b>
+            <small>{streak.current > 0 ? `ngày liên tiếp · kỷ lục ${streak.best}` : "chưa có chuỗi nào"}</small>
+            <i className="home-stat-hint">{streak.studiedToday ? "Hôm nay đã học ✓" : streak.current > 0 ? "Học hôm nay để giữ chuỗi" : "Ôn một thẻ để bắt đầu"}</i>
+          </div>
         </div>
         <div className="home-stat">
           <span className="home-stat-icon"><Icon name="clock" /></span>
@@ -1557,30 +2371,25 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
         </section>
       )}
 
-      <section className="learning-journey" aria-labelledby="learning-journey-title">
-        <div className="learning-journey-head">
-          <div>
-            <span className="eyebrow">HÀNH TRÌNH HỌC HÔM NAY</span>
-            <h2 id="learning-journey-title">Học một nội dung qua bốn kỹ năng</h2>
-            <p>Đi theo thứ tự gợi ý hoặc chọn thẳng kỹ năng bạn muốn cải thiện.</p>
-          </div>
-          <span className="journey-time">Khoảng 25–35 phút</span>
-        </div>
-        <div className="journey-steps">
-          <button onClick={() => openPractice("vocab")}>
-            <i>01</i><span><b>Luyện từ vựng</b><small>Hiểu nghĩa, phát âm và nhớ từ trong ngữ cảnh.</small></span><em>{todayQueue.length || words.length} từ</em><strong>→</strong>
-          </button>
-          <button onClick={() => openPractice("dictation")}>
-            <i>02</i><span><b>Nghe chép</b><small>Nghe từng đoạn ngắn, gõ lại và sửa lỗi.</small></span><em>5–10 phút</em><strong>→</strong>
-          </button>
-          <button onClick={() => openPractice("shadow")}>
-            <i>03</i><span><b>Nói nhại</b><small>Bắt chước câu mẫu và nhận phản hồi phát âm.</small></span><em>5–10 phút</em><strong>→</strong>
-          </button>
-          <button onClick={() => openPractice("translate")}>
-            <i>04</i><span><b>Luyện viết</b><small>Dùng lại từ vừa học trong câu, đoạn văn hoặc đề thi.</small></span><em>10–20 phút</em><strong>→</strong>
-          </button>
-        </div>
-      </section>
+      <div className="goal-row home-goals-primary is-single">
+        <section className={exam ? "goal-card exam" : "goal-card exam empty"}>
+          {exam ? (
+            <>
+              <span className="goal-icon">◷</span>
+              <div>
+                <b>{daysUntil(exam.date) >= 0 ? `Còn ${daysUntil(exam.date)} ngày` : `Đã qua ${Math.abs(daysUntil(exam.date))} ngày`}</b>
+                <small>
+                  {exam.label || "Ngày thi"} · {exam.date}
+                  {daysUntil(exam.date) > 0 && wordsLeft > 0 ? ` · cần ~${Math.ceil(wordsLeft / daysUntil(exam.date))} từ/ngày` : ""}
+                </small>
+              </div>
+              <button onClick={() => setEditingExam(true)} aria-label="Sửa ngày thi">✎</button>
+            </>
+          ) : (
+            <button className="goal-set" onClick={() => setEditingExam(true)}>◷ Đặt ngày thi để đếm ngược →</button>
+          )}
+        </section>
+      </div>
 
       <div className="home-row">
         <section className="panel home-chart">
@@ -1608,56 +2417,70 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
           )}
         </section>
 
-        <section className="panel home-week">
-          <h3>Tuần này</h3>
-          <div className="home-week-days">
-            {weekCheckIn.map((item: { day: string; label: string; studied: boolean; today: boolean }) => (
-              <div key={item.day} className={`home-week-day${item.studied ? " done" : ""}${item.today ? " today" : ""}`}>
-                <b>{item.label}</b>
-                <span>{item.studied ? "✓" : "·"}</span>
+        <div className="home-side-stack">
+          <section className="panel home-ranking">
+            <div className="home-ranking-head">
+              <h3>Bảng xếp hạng</h3>
+              <div className="ranking-period-tabs">
+                {LEADERBOARD_PERIODS.map((period: { key: string; label: string }) => (
+                  <button key={period.key} className={rankPeriod === period.key ? "active" : ""} onClick={() => setRankPeriod(period.key as "week" | "month")}>{period.label}</button>
+                ))}
               </div>
-            ))}
-          </div>
-          <p className="muted">
-            {/* Đánh dấu theo việc đã luyện thật, không có nút điểm danh riêng: bấm một
-                nút mà không học thì con số chẳng nói lên điều gì. */}
-            Ngày nào có luyện là tự đánh dấu. Chuỗi dài nhất của bạn: {streak.best} ngày.
-          </p>
-        </section>
+            </div>
+            <div className="ranking-metric-tabs" role="group" aria-label="Tiêu chí xếp hạng">
+              {LEADERBOARD_METRICS.map((metric: { key: string; label: string }) => (
+                <button key={metric.key} className={rankMetric === metric.key ? "active" : ""} onClick={() => setRankMetric(metric.key as "minutes" | "xp")}>{metric.label}</button>
+              ))}
+            </div>
+            <div className="ranking-list" aria-live="polite">
+              {visibleRanks.map((row: { userId: string; name: string; minutes: number; xp: number; rank: number }) => (
+                <div key={row.userId} className={`home-ranking-row${row.userId === (userId ?? "local-user") ? " is-me" : ""}${row.rank <= 3 ? ` rank-${row.rank}` : ""}`}>
+                  <span>{row.rank <= 3 ? ["🥇", "🥈", "🥉"][row.rank - 1] : `#${row.rank}`}</span>
+                  <b>{row.userId === (userId ?? "local-user") ? "Bạn" : row.name}</b>
+                  <em>{rankMetric === "minutes" ? `${row.minutes} phút` : `${row.xp} XP`}</em>
+                </div>
+              ))}
+              {rankStatus === "loading" && <p className="ranking-note">Đang cập nhật thứ hạng…</p>}
+              {rankStatus === "guest" && <button className="ranking-note ranking-join" onClick={openSignIn}>Đăng nhập để tham gia bảng xếp hạng →</button>}
+              {rankStatus === "setup" && <p className="ranking-note">Đang hiển thị điểm của bạn. Bảng chung sẽ hoạt động sau khi cài dữ liệu xếp hạng.</p>}
+            </div>
+          </section>
+        </div>
       </div>
 
-      <div className="goal-row">
-        <section className={exam ? "goal-card exam" : "goal-card exam empty"}>
-          {exam ? (
-            <>
-              <span className="goal-icon">◷</span>
-              <div>
-                <b>{daysUntil(exam.date) >= 0 ? `Còn ${daysUntil(exam.date)} ngày` : `Đã qua ${Math.abs(daysUntil(exam.date))} ngày`}</b>
-                <small>
-                  {exam.label || "Ngày thi"} · {exam.date}
-                  {daysUntil(exam.date) > 0 && wordsLeft > 0 ? ` · cần ~${Math.ceil(wordsLeft / daysUntil(exam.date))} từ/ngày` : ""}
-                </small>
-              </div>
-              <button onClick={() => setEditingExam(true)} aria-label="Sửa ngày thi">
-                ✎
+      <section className="home-continue" aria-labelledby="home-continue-title">
+        <div className="home-section-head">
+          <div><h2 id="home-continue-title">Tiếp tục học</h2><p>Các bài nghe và nói đang sẵn sàng trong thư viện của bạn.</p></div>
+          <button onClick={() => openPractice("dictation")}>Xem tất cả →</button>
+        </div>
+        {continueLessons.length ? (
+          <div className="home-lesson-grid">
+            {continueLessons.map(({ lesson, percent, total }) => (
+              <button key={lesson.id} className="home-lesson-card" onClick={() => openLesson(lesson.videoId, "dictation")}>
+                <span className="home-lesson-thumb" style={{ backgroundImage: `url(https://i.ytimg.com/vi/${lesson.videoId}/mqdefault.jpg)` }}>
+                  <em>{percent > 0 ? `${percent}%` : `${total} câu`}</em>
+                  {percent > 0 && <i><i style={{ width: `${percent}%` }} /></i>}
+                </span>
+                <b>{lesson.title}</b>
+                <small>{percent > 0 ? `${percent}% hoàn thành` : "Chưa bắt đầu"}</small>
               </button>
-            </>
-          ) : (
-            <button className="goal-set" onClick={() => setEditingExam(true)}>
-              ◷ Đặt ngày thi để đếm ngược →
-            </button>
-          )}
-        </section>
-        <section className={streak.studiedToday ? "goal-card streak active" : "goal-card streak"}>
-          <span className="goal-icon">{streak.current > 0 ? "🔥" : "○"}</span>
-          <div>
-            <b>
-              {streak.current} ngày liên tiếp
-            </b>
-            <small>{streak.studiedToday ? `Hôm nay đã học · kỷ lục ${streak.best} ngày` : streak.current > 0 ? `Học hôm nay để giữ chuỗi · kỷ lục ${streak.best} ngày` : "Ôn một thẻ hôm nay để bắt đầu chuỗi"}</small>
+            ))}
           </div>
-        </section>
-      </div>
+        ) : captionedLessons > 0 ? (
+          <button className="home-continue-empty" onClick={() => openPractice("dictation")}>
+            <Icon name="check" /> Bạn đã học hết các bài có phụ đề. Mở thư viện để chọn bài mới →
+          </button>
+        ) : lessons.length > 0 ? (
+          <button className="home-continue-empty" onClick={() => openPractice("dictation")}>
+            <Icon name="play" /> Video của bạn chưa có phụ đề. Mở thư viện, bấm “Nhờ AI nghe hộ” hoặc mở trên YouTube →
+          </button>
+        ) : (
+          <button className="home-continue-empty" onClick={openVideoAdd}><Icon name="play" /> Thêm video đầu tiên để bắt đầu luyện nghe</button>
+        )}
+      </section>
+
+      <Changelog openFeedback={openFeedback} />
+
       {editingExam && (
         <div className="modal-backdrop" onMouseDown={() => setEditingExam(false)}>
           <form
@@ -1703,128 +2526,6 @@ function Dashboard({ words, startReview, startTopicReview, openWords, openPracti
           </form>
         </div>
       )}
-      {!!dueAgain.length && (
-        <section className="due-reminder">
-          <span className="due-reminder-icon">⏰</span>
-          <div>
-            <b>
-              {dueAgain.length} từ đã học đến hạn ôn lại hôm nay
-            </b>
-            <small>
-              {dueGroups.map(([label, count]) => `${label}: ${count} từ`).join(" · ")}
-              {overdue > 0 && ` · ${overdue} từ đã quá hạn`}
-            </small>
-          </div>
-          <button className="primary" onClick={startDueReview}>
-            Ôn ngay {dueAgain.length} từ →
-          </button>
-        </section>
-      )}
-      <section className="hero-card">
-        <div className="hero-copy">
-          <div className="today-icon">◎</div>
-          <div>
-            <span>SẴN SÀNG CHO HÔM NAY</span>
-            <h2>
-              <strong>{todayQueue.length}</strong> thẻ trong phiên hôm nay
-            </h2>
-            <p>
-              {todayReview} từ đến hạn · {todayNew} từ mới · khoảng {Math.max(5, Math.ceil(todayQueue.length * 0.45))} phút
-            </p>
-          </div>
-        </div>
-        <button className="primary" disabled={!todayQueue.length} onClick={() => startReview(onlyPdf ? "pdf" : undefined)}>
-          Bắt đầu học <span>→</span>
-        </button>
-      </section>
-      <div className="stats-grid">
-        {/* Bốn ô cùng một phạm vi: toàn bộ thư viện, gồm cả bộ PDF. Nhờ vậy
-            "đang học" + "đã thuộc" luôn cộng lại đúng bằng "tổng số từ". */}
-        <Stat label="Tổng số từ" value={String(words.length)} note={pdfCount ? `${personal.length} từ của bạn · ${pdfCount} từ bộ PDF` : "Trong thư viện của bạn"} icon="▤" tone="purple"
-          onOpen={() => setStatList({ title: "Tổng số từ", note: "TOÀN BỘ THƯ VIỆN", words })} />
-        <Stat label="Đang học" value={String(words.length - mastered)} note="Chưa lên hộp 6" icon="◔" tone="orange"
-          onOpen={() => setStatList({ title: "Đang học", note: "CHƯA LÊN HỘP 6", words: learningWords })} />
-        <Stat label="Đã thuộc" value={String(mastered)} note="Đã lên hộp 6" icon="✓" tone="green"
-          onOpen={() => setStatList({ title: "Đã thuộc", note: "ĐÃ LÊN HỘP 6", words: masteredWords })} />
-        <Stat label="Lượt đã ôn" value={String(reviewedThisWeek)} note="Toàn bộ thư viện" icon="♨" tone="pink"
-          onOpen={() => setStatList({ title: "Từ đã được ôn", note: "XẾP THEO SỐ LƯỢT ÔN", words: reviewedWords })} />
-      </div>
-      <LearningPlan reviewCount={todayReview} newCount={todayNew} startVocabulary={() => startReview(onlyPdf ? "pdf" : undefined)} openPractice={openPractice} />
-      <DailyStudy words={words} startReview={startReview} startTopicReview={startTopicReview} />
-      <WeeklyTracker words={words} />
-      <div className="dashboard-grid">
-        <section className="panel heatmap-panel">
-          <div className="panel-title">
-            <div>
-              <h3>Nhịp học của bạn</h3>
-              <p>12 tuần gần nhất</p>
-            </div>
-            <div className="legend">
-              Ít <i className="h0" />
-              <i className="h1" />
-              <i className="h2" />
-              <i className="h3" />
-              <i className="h4" /> Nhiều
-            </div>
-          </div>
-          <div className="heatmap">
-            <div className="days">
-              {weekDays.map((d) => (
-                <span key={d}>{d}</span>
-              ))}
-            </div>
-            <div className="heat-cells">
-              {activityHeat.map((v, i) => (
-                <i className={`h${v}`} key={i} title={`${v * 8} từ đã ôn`} />
-              ))}
-            </div>
-          </div>
-          <div className="heat-footer">
-            <span>
-              <b>{reviewedThisWeek}</b> lượt ôn đã ghi nhận
-            </span>
-            <span>{reviewedThisWeek ? "Đang cập nhật từ Leitner" : "Chưa có phiên ôn"}</span>
-          </div>
-        </section>
-        <section className="panel tough">
-          <div className="panel-title">
-            <div>
-              <h3>Từ cần chú ý</h3>
-              <p>Những từ bạn hay quên nhất</p>
-            </div>
-            <button onClick={openWords}>Xem tất cả →</button>
-          </div>
-          {scheduledWords
-            .slice()
-            .sort((a, b) => b.lapses - a.lapses)
-            .slice(0, 4)
-            .map((w) => (
-              <div className="tough-row" key={w.id}>
-                <span className="word-dot">{w.term[0].toUpperCase()}</span>
-                <span>
-                  <b>{w.term}</b>
-                  <small>{w.meaning}</small>
-                </span>
-                <span className="lapse">{w.lapses} lần quên</span>
-                <button aria-label={`Ôn từ ${w.term}`} onClick={() => startWordReview(w.id)}>→</button>
-              </div>
-            ))}
-        </section>
-      </div>
-      {showTip && (
-        <div className="tip">
-          <span>♢</span>
-          <p>
-            <b>Mẹo nhỏ hôm nay</b>
-            <br />
-            Đặt một câu thật về chính bạn với từ mới — ký ức gắn với trải nghiệm cá nhân sẽ bền hơn.
-          </p>
-          <button aria-label="Ẩn mẹo" onClick={() => setShowTip(false)}>
-            ×
-          </button>
-        </div>
-      )}
-      {statList && <WordListModal title={statList.title} note={statList.note} words={statList.words} close={() => setStatList(null)} />}
     </div>
   );
 }
@@ -1950,6 +2651,15 @@ function groupLabelOf(word: WordCard) {
   return dayNames[addedDayIndex(word)];
 }
 
+/**
+ * Khối Leitner DUY NHẤT của màn Tiến độ.
+ *
+ * Trước đây màn này có hai khối cùng nói về Leitner — bảng theo nhóm ở trên và
+ * biểu đồ cột ở dưới cùng — nên người xem phải tự đối chiếu hai cách trình bày
+ * của cùng một dữ liệu. Nay chỉ còn một: biểu đồ trả lời "tôi đang ở đâu" ngay
+ * lập tức, còn bảng chi tiết theo nhóm nằm sau một nút mở vì đó là thứ để tra
+ * cứu khi cần chứ không phải thứ đọc mỗi lần ghé vào.
+ */
 function WeeklyTracker({ words }: { words: WordCard[] }) {
   const countRow = (label: string, list: WordCard[]) => ({
     label,
@@ -1967,44 +2677,42 @@ function WeeklyTracker({ words }: { words: WordCard[] }) {
     .map((folder) => countRow(folder.label, folder.words));
   const tracked = personalWords.length + pdfWords.length;
   const masteredAll = words.filter((w) => wordState(w).key === "mastered").length;
-  const [showTopics, setShowTopics] = useState(true);
+  const boxes = [1, 2, 3, 4, 5, 6].map((box) => ({ box, count: words.filter((w) => w.box === box).length }));
+  const max = Math.max(1, ...boxes.map((b) => b.count));
+  const [open, setOpen] = useState(false);
+  const rows = [...dayRows, ...topicRows];
   return (
     <section className="panel weekly">
       <div className="panel-title">
         <div>
-          <h3>Bảng theo dõi Leitner</h3>
-          <p>Từ bạn tự thêm xếp theo ngày học, bộ PDF xếp theo thư mục chủ đề</p>
+          <h3>Phân bố theo hộp Leitner</h3>
+          <p>Trả lời đúng thì từ lên hộp cao hơn và giãn ngày ôn. Lên hộp 6 là đã thuộc.</p>
         </div>
         <span className="mastery-rate">{tracked ? Math.round((masteredAll / tracked) * 100) : 0}% đã thuộc</span>
       </div>
-      <div className="weekly-table">
-        <div>
-          <b>Nhóm</b>
-          <b>Tổng</b>
-          <b>🔴 Cần ôn</b>
-          <b>⏳ Chưa tới hạn</b>
-          <b>🆕 Chưa học</b>
-          <b>✅ Đã thuộc</b>
-        </div>
-        {dayRows.map((r) => (
-          <div key={r.label}>
-            <span>{r.label}</span>
-            <span>{r.total}</span>
-            <span>{r.due}</span>
-            <span>{r.waiting}</span>
-            <span>{r.fresh}</span>
-            <span>{r.mastered}</span>
+      <div className="bar-chart">
+        {boxes.map((b) => (
+          <div key={b.box}>
+            <span>{b.count}</span>
+            <i style={{ height: `${Math.max(8, (b.count / max) * 150)}px` }} />
+            <b>Hộp {b.box}</b>
           </div>
         ))}
-        {!!topicRows.length && (
-          <div className="weekly-group">
-            <button onClick={() => setShowTopics((value) => !value)}>
-              {showTopics ? "▾" : "▸"} Thư mục chủ đề · {topicRows.length} folder · {pdfWords.length} từ
-            </button>
+      </div>
+      <button className="weekly-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        {open ? "▾" : "▸"} Chi tiết theo nhóm · {rows.length} nhóm
+      </button>
+      {open && (
+        <div className="weekly-table">
+          <div>
+            <b>Nhóm</b>
+            <b>Tổng</b>
+            <b>Cần ôn</b>
+            <b>Chưa tới hạn</b>
+            <b>Chưa học</b>
+            <b>Đã thuộc</b>
           </div>
-        )}
-        {showTopics &&
-          topicRows.map((r) => (
+          {rows.map((r) => (
             <div key={r.label}>
               <span>{r.label}</span>
               <span>{r.total}</span>
@@ -2014,7 +2722,8 @@ function WeeklyTracker({ words }: { words: WordCard[] }) {
               <span>{r.mastered}</span>
             </div>
           ))}
-      </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -2023,18 +2732,36 @@ function WeeklyTracker({ words }: { words: WordCard[] }) {
 //
 // Kết quả được nhớ lại trong phiên: đọc một đoạn thì cùng một từ hay lặp lại, tra
 // lại mỗi lần vừa chậm vừa phí. Chờ 350ms mới gọi để lướt chuột qua không kích hoạt.
-type Glance = { term: string; ipa: string; meaningVi: string; senses: { part: string; definition: string; synonyms: string[] }[] };
-const glanceCache = new Map<string, Glance | "missing">();
+type Glance = { term: string; ipa: string; meaningVi: string; senses: { part: string; definition: string; meaningVi: string; synonyms: string[] }[] };
+
+function speakEnglish(text: string, region: "US" | "UK" = "US") {
+  if (!text || typeof window === "undefined") return;
+  window.speechSynthesis?.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = region === "US" ? "en-US" : "en-GB";
+  const voice = (window.speechSynthesis?.getVoices() ?? []).find((item) => item.lang.replace("_", "-") === utterance.lang);
+  if (voice) utterance.voice = voice;
+  window.speechSynthesis?.speak(utterance);
+}
+
+// Hành động "lưu từ" / "mở Từ điển AI" cho bóng chú giải khi rê chuột vào từ.
+// Dùng context để mọi <EnglishText> lồng bên trong app đều có, không phải xâu prop
+// qua từng lớp (ReviewView → FlipCard, WordDetail, chấm bài viết…).
+const LookupActionsContext = createContext<{ saveWord?: (word: NewWord) => string; openDictionary?: (term: string) => void }>({});
 
 function EnglishText({ text, className }: { text: string; className?: string }) {
   const [active, setActive] = useState<{ word: string; x: number; y: number } | null>(null);
   const [data, setData] = useState<Glance | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "missing">("idle");
+  const [saved, setSaved] = useState(false);
   const timer = useRef<number | null>(null);
+  const hideTimer = useRef<number | null>(null);
+  const { saveWord, openDictionary } = useContext(LookupActionsContext);
 
   function show(word: string, element: HTMLElement) {
     const clean = word.toLowerCase().replace(/[^a-z'-]/g, "");
     if (clean.length < 2) return;
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
     // Ghim bóng trong khung nhìn: từ ở sát mép phải hoặc gần đáy thì bóng sẽ tràn
     // ra ngoài và không đọc được.
     const box = element.getBoundingClientRect();
@@ -2043,34 +2770,35 @@ function EnglishText({ text, className }: { text: string; className?: string }) 
     const x = Math.max(12, Math.min(box.left, window.innerWidth - width - 12));
     const y = box.bottom + height + 12 > window.innerHeight ? Math.max(12, box.top - height - 6) : box.bottom;
     setActive({ word: clean, x, y });
-    const cached = glanceCache.get(clean);
-    if (cached) {
-      setData(cached === "missing" ? null : cached);
-      setState(cached === "missing" ? "missing" : "idle");
-      return;
-    }
+    setSaved(false);
     setData(null);
     setState("loading");
     if (timer.current) window.clearTimeout(timer.current);
+    // fetchGlance tự nhớ kết quả trong phiên, nên gọi lại cùng một từ gần như tức thì.
     timer.current = window.setTimeout(async () => {
       try {
-        const response = await fetch(`/api/ai/glance?q=${encodeURIComponent(clean)}`);
-        const payload = (await response.json()) as Glance & { error?: string };
-        if (!response.ok || payload.error) throw new Error(payload.error);
-        glanceCache.set(clean, payload);
+        const payload = (await fetchGlance(clean)) as Glance;
         setData(payload);
         setState("idle");
       } catch {
-        glanceCache.set(clean, "missing");
         setState("missing");
       }
     }, 350);
   }
-  function hide() {
+  function hideNow() {
     if (timer.current) window.clearTimeout(timer.current);
     setActive(null);
     setData(null);
     setState("idle");
+  }
+  // Trễ một nhịp: cho phép rê chuột từ chữ sang chính bóng chú giải (để bấm nút loa)
+  // mà bóng không biến mất giữa chừng.
+  function hide() {
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(hideNow, 180);
+  }
+  function keepOpen() {
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
   }
 
   // Tách theo khoảng trắng để giữ nguyên dấu câu dính liền từ.
@@ -2084,14 +2812,72 @@ function EnglishText({ text, className }: { text: string; className?: string }) 
           // onMouseOver thay vì onMouseEnter: mỗi thẻ chỉ chứa một từ, không có con
           // nên hai cái tương đương, mà onMouseOver là sự kiện thường, không phụ
           // thuộc cơ chế enter/leave của React.
-          <span key={position} className="en-word" onMouseOver={(event) => show(piece, event.currentTarget)} onFocus={(event) => show(piece, event.currentTarget)} tabIndex={-1}>
+          // Bấm vào chữ = nghe phát âm ngay (và chặn sự kiện để không lật thẻ).
+          <span
+            key={position}
+            className="en-word"
+            onMouseOver={(event) => show(piece, event.currentTarget)}
+            onFocus={(event) => show(piece, event.currentTarget)}
+            onClick={(event) => {
+              event.stopPropagation();
+              event.preventDefault();
+              show(piece, event.currentTarget);
+              speakEnglish(piece.replace(/[^a-zA-Z'-]/g, ""));
+            }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); speakEnglish(piece.replace(/[^a-zA-Z'-]/g, "")); } }}
+          >
             {piece}
           </span>
         ),
       )}
-      {active && (
-        <span className="gloss" style={{ left: active.x, top: active.y + 6 }} role="tooltip">
-          <b className="gloss-term">{active.word}</b>
+      {active && typeof document !== "undefined" && createPortal(
+        <span
+          className="gloss"
+          style={{ left: active.x, top: active.y + 6 }}
+          role="tooltip"
+          onMouseEnter={keepOpen}
+          onMouseLeave={hide}
+        >
+          <span className="gloss-term-line">
+            <b className="gloss-term">{active.word}</b>
+            <button type="button" className="gloss-act" aria-label={`Nghe phát âm ${active.word}`} onClick={(event) => { event.stopPropagation(); speakEnglish(active.word); }}>
+              <Icon name="volume" size={14} />
+            </button>
+            {saveWord && data && (
+              <button
+                type="button"
+                className={`gloss-act ${saved ? "is-on" : ""}`}
+                aria-label={saved ? "Đã lưu vào Kho từ vựng" : "Lưu vào Kho từ vựng"}
+                title={saved ? "Đã lưu" : "Lưu từ này"}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  saveWord({
+                    term: data.term || active.word,
+                    ipa: data.ipa || "/…/",
+                    meaning: data.meaningVi || data.senses[0]?.meaningVi || data.senses[0]?.definition || "Chưa có nghĩa",
+                    partOfSpeech: data.senses[0]?.part ?? "",
+                    definition: data.senses[0]?.definition ?? "",
+                  });
+                  setSaved(true);
+                }}
+              >
+                <Icon name={saved ? "check" : "star"} size={14} />
+              </button>
+            )}
+            {openDictionary && (
+              <button
+                type="button"
+                className="gloss-act"
+                aria-label="Mở trong Từ điển AI"
+                title="Mở trong Từ điển AI"
+                onClick={(event) => { event.stopPropagation(); openDictionary(data?.term || active.word); }}
+              >
+                <Icon name="book" size={14} />
+              </button>
+            )}
+          </span>
           {state === "loading" && <em className="gloss-note">Đang tra…</em>}
           {state === "missing" && <em className="gloss-note">Không tra được từ này.</em>}
           {data && (
@@ -2105,13 +2891,14 @@ function EnglishText({ text, className }: { text: string; className?: string }) 
               {data.senses.map((sense) => (
                 <span className="gloss-sense" key={sense.part}>
                   <i>{sense.part}</i>
-                  <span>{sense.definition}</span>
+                  <span>{sense.meaningVi || sense.definition}</span>
                   {!!sense.synonyms.length && <small>{[...new Set(sense.synonyms)].join(", ")}</small>}
                 </span>
               ))}
             </>
           )}
-        </span>
+        </span>,
+        document.body,
       )}
     </span>
   );
@@ -2190,7 +2977,7 @@ function WordListModal({ title, note, words, close }: { title: string; note: str
   );
 }
 
-function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionary, remove, importWords, folders, updateFolders, collectionFilter, setCollectionFilter, startWordListReview, setStudyDay, openWordDetail, fillMissingFields, backfill }: { words: WordCard[]; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; openDictionary: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; folders: FolderStore; updateFolders: (next: FolderStore) => void; collectionFilter: "root" | "daily" | "pdf"; setCollectionFilter: (view: "root" | "daily" | "pdf") => void; startWordListReview: (list: WordCard[]) => void; setStudyDay: (id: string, day: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null }) {
+function Words({ words, legacyCollections, query, setQuery, toggleStar, add, bulkAdd, openDictionary, remove, importWords, folders, updateFolders, collectionFilter, setCollectionFilter, startWordListReview, setStudyDay, openWordDetail, fillMissingFields, backfill, assignLevels, leveling }: { words: WordCard[]; legacyCollections: boolean; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; openDictionary: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; folders: FolderStore; updateFolders: (next: FolderStore) => void; collectionFilter: "root" | "daily" | "pdf"; setCollectionFilter: (view: "root" | "daily" | "pdf") => void; startWordListReview: (list: WordCard[]) => void; setStudyDay: (id: string, day: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null; assignLevels: (targets: WordCard[], quiet?: boolean) => void; leveling: { done: number; total: number } | null }) {
   const PAGE_SIZE = 25;
   const fileRef = useRef<HTMLInputElement>(null);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -2268,6 +3055,22 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
     : collectionFilter === "daily" ? (dayFilter === null ? personalWords : personalWords.filter((word) => addedDayIndex(word) === dayFilter))
     : [];
   const visible = activeCollection.filter((w) => (statusFilter === "all" || wordState(w).key === statusFilter) && (dayFilter === null || addedDayIndex(w) === dayFilter));
+  // Từ trong thư mục đang mở mà chưa có bậc CEFR — hiện nút "Xếp cấp độ" khi còn.
+  const unleveled = (openId || collectionFilter !== "root") ? activeCollection.filter((w) => !w.cefr) : [];
+  // Mở một thư mục là tự xếp cấp độ cho các từ chưa có, chạy nền không ồn ào —
+  // để badge CEFR hiện lên mà người dùng không phải bấm nút. Chỉ làm một lần cho
+  // mỗi thư mục và chỉ khi số từ vừa phải (tránh nện API ở màn "tất cả").
+  const autoLeveledKey = useRef("");
+  useEffect(() => {
+    const key = openId || `${collectionFilter}:${pdfTopic ?? ""}:${dayFilter ?? ""}`;
+    if (autoLeveledKey.current === key || !unleveled.length || unleveled.length > 200) return;
+    const words = unleveled;
+    const timer = setTimeout(() => { autoLeveledKey.current = key; assignLevels(words, true); }, 700);
+    return () => clearTimeout(timer);
+    // Chỉ chạy lại khi đổi thư mục hoặc số từ chưa xếp đổi; `unleveled` được chụp
+    // ngay trong effect nên không cần là dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId, collectionFilter, pdfTopic, dayFilter, unleveled.length, assignLevels]);
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   // Đổi bộ lọc thì về trang 1, và trang không bao giờ vượt quá số trang hiện có.
   // Suy ra ngay lúc render thay vì dùng effect, tránh một lượt render thừa hiển thị trang rỗng.
@@ -2317,22 +3120,22 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
   const cards: ShelfCard[] = atRoot
     ? [
         {
-          key: "mine", name: "Từ của tôi", meta: `${dayNames.length} thư mục theo thứ`,
-          note: "Từ bạn tự thêm hoặc nhập từ Excel, chia theo thứ trong tuần.",
-          count: personalWords.length, sub: dayNames.length,
+          key: "mine", name: "Từ của tôi", meta: legacyCollections ? `${dayNames.length} thư mục theo thứ` : "Kho cá nhân của tài khoản",
+          note: legacyCollections ? "Từ bạn tự thêm hoặc nhập từ Excel, chia theo thứ trong tuần." : "Tất cả từ bạn đã lưu bằng tra từ hoặc nhập dữ liệu.",
+          count: personalWords.length, sub: legacyCollections ? dayNames.length : 0,
           open: () => { setCollectionFilter("daily"); setDayFilter(null); },
         },
-        {
+        ...(legacyCollections ? [{
           key: "pdf", name: "Bộ từ vựng PDF", meta: `${pdfTopics.length} thư mục theo chủ đề`,
           note: "Bộ từ có sẵn của ứng dụng, chia theo chủ đề.",
           count: pdfWords.length, sub: pdfTopics.length,
           open: () => { setCollectionFilter("pdf"); setPdfTopic(null); },
-        },
+        }] : []),
         ...userCards(),
       ]
     : openId
     ? userCards()
-    : collectionFilter === "daily" && dayFilter === null
+    : collectionFilter === "daily" && dayFilter === null && legacyCollections
     ? dayNames.map((name, index) => {
         const list = personalWords.filter((word) => addedDayIndex(word) === index);
         return { key: name, name, meta: "Thư mục theo thứ", note: `${dueIn(list)} từ cần ôn.`, count: list.length, sub: 0, open: () => setDayFilter(index) };
@@ -2390,7 +3193,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
             .filter(Boolean);
           for (const line of lines) {
             const parsed = parseTermLine(line);
-            if (parsed) imported.push({ ...parsed, studyDay: sheetDay });
+            if (parsed) imported.push({ ...parsed, studyDay: legacyCollections ? sheetDay : undefined });
           }
           continue;
         }
@@ -2419,12 +3222,12 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
             box,
             dueDate: excelDate(row["Ngày ôn tiếp"]),
             status: box >= 6 ? "mastered" : reviewed === 0 ? "new" : "review",
-            studyDay: sheetDay,
+            studyDay: legacyCollections ? sheetDay : undefined,
           });
         }
       }
       importWords(imported);
-      const days = [...new Set(imported.map((item) => item.studyDay).filter((day) => typeof day === "number"))].map((day) => dayNames[day as number]);
+      const days = legacyCollections ? [...new Set(imported.map((item) => item.studyDay).filter((day) => typeof day === "number"))].map((day) => dayNames[day as number]) : [];
       alert(imported.length ? `Đã nhập ${imported.length} từ${days.length ? ` vào ${days.join(", ")}` : ""}.` : "Không đọc được từ nào trong file. Mỗi dòng nên có dạng: từ (loại từ): nghĩa");
       return;
     }
@@ -2443,9 +3246,9 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
       .slice(0, 1000)
       .map((line) => parseTermLine(line.includes("\t") ? line.replace("\t", ": ") : line))
       .filter((item): item is Omit<WordCard, "id" | "lapses"> => !!item && item.term.toLowerCase() !== "term")
-      .map((item) => ({ ...item, studyDay: fileDay }));
+      .map((item) => ({ ...item, studyDay: legacyCollections ? fileDay : undefined }));
     importWords(items);
-    alert(items.length ? `Đã nhập ${items.length} từ${typeof fileDay === "number" ? ` vào ${dayNames[fileDay]}` : ""}.` : "Không đọc được từ nào. Mỗi dòng nên có dạng: từ (loại từ): nghĩa");
+    alert(items.length ? `Đã nhập ${items.length} từ${legacyCollections && typeof fileDay === "number" ? ` vào ${dayNames[fileDay]}` : ""}.` : "Không đọc được từ nào. Mỗi dòng nên có dạng: từ (loại từ): nghĩa");
   }
   return (
     <div className="page words-page">
@@ -2509,70 +3312,9 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
           </div>
         )}
         {openFolder && !activeCollection.length && !cards.length && (
-          <p className="folder-empty">Danh sách này chưa có từ nào. Mở <b>Từ của tôi</b> hoặc <b>Bộ từ vựng PDF</b>, rồi bấm nút ▤ ở đầu mỗi từ để cất vào đây.</p>
+          <p className="folder-empty">Danh sách này chưa có từ nào. Mở <b>Từ của tôi</b>{legacyCollections && <> hoặc <b>Bộ từ vựng PDF</b></>}, rồi bấm nút ▤ ở đầu mỗi từ để cất vào đây.</p>
         )}
       </section>
-      {collectionFilter === "pdf" && !pdfTopic && (
-        <section className="topic-folders">
-          <div className="topic-folders-head">
-            <div><h3>Thư mục học</h3><p>Chọn một folder để học riêng như một bộ thẻ Quizlet.</p></div>
-          </div>
-          <div className="topic-folder-grid">
-            {pdfTopics.map((topic) => {
-              const count = pdfWords.filter((word) => primaryTopic(word) === topic).length;
-              return <button key={topic} onClick={() => setPdfTopic(topic)}><span>▰</span><b>{topic}</b><small>{count} từ</small><i> Mở →</i></button>;
-            })}
-          </div>
-        </section>
-      )}
-      {openFolder && (
-        <section className="wordlists">
-          <div className="wordlists-bar">
-            <nav className="wordlist-trail" aria-label="Đường dẫn danh sách từ">
-              <button onClick={() => setFolderFilter(null)}>Kho từ vựng</button>
-              {trail.map((step, index) => (
-                <Fragment key={step.id}>
-                  <span aria-hidden="true">›</span>
-                  {index === trail.length - 1
-                    ? <b aria-current="page">{step.name}</b>
-                    : <button onClick={() => setFolderFilter(step.id)}>{step.name}</button>}
-                </Fragment>
-              ))}
-            </nav>
-            <div className="wordlists-bar-end">
-              <button title="Sửa danh sách" aria-label={`Sửa danh sách ${openFolder.name}`} onClick={() => openEditForm(openFolder)}>✎ Sửa</button>
-              <button title="Xoá danh sách" aria-label={`Xoá danh sách ${openFolder.name}`} onClick={() => setFolderToDelete(openFolder)}>× Xoá</button>
-              <button onClick={() => openCreateForm(openFolder.id)}><Icon name="plus" /> Tạo danh sách con</button>
-              <button className="primary" disabled={!activeCollection.length} onClick={() => startWordListReview(activeCollection)}>Ôn tập ({activeCollection.length} từ)</button>
-            </div>
-          </div>
-          {/* Ghi chú chỉ có chỗ đứng ở đây: hàng chip phía ngoài quá hẹp cho nó. */}
-          {openFolder.note && <p className="wordlist-note-line">{openFolder.note}</p>}
-          {shownFolders.length > 0 && (
-            <div className="wordlist-grid">
-              {shownFolders.map((folder) => (
-                <div className="wordlist-card" key={folder.id}>
-                  <button className="wordlist-open" onClick={() => setFolderFilter(folder.id)}>
-                    <b>{folder.name}</b>
-                    <span className="wordlist-date"><Icon name="clock" /> {folderDate(folder.createdAt)}</span>
-                    <p className={folder.note ? "" : "muted"}>{folder.note || "Không có ghi chú."}</p>
-                    <span className="wordlist-foot">
-                      <strong>{folder.count}</strong> TỪ{folder.childCount ? ` · ${folder.childCount} danh sách con` : ""}
-                    </span>
-                  </button>
-                  <div className="folder-card-actions">
-                    <button title="Sửa" aria-label={`Sửa danh sách ${folder.name}`} onClick={() => openEditForm(folder)}>✎</button>
-                    <button title="Xoá" aria-label={`Xoá danh sách ${folder.name}`} onClick={() => setFolderToDelete(folder)}>×</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {!activeCollection.length && !shownFolders.length && (
-            <p className="folder-empty">Danh sách này chưa có từ nào. Mở tab <b>Từ của tôi</b> hoặc <b>Bộ từ vựng PDF</b>, rồi bấm nút ▤ ở đầu mỗi từ để cất vào đây.</p>
-          )}
-        </section>
-      )}
       {/* Mức gốc chỉ có các danh sách, chưa có bảng từ nào để hiện. */}
       {!atRoot && <>
       <div className="word-tools">
@@ -2588,9 +3330,14 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
           <option value="mastered">✅ Đã thuộc</option>
         </select>
         {collectionFilter === "daily" && !openId && <button onClick={() => fileRef.current?.click()}>Nhập Excel</button>}
-        {collectionFilter === "daily" && !openId && !!incomplete.length && (
-          <button className="backfill-button" disabled={!!backfill} onClick={fillMissingFields} title={`Thiếu dữ liệu: ${incomplete.map((word) => word.term).slice(0, 8).join(", ")}${incomplete.length > 8 ? "…" : ""}`}>
+        {!!incomplete.length && (
+          <button className="backfill-button" disabled={!!backfill} onClick={fillMissingFields} title={`Còn thiếu trường ở: ${incomplete.map((word) => word.term).slice(0, 8).join(", ")}${incomplete.length > 8 ? "…" : ""}`}>
             {backfill ? `◌ Đang bổ sung ${backfill.done}/${backfill.total}…` : `✦ Bổ sung ${incomplete.length} từ thiếu`}
+          </button>
+        )}
+        {!!unleveled.length && (
+          <button className="backfill-button" disabled={!!leveling} onClick={() => assignLevels(activeCollection)} title="Ước lượng bậc CEFR (A1–C2) cho các từ chưa có cấp độ trong thư mục này">
+            {leveling ? `◌ Đang xếp cấp độ ${leveling.done}/${leveling.total}…` : `✦ Xếp cấp độ ${unleveled.length} từ`}
           </button>
         )}
         <button onClick={exportCsv}>Xuất CSV</button>
@@ -2610,6 +3357,13 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
           )}
         </div>
       )}
+      {leveling && (
+        <div className={leveling.done < leveling.total ? "backfill-status" : "backfill-status done"}>
+          {leveling.done < leveling.total
+            ? <>Đang xếp bậc CEFR <b>{leveling.done}</b>/{leveling.total} từ… đây là mức <b>ước lượng</b> theo Oxford 5000 và tần suất dùng, không phải điểm thi.</>
+            : <>Xong: đã xếp cấp độ <b>{leveling.total}</b> từ. Mở một từ để xem từ đồng nghĩa ở bậc cao hơn.</>}
+        </div>
+      )}
       <div className="word-table">
         <div className="word-tr word-th">
           <span>TỪ / LOẠI TỪ / NGHĨA</span>
@@ -2627,6 +3381,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
               <span>
                 <b>
                   {w.term} {w.partOfSpeech && <em>({w.partOfSpeech})</em>}
+                  {w.cefr && w.cefr !== "?" && <span className="word-cefr" title="Cấp độ CEFR ước lượng">{w.cefr}</span>}
                 </b>
                 <small>
                   {w.ipa} · {w.meaning}
@@ -2637,7 +3392,7 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
             </span>
             <span className="topic-cell">
               <em>{w.topic}</em>
-              {!isPdfWord(w) && (
+              {legacyCollections && !isPdfWord(w) && (
                 <select className="day-select" aria-label={`Ngày học của ${w.term}`} value={addedDayIndex(w)} onClick={(event) => event.stopPropagation()} onChange={(e) => setStudyDay(w.id, Number(e.target.value))}>
                   {dayNames.map((name, index) => (
                     <option value={index} key={name}>
@@ -2689,28 +3444,32 @@ function Words({ words, query, setQuery, toggleStar, add, bulkAdd, openDictionar
               <button onClick={closeFolderForm} aria-label="Đóng">×</button>
             </div>
             <form onSubmit={(event) => { event.preventDefault(); submitFolderForm(); }}>
-              <label htmlFor="wordlist-name">Tiêu đề</label>
-              <input
-                id="wordlist-name"
-                ref={(node) => { if (node && document.activeElement !== node) node.focus(); }}
-                value={draftName}
-                onChange={(event) => { setDraftName(event.target.value); setFormError(""); }}
-                placeholder="Nhập tiêu đề danh sách từ"
-                maxLength={60}
-              />
-              <label htmlFor="wordlist-note">Ghi chú</label>
-              <textarea
-                id="wordlist-note"
-                value={draftNote}
-                onChange={(event) => setDraftNote(event.target.value)}
-                placeholder="Nhập ghi chú hoặc mô tả"
-                rows={4}
-                maxLength={300}
-              />
+              <label htmlFor="wordlist-name">
+                <span className="field-label">Tiêu đề</span>
+                <input
+                  id="wordlist-name"
+                  ref={(node) => { if (node && document.activeElement !== node) node.focus(); }}
+                  value={draftName}
+                  onChange={(event) => { setDraftName(event.target.value); setFormError(""); }}
+                  placeholder="Ví dụ: Từ vựng IELTS Writing"
+                  maxLength={60}
+                />
+              </label>
+              <label htmlFor="wordlist-note">
+                <span className="field-label">Ghi chú <span className="label-optional">· không bắt buộc</span></span>
+                <textarea
+                  id="wordlist-note"
+                  value={draftNote}
+                  onChange={(event) => setDraftNote(event.target.value)}
+                  placeholder="Mô tả ngắn để nhớ danh sách dùng cho việc gì"
+                  rows={3}
+                  maxLength={300}
+                />
+              </label>
               {formError && <p className="folder-note" role="status">{formError}</p>}
               <div className="modal-actions">
                 <button type="button" onClick={closeFolderForm}>Huỷ</button>
-                <button className="primary" type="submit" disabled={!tidy(draftName)}>{editing ? "Lưu" : "Tạo"}</button>
+                <button className="primary" type="submit" disabled={!tidy(draftName)}>{editing ? "Lưu thay đổi" : "Tạo danh sách"}</button>
               </div>
             </form>
           </section>
@@ -2761,6 +3520,7 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
   const [tracking, setTracking] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
   const classify = (known: boolean) => rate(known ? "good" : "again");
+  const selectedMode = reviewModes.find((item) => item.value === modeSetting) ?? reviewModes[0];
   // Tự động phát: lật thẻ rồi sang thẻ kế tiếp, nhịp giống Flashcards bên Luyện tập.
   // Tự tắt khi hết bộ hoặc khi rời khỏi kiểu thẻ ghi nhớ.
   useEffect(() => {
@@ -2847,21 +3607,37 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
           {card.starred ? "★" : "☆"}
         </button>
       </header>
-      <div className="review-modes" role="group" aria-label="Kiểu thẻ ôn tập">
-        {reviewModes.map((item) => (
-          <button
-            key={item.value}
-            className={modeSetting === item.value ? "active" : ""}
-            onClick={() => {
-              // Đổi kiểu thẻ thì dừng tự động phát, không để nó chạy ngầm ở kiểu khác.
-              setAutoplay(false);
-              setMode(item.value);
-            }}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+      <section className="review-mode-picker" aria-labelledby="review-mode-title">
+        <div className="review-mode-heading">
+          <div>
+            <span>CÁCH ÔN</span>
+            <strong id="review-mode-title">Bạn muốn luyện kỹ năng nào?</strong>
+          </div>
+          <p aria-live="polite">
+            <Icon name={selectedMode.icon} size={18} />
+            <span><b>{selectedMode.label}</b>{selectedMode.description}</span>
+          </p>
+        </div>
+        <div className="review-modes" role="group" aria-label="Chọn chế độ ôn tập">
+          {reviewModes.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              className={modeSetting === item.value ? "active" : ""}
+              aria-pressed={modeSetting === item.value}
+              onClick={() => {
+                // Đổi kiểu thẻ thì dừng tự động phát, không để nó chạy ngầm ở kiểu khác.
+                setAutoplay(false);
+                setMode(item.value);
+              }}
+            >
+              <span className="review-mode-icon"><Icon name={item.icon} size={18} /></span>
+              <span className="review-mode-copy"><b>{item.label}</b><small>{item.description}</small></span>
+              {item.badge && <em>{item.badge}</em>}
+            </button>
+          ))}
+        </div>
+      </section>
       {shownMode === "card" ? (
         // Dùng chung thẻ lật với Flashcards bên Luyện tập, kể cả nút loa góc phải.
         <div className="review-task-frame review-flash-frame">
@@ -2885,7 +3661,7 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
               <>
                 <span className="card-label">VIỆT → ANH</span>
                 <h1>{card.meaning}</h1>
-                <p className="cloze">{card.cloze}</p>
+                <p className="cloze"><EnglishText text={card.cloze} /></p>
                 <label className="answer">
                   <input
                     value={answer}
@@ -2960,21 +3736,20 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
             <div className="ipa">{card.ipa}</div>
             {graded !== null && <p className={graded ? "review-verdict good" : "review-verdict"}>{graded ? "✓ Bạn trả lời đúng" : shownMode === "quiz" ? `✗ Bạn chọn: ${choices.find((item) => item.id === choice)?.meaning}` : `✗ Bạn viết: ${answer}`}</p>}
             <p className="review-meaning">{card.meaning}</p>
-            {card.collocation && <p className="review-collocation"><b>{card.collocation}</b>{card.collocationVi && <span>{card.collocationVi}</span>}</p>}
-            {(card.synonyms?.length || card.antonyms?.length || card.related?.length || card.paraphrases?.length || card.ieltsTopics?.length) && (
+            {card.collocation && <p className="review-collocation"><b><EnglishText text={card.collocation} /></b>{card.collocationVi && <span>{card.collocationVi}</span>}</p>}
+            {(card.synonyms?.length || card.antonyms?.length || card.paraphrases?.length || card.ieltsTopics?.length) && (
               <div className="review-ielts">
                 {!!card.synonyms?.length && <p><b>Đồng nghĩa</b><span>{withMeanings(card.synonyms, card.synonymDetails)}</span></p>}
                 {!!card.antonyms?.length && <p><b>Trái nghĩa</b><span>{withMeanings(card.antonyms, card.antonymDetails)}</span></p>}
-                {!!card.related?.length && <p><b>Từ cùng chủ đề</b><span>{withMeanings(card.related, card.relatedDetails)}</span></p>}
                 {!!card.paraphrases?.length && <p><b>Paraphrase</b><span>{card.paraphrases.join(" · ")}</span></p>}
                 {!!card.ieltsTopics?.length && <p><b>IELTS topics</b><span>{card.ieltsTopics.join(" · ")}</span></p>}
               </div>
             )}
             <p className="example">
-              {card.example}
+              <EnglishText text={card.example} />
               {card.exampleVi && <em>{card.exampleVi}</em>}
             </p>
-            <p className="definition">{card.definition}</p>
+            <p className="definition"><EnglishText text={card.definition} /></p>
           </>
         )}
       </section>
@@ -3024,10 +3799,26 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
 }
 
 // study không bắt buộc: ở màn luyện tập không có chỗ để mở phiên ôn cho một từ lẻ.
-function WordDetail({ word, close, study, speak, folders, updateFolders }: { word: WordCard; close: () => void; study?: () => void; speak: (text: string) => void; folders?: FolderStore; updateFolders?: (next: FolderStore) => void }) {
+function WordDetail({ word, close, study, speak, folders, updateFolders, onLevel }: { word: WordCard; close: () => void; study?: () => void; speak: (text: string) => void; folders?: FolderStore; updateFolders?: (next: FolderStore) => void; onLevel?: (id: string, level: string) => void }) {
   useEscape(close);
   const [listDraft, setListDraft] = useState("");
   const [listError, setListError] = useState("");
+  // Bậc CEFR + từ đồng nghĩa bậc cao hơn: tra khi mở thẻ (fetchGlance nhớ kết quả
+  // trong phiên nên mở lại cùng một từ là tức thì; không gọi mô hình AI).
+  const [levelInfo, setLevelInfo] = useState<{ level: string | null; upgrades: { word: string; vi: string; level: string }[] }>({ level: null, upgrades: [] });
+  useEffect(() => {
+    let alive = true;
+    fetchGlance(word.term)
+      .then((glance: { level?: string | null; upgrades?: { word: string; vi: string; level: string }[] }) => {
+        if (!alive) return;
+        setLevelInfo({ level: glance.level ?? null, upgrades: Array.isArray(glance.upgrades) ? glance.upgrades : [] });
+        if (glance.level && (!word.cefr || word.cefr === "?")) onLevel?.(word.id, glance.level);
+      })
+      .catch(() => { /* từ không có trong từ điển thì bỏ qua phần cấp độ */ });
+    return () => { alive = false; };
+  }, [word.id, word.term, word.cefr, onLevel]);
+  const cefr = word.cefr && word.cefr !== "?" ? word.cefr : levelInfo.level;
+  const upgrades = levelInfo.upgrades;
   // Chỉ hiện phần danh sách khi nơi gọi thật sự đưa kho xuống. Ba nơi gọi khác
   // của thẻ này là màn hình học, ở đó cất từ vào danh sách không có nghĩa gì.
   const canFile = Boolean(folders && updateFolders);
@@ -3042,54 +3833,66 @@ function WordDetail({ word, close, study, speak, folders, updateFolders }: { wor
     setListDraft("");
     setListError("");
   }
-  const usageFields = [
-    ["Đồng nghĩa", word.synonyms, word.synonymDetails],
-    ["Trái nghĩa", word.antonyms, word.antonymDetails],
-    ["Từ hay đi cùng chủ đề", word.related, word.relatedDetails],
-  ] as const;
-  const simpleFields = [["Paraphrase IELTS", word.paraphrases], ["Chủ đề IELTS", word.ieltsTopics]] as const;
+  // Một từ thay thế chỉ nên xuất hiện ở một nơi. Khi có lựa chọn bậc cao hơn,
+  // ưu tiên chúng; danh sách đồng nghĩa khi đó chỉ lặp lại cùng một ý học.
+  const synonymDetails = (word.synonymDetails ?? []).slice(0, 4);
+  const synonyms = [...new Set(word.synonyms ?? [])].slice(0, 6);
+  const antonymDetails = (word.antonymDetails ?? []).slice(0, 4);
+  const antonyms = [...new Set(word.antonyms ?? [])].slice(0, 6);
+  const useUpgrades = upgrades.length > 0;
   return (
     <div className="modal-backdrop word-detail-backdrop" onMouseDown={close}>
       <article className="word-detail" onMouseDown={(event) => event.stopPropagation()}>
         <header>
-          <div><span className="eyebrow">THẺ TỪ VỰNG ĐẦY ĐỦ</span><h2>{word.term}</h2><p>{word.ipa} · {word.partOfSpeech || "chưa xác định loại từ"}</p></div>
+          <div><span className="eyebrow">THẺ TỪ VỰNG ĐẦY ĐỦ</span><h2>{word.term}{cefr && <span className="word-cefr" title="Cấp độ CEFR ước lượng">{cefr}</span>}</h2><p>{word.ipa} · {word.partOfSpeech || "chưa xác định loại từ"}</p></div>
           <button onClick={close} aria-label="Đóng">×</button>
         </header>
         <button className="detail-speak" onClick={() => speak(word.term)}><Icon name="volume" size={14} /> Nghe phát âm</button>
-        <section className="detail-meaning"><b>Nghĩa tiếng Việt</b><p>{word.meaning}</p><small>{word.definition || "Chưa có định nghĩa Anh–Anh."}</small></section>
-        {word.collocation && <section className="detail-collocation"><span>CỤM NÊN HỌC</span><h3><EnglishText text={word.collocation} /></h3><p>{word.collocationVi}</p></section>}
-        <section className="detail-example"><b>Ví dụ thực tế</b><p><EnglishText text={word.example} /></p>{word.exampleVi && <small>{word.exampleVi}</small>}</section>
-        <div className="usage-detail-grid">
-          {usageFields.map(([label, values, details]) => <section key={label}><b>{label}</b>{details?.length ? (
-                <div>
-                  {details.map((item) => (
-                    <article key={item.term}>
-                      <h4>{item.term}</h4>
-                      <strong>{item.meaningVi}</strong>
-                      <p>{item.example}</p>
-                      <small>{item.exampleVi}</small>
-                    </article>
-                  ))}
-                </div>
-              ) : values?.length ? (
-                <div className="legacy-related">
-                  {values.map((value) => (
-                    <span key={value}>{value}</span>
-                  ))}
-                  {/* Nút bổ sung chỉ áp dụng cho từ tự thêm; bộ PDF lấy dữ liệu từ file dựng sẵn. */}
-                  {!isPdfVocabulary(word) && <small>Bấm “Bổ sung từ thiếu” để thêm nghĩa và câu ngữ cảnh.</small>}
-                </div>
-              ) : (
-                <small>{label === "Trái nghĩa" ? "Từ này không có từ trái nghĩa thông dụng." : "Chưa có gợi ý."}</small>
-              )}</section>)}
+        <div className="detail-core-grid">
+          <section className="detail-meaning"><b>01 · Hiểu từ</b><p>{word.meaning}</p><small>{word.definition || "Chưa có định nghĩa Anh–Anh."}</small></section>
+          <section className="detail-example"><b>02 · Ví dụ</b><p><EnglishText text={word.example} /></p>{word.exampleVi && <small>{word.exampleVi}</small>}</section>
         </div>
-        <div className="detail-field-grid">
-          {simpleFields.map(([label, values]) => (
-            <section key={label}>
-              <b>{label}</b>
-              {values?.length ? <div>{values.map((value) => <span key={value}>{value}</span>)}</div> : <small>Chưa có gợi ý.</small>}
-            </section>
-          ))}
+        {word.collocation && <section className="detail-collocation"><span>03 · CỤM NÊN HỌC</span><h3><EnglishText text={word.collocation} /></h3><p>{word.collocationVi}</p></section>}
+        <section className={`detail-upgrades${useUpgrades ? "" : " is-synonym"}`}>
+          <div className="detail-section-heading">
+            <b>{useUpgrades ? `04 · Nâng band${cefr ? ` từ ${cefr}` : ""}` : "04 · Từ thay thế"}</b>
+            <small>{useUpgrades ? "Ưu tiên từ gần nghĩa ở bậc cao hơn; mức CEFR là ước lượng." : "Chưa có lựa chọn bậc cao hơn, dùng từ đồng nghĩa phù hợp ngữ cảnh."}</small>
+          </div>
+          {useUpgrades ? (
+            <div className="legacy-related detail-upgrade-list">
+              {upgrades.slice(0, 6).map((item) => (
+                <span key={item.word}><b>{item.word}</b><i className="word-cefr">{item.level}</i>{item.vi && <small>{item.vi}</small>}</span>
+              ))}
+            </div>
+          ) : synonymDetails.length ? (
+            <div className="detail-synonym-list">
+              {synonymDetails.map((item) => (
+                <article key={item.term}>
+                  <h4>{item.term}</h4>
+                  {item.meaningVi && <strong>{item.meaningVi}</strong>}
+                  {item.example && <p><EnglishText text={item.example} /></p>}
+                </article>
+              ))}
+            </div>
+          ) : synonyms.length ? (
+            <div className="legacy-related">{synonyms.map((value) => <span key={value}>{value}</span>)}</div>
+          ) : (
+            <small className="detail-empty">Chưa có từ thay thế phù hợp.</small>
+          )}
+        </section>
+        <div className="detail-field-grid detail-secondary-grid">
+          <section>
+            <b>Trái nghĩa</b>
+            {antonymDetails.length ? (
+              <div>{antonymDetails.map((item) => <span key={item.term}><strong>{item.term}</strong>{item.meaningVi && <small>{item.meaningVi}</small>}</span>)}</div>
+            ) : antonyms.length ? (
+              <div>{antonyms.map((value) => <span key={value}>{value}</span>)}</div>
+            ) : <small>Không có từ trái nghĩa thông dụng.</small>}
+          </section>
+          <section>
+            <b>Ứng dụng IELTS</b>
+            {word.ieltsTopics?.length ? <div>{word.ieltsTopics.map((value) => <span key={value}>{value}</span>)}</div> : <small>Chưa có chủ đề phù hợp.</small>}
+          </section>
         </div>
         {canFile && folders && updateFolders && (
           <section className="detail-lists">
@@ -3544,9 +4347,11 @@ type PracticeShellSession = {
 
 // Màn luyện tập bị tháo khỏi cây khi người dùng sang trang khác. Vì vậy trạng thái
 // điều hướng bên trong phải được lưu riêng, giống phiên flashcard và phiên luyện viết.
-function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggleStar, onAddVideo, onStartReview }: { words: WordCard[]; intent?: Exclude<PracticeMode, "menu"> | null; launch: number; lessons: VideoLesson[]; onAddVideo: () => void; onStudied: () => void; onResult: (id: string, rating: Rating) => void; onToggleStar: (id: string) => void; onStartReview: (words: WordCard[], mode: ReviewMode) => void }) {
+function Practice({ words, intent, launch, openLesson, initialLibraryFilter, lessons, onStudied, onResult, onToggleStar, onAddVideo, onPromoteVideo, onStartReview, onExitTool, lookupVocab }: { words: WordCard[]; intent?: Exclude<PracticeMode, "menu"> | null; launch: number; openLesson: { videoId: string; mode: "dictation" | "shadow"; nonce: number } | null; initialLibraryFilter: "video" | null; lessons: VideoLesson[]; onAddVideo: () => void; onPromoteVideo: (lesson: VideoLesson | VideoLesson[]) => Promise<void>; onStudied: () => void; onResult: (id: string, rating: Rating) => void; onToggleStar: (id: string) => void; onStartReview: (words: WordCard[], mode: ReviewMode) => void; onExitTool: () => void; lookupVocab?: LookupVocab }) {
   // Bài video đang mở; null nghĩa là đang ở màn hình chọn.
-  const [lesson, setLesson] = useState<VideoLesson | null>(null);
+  const [lesson, setLesson] = useState<VideoLesson | null>(() =>
+    openLesson ? (lessons.find((item) => item.videoId === openLesson.videoId) ?? null) : null,
+  );
   // Đang mở phần dịch Việt → Anh bên trong mục Luyện viết.
   const [translating, setTranslating] = useState(false);
   // Nghe chép chính tả và nói nhại học theo thư viện bài, không theo folder từ
@@ -3555,7 +4360,7 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
   // sẽ chủ động mở FolderPicker từ thẻ chức năng trong WritingPractice.
   const skipsFolder = (value: PracticeMode | null | undefined) =>
     value === "shadow" || value === "dictation" || value === "vocab" || value === "translate" || value === "speak";
-  const [mode, setMode] = useState<PracticeMode>(skipsFolder(intent) ? (intent as PracticeMode) : intent ? "menu" : "vocab");
+  const [mode, setMode] = useState<PracticeMode>(openLesson?.mode ?? (initialLibraryFilter ? "dictation" : skipsFolder(intent) ? (intent as PracticeMode) : intent ? "menu" : "vocab"));
   const [pendingMode, setPendingMode] = useState<Exclude<PracticeMode, "menu"> | null>(skipsFolder(intent) ? null : intent ?? null);
   const [practiceWords, setPracticeWords] = useState<WordCard[]>([]);
   const [sessionReady, setSessionReady] = useState(false);
@@ -3568,7 +4373,7 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
       const validModes: PracticeMode[] = ["menu", "vocab", "learn", "test", "match", "dictation", "shadow", "speak", "translate"];
       // Chỉ nối lại khi đây đúng là mục người dùng đang quay lại. Nếu họ chọn một
       // mục khác trên sidebar thì luồng đổi chế độ ở effect bên dưới sẽ xử lý.
-      if (saved && saved.intent === (intent ?? null) && validModes.includes(saved.mode as PracticeMode)) {
+      if (!openLesson && !initialLibraryFilter && saved && saved.intent === (intent ?? null) && validModes.includes(saved.mode as PracticeMode)) {
         setMode(saved.mode as PracticeMode);
         setPendingMode(validModes.includes(saved.pendingMode as PracticeMode) ? (saved.pendingMode as Exclude<PracticeMode, "menu">) : null);
         setPracticeWords(words.filter((word) => saved.practiceWordIds?.includes(word.id)));
@@ -3634,11 +4439,25 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [mode]);
-  if (!words.length)
+  // Thư viện video là một luồng độc lập: người mới chưa lưu từ nào vẫn phải mở
+  // được Nghe chép/Nói nhại, thêm video và tiếp tục bài đang dở. Chỉ các bài
+  // luyện thực sự dùng kho từ mới cần chặn bằng màn hình hướng dẫn bên dưới.
+  const worksWithoutVocabulary = mode === "dictation" || mode === "shadow" || mode === "speak" || mode === "translate" || translating;
+  if (!words.length && !worksWithoutVocabulary)
     return (
-      <div className="page">
-        <h1>Luyện tập</h1>
-        <p>Hãy thêm từ vựng trước khi bắt đầu.</p>
+      <div className="page practice-empty-page">
+        <section className="practice-empty-state">
+          <span className="practice-empty-icon"><Icon name="book" size={28} /></span>
+          <div className="eyebrow">CHUẨN BỊ BUỔI HỌC</div>
+          <h1>Thêm vài từ để bắt đầu luyện tập</h1>
+          <p>Chỉ cần lưu từ đầu tiên. Lexilo sẽ dùng chính kho từ của bạn để tạo thẻ ghi nhớ, bài nghe, nói và luyện viết có ngữ cảnh.</p>
+          <div className="practice-empty-actions">
+            <button onClick={onExitTool}>← Quay lại không gian kỹ năng</button>
+            <button className="primary" onClick={() => lookupVocab?.openDictionary("")}><Icon name="search" size={17} /> Tra và lưu từ</button>
+            <button onClick={onAddVideo}><Icon name="play" size={17} /> Thêm video luyện nghe</button>
+          </div>
+          <small>Dữ liệu được lưu riêng theo tài khoản và có thể đưa một từ vào nhiều danh sách.</small>
+        </section>
       </div>
     );
   const activeWords = practiceWords.length ? practiceWords : words;
@@ -3651,7 +4470,9 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
     setMode(pendingMode);
     setPendingMode(null);
   }
-  function returnToModes() {
+  // Các màn con của Luyện từ vựng quay về trang chọn bài từ vựng. Còn nút
+  // "Chọn chức năng khác" ở màn gốc phải thoát về đúng không gian kỹ năng.
+  function returnToVocabPractice() {
     setMode("vocab");
     setPendingMode(null);
     setPracticeWords([]);
@@ -3660,7 +4481,7 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
     return (
       <FolderPicker
         mode={pendingMode}
-        backLabel={translating ? "Luyện viết" : undefined}
+        backLabel={translating ? "Viết" : undefined}
         personalWords={personalWords}
         pdfWords={pdfWords}
         choose={chooseFolder}
@@ -3676,8 +4497,8 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
         }}
       />
     );
-  if (mode === "match") return <MatchGame words={activeWords} close={returnToModes} onResult={onResult} />;
-  if (mode === "speak") return <SpeakingPractice close={returnToModes} onStudied={onStudied} />;
+  if (mode === "match") return <MatchGame words={activeWords} close={returnToVocabPractice} onResult={onResult} />;
+  if (mode === "speak") return <SpeakingPractice close={onExitTool} onStudied={onStudied} />;
   // Dictation và Shadowing dùng chung một thư viện: bài từ video và bài có sẵn.
   if (mode === "dictation" || mode === "shadow") {
     const listening = mode === "shadow" ? "shadowing" : "dictation";
@@ -3690,15 +4511,20 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
           onStudied={onStudied}
           // Đổi chế độ ngay trong bài: giữ nguyên bài, chỉ đổi cách luyện.
           onMode={(next) => setMode(next === "shadowing" ? "shadow" : "dictation")}
+          vocab={lookupVocab}
         />
+
+
       );
     return (
       <LessonLibrary
         mode={listening}
         lessons={lessons}
+        initialFilter={initialLibraryFilter ?? undefined}
         addVideo={onAddVideo}
+        promoteVideo={onPromoteVideo}
         pickVideo={setLesson}
-        close={returnToModes}
+        close={onExitTool}
       />
     );
   }
@@ -3706,7 +4532,7 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
     return (
       <VocabPractice
         words={activeWords}
-        close={returnToModes}
+        close={onExitTool}
         onStudied={markStudiedToday}
         onResult={onResult}
         onToggleStar={onToggleStar}
@@ -3730,7 +4556,6 @@ function Practice({ words, intent, launch, lessons, onStudied, onResult, onToggl
     );
   return (
     <WritingPractice
-      close={returnToModes}
       onStudied={onStudied}
       openTranslate={() => {
         setTranslating(true);
@@ -3749,11 +4574,90 @@ const practiceNav: { value: Exclude<PracticeMode, "menu">; label: string; icon: 
   { value: "dictation", label: "Nghe chép", icon: "headphones", skill: "dictation" },
   { value: "shadow", label: "Nói nhại", icon: "mic", skill: "shadowing" },
   { value: "speak", label: "Luyện nói", icon: "volume", skill: "shadowing" },
-  { value: "translate", label: "Luyện viết", icon: "pen", skill: "writing" },
+  { value: "translate", label: "Viết", icon: "pen", skill: "writing" },
   { value: "vocab", label: "Luyện từ vựng", icon: "book", skill: "vocab" },
 ];
 
 // Ba chế độ này cũng tính giờ vào kỹ năng từ vựng, dù không có mặt ở thanh bên.
+// ── Bốn kỹ năng ────────────────────────────────────────────────────────────
+// Điều hướng xếp theo MỤC TIÊU HỌC, không theo tính năng của app. Người học nghĩ
+// "hôm nay luyện nghe", chứ không nghĩ "mở mục Nghe chép trong nhóm Luyện tập".
+//
+// Trước đây cột trái là mười mục phẳng chia ba nhóm TỔNG QUAN / LUYỆN TẬP /
+// THƯ VIỆN — trùng gần như từng dòng với bố cục của đối thủ. Gom lại thành bốn
+// kỹ năng vừa khác hẳn, vừa bớt cho người dùng tám lựa chọn phải cân nhắc mỗi
+// lần mở app.
+//
+// KHÔNG mất tính năng nào: mỗi công cụ cũ vẫn tới được, chỉ nằm sau một cú bấm
+// vào kỹ năng chứa nó.
+type SkillId = "listen" | "speak" | "vocab" | "write";
+
+/** Không gian nhận lại người dùng khi thoát khỏi một công cụ luyện tập. */
+function skillHubForPractice(intent: Exclude<PracticeMode, "menu"> | null | undefined): SkillId {
+  if (intent === "dictation") return "listen";
+  if (intent === "shadow" || intent === "speak") return "speak";
+  if (intent === "translate") return "write";
+  return "vocab";
+}
+
+type SkillTool =
+  | { kind: "practice"; value: Exclude<PracticeMode, "menu">; label: string; icon: IconName; note: string }
+  | { kind: "tab"; value: "words" | "dictionary"; label: string; icon: IconName; note: string };
+
+const SKILL_SPACES: {
+  id: SkillId;
+  label: string;
+  icon: IconName;
+  blurb: string;
+  /** Khoá thống kê thời gian trong lib/practice-log.mjs — có thể gộp nhiều khoá. */
+  timeKeys: string[];
+  tools: SkillTool[];
+}[] = [
+  {
+    id: "listen",
+    label: "Nghe",
+    icon: "headphones",
+    blurb: "Nghe video thật rồi gõ lại từng câu.",
+    timeKeys: ["dictation"],
+    tools: [
+      { kind: "practice", value: "dictation", label: "Nghe chép", icon: "headphones", note: "Nghe từng đoạn rồi gõ lại, AI soát lỗi ngay" },
+    ],
+  },
+  {
+    id: "speak",
+    label: "Nói",
+    icon: "mic",
+    blurb: "Nói theo người bản xứ và nói trong tình huống thật.",
+    timeKeys: ["shadowing"],
+    tools: [
+      { kind: "practice", value: "shadow", label: "Nói nhại", icon: "mic", note: "Nói đuổi theo video, AI chấm ngữ điệu" },
+      { kind: "practice", value: "speak", label: "Luyện nói", icon: "volume", note: "Hội thoại tình huống, AI đóng vai" },
+    ],
+  },
+  {
+    id: "vocab",
+    label: "Từ vựng",
+    icon: "book",
+    blurb: "Gom từ, ôn theo lịch, tra khi cần.",
+    timeKeys: ["vocab", "review"],
+    tools: [
+      { kind: "practice", value: "vocab", label: "Luyện từ vựng", icon: "book", note: "Thẻ ghi nhớ và sáu kiểu luyện" },
+      { kind: "tab", value: "words", label: "Kho từ vựng", icon: "list", note: "Toàn bộ từ đã lưu, chia theo danh sách" },
+      { kind: "tab", value: "dictionary", label: "Từ điển AI", icon: "search", note: "Tra nghĩa, cụm từ và từ nâng bậc" },
+    ],
+  },
+  {
+    id: "write",
+    label: "Viết",
+    icon: "pen",
+    blurb: "Dịch và viết, nhận nhận xét từng câu.",
+    timeKeys: ["writing"],
+    tools: [
+      { kind: "practice", value: "translate", label: "Viết", icon: "pen", note: "Dịch Việt–Anh và viết theo đề thi" },
+    ],
+  },
+];
+
 const hiddenVocabModes: Exclude<PracticeMode, "menu">[] = ["learn", "test", "match"];
 
 /** Chế độ nào tính giờ vào kỹ năng nào, để biểu đồ trang chủ tách được các tab. */
@@ -3770,7 +4674,7 @@ const practiceModeNames: Record<Exclude<PracticeMode, "menu">, string> = {
   shadow: "Luyện nói (Shadowing)",
   speak: "Luyện nói theo tình huống",
   match: "Nối cặp",
-  translate: "Luyện viết",
+  translate: "Viết bằng từ vựng của bạn",
 };
 
 function FolderPicker({ mode, personalWords, pdfWords, choose, close, backLabel }: { mode: Exclude<PracticeMode, "menu">; personalWords: WordCard[]; pdfWords: WordCard[]; choose: (words: WordCard[]) => void; close: () => void; backLabel?: string }) {
@@ -3785,6 +4689,13 @@ function FolderPicker({ mode, personalWords, pdfWords, choose, close, backLabel 
       <div className="eyebrow">BƯỚC CHỌN FOLDER</div>
       <h1>Chọn folder cho {practiceModeNames[mode]}</h1>
       <p className="page-sub">Chức năng chỉ sử dụng các từ trong folder bạn chọn.</p>
+      {!personalWords.length && !pdfWords.length && (
+        <section className="practice-empty-state">
+          <span className="practice-empty-icon"><Icon name="book" size={26} /></span>
+          <h2>Chưa có từ để tạo bài viết</h2>
+          <p>Quay lại màn Viết hoặc lưu vài từ trước khi chọn lộ trình này.</p>
+        </section>
+      )}
       {!!personalWords.length && (
         <section className="folder-section">
           <h3>Folder của tôi</h3>
@@ -3857,22 +4768,9 @@ function pickDistractors(pool: WordCard[], answer: WordCard, seed: number, howMa
 // và tuỳ chọn theo dõi "đã biết / đang học" tách rời khỏi hộp Leitner.
 // Luyện dịch Việt → Anh trên chính folder từ vựng đang học.
 //
-// Cả folder được ghép thành một đoạn tiếng Việt, câu đang làm được tô sáng. Người
-// học viết lại bằng tiếng Anh, app đối chiếu với câu mẫu đi kèm từ đó rồi chỉ ra
-// chỗ lệch. App không có mô hình ngôn ngữ nên không dám phán một câu tự do là đúng
-// hay sai ngữ pháp — chỉ những lỗi chắc chắn (sai dạng từ, thiếu mạo từ, thiếu giới
-// từ, chưa dùng từ đang học) mới được gọi là lỗi. Xem lib/translation-check.mjs.
-function cleanStudyVietnamese(value: string) {
-  return value
-    .normalize("NFC")
-    // Một số câu nhập từ PDF bị tách phụ âm cuối thành ký tự riêng: "chuyế n".
-    // Tiếng Việt không có từ độc lập chỉ gồm các phụ âm này, nên có thể nối an toàn.
-    .replace(/([A-Za-zÀ-ỹĐđ])\s+([nmptc])\b/gu, "$1$2")
-    .replace(/\s+([,.;:!?])/g, "$1")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
+// Người học chọn học từng câu độc lập hoặc ghép thành đoạn tiếng Việt. Ở cả hai
+// kiểu, app đối chiếu câu trả lời với câu mẫu rồi chỉ ra chỗ lệch. Chế độ đã chọn
+// phải đi xuyên suốt từ lúc gọi API tới cách trình bày đề bài.
 function TranslateMode({ words, back }: { words: WordCard[]; back: () => void }) {
   // Chỉ nhận từ có đủ cả câu tiếng Anh lẫn bản dịch, vì bản dịch là đề bài còn câu
   // tiếng Anh là đáp án mẫu.
@@ -3978,8 +4876,13 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
 
   // Gom theo chủ đề, bỏ câu khuôn nói VỀ từ, rồi cắt thành từng đoạn ngắn đọc được.
   const passages = useMemo(
-    () => buildPassages(chosen.map((word) => ({ word, vi: cleanStudyVietnamese(word.exampleVi!), en: word.example!.trim() })), { areas: ieltsAreaData as [string, string[]][] }),
-    [chosen],
+    () => buildPassages(
+      chosen.map((word) => ({ word, vi: cleanStudyVietnamese(word.exampleVi!), en: word.example!.trim() })),
+      // "Một đoạn liền mạch" → dồn thành vài đoạn dài (min 4 câu) thay vì chục đoạn
+      // một câu. "Từng câu riêng" hiện từng câu một nên tách kiểu gì cũng được.
+      { areas: ieltsAreaData as [string, string[]][], minSize: extraMode === "passage" ? 4 : 0 },
+    ),
+    [chosen, extraMode],
   );
   const [passageIndex, setPassageIndex] = useState(0);
   const passage = passages[passageIndex];
@@ -4000,6 +4903,8 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
   const [checked, setChecked] = useState(false);
   const [hintCount, setHintCount] = useState(0);
   const [scores, setScores] = useState<number[]>([]);
+  // Câu tiếng Anh người học đã viết đúng và đi qua — để thay dần vào đoạn văn.
+  const [written, setWritten] = useState<Record<string, string>>({});
   const [aiGrade, setAiGrade] = useState<AiGrade | null>(null);
   const [grading, setGrading] = useState(false);
   // Thẻ chi tiết của từ, mở khi bấm vào tên từ ở bảng bên phải hoặc ở bước chọn từ.
@@ -4018,12 +4923,12 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
       const response = await aiFetch("/api/ai/passage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Một nhóm chủ đề đôi khi chỉ có một từ. Khi đó đây là một câu độc lập,
-        // không phải đoạn văn (API đoạn văn yêu cầu tối thiểu hai từ).
-        body: JSON.stringify({ terms, topic: passage.topic, mode: terms.length < 2 ? "sentences" : "passage" }),
+        // Một nhóm chủ đề đôi khi chỉ có một từ nên luôn là câu độc lập. Với nhóm
+        // nhiều từ, tôn trọng đúng lựa chọn ở bước trước thay vì ép thành passage.
+        body: JSON.stringify({ terms, topic: passage.topic, mode: terms.length < 2 ? "sentences" : extraMode }),
       });
       const data = (await response.json()) as { sentences?: { term: string; vi: string; en: string }[]; error?: string };
-      if (!response.ok || !data.sentences?.length) throw new Error(data.error ?? "Không dựng được đoạn văn.");
+      if (!response.ok || !data.sentences?.length) throw new Error(data.error ?? (extraMode === "passage" ? "Không dựng được đoạn văn." : "Không tạo được các câu ví dụ."));
       // Ghép câu Gemini viết trở lại đúng thẻ từ vựng, giữ nguyên thứ tự đã gửi đi.
       const rebuilt = data.sentences
         .map((item, position) => ({
@@ -4034,7 +4939,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
           en: item.en.normalize("NFC").replace(/\s+([,.;:!?])/g, "$1").replace(/\s{2,}/g, " ").trim(),
         }))
         .filter((item): item is { word: WordCard; vi: string; en: string } => Boolean(item.word));
-      if (rebuilt.length < Math.min(2, fallbackTasks.length)) throw new Error("Đoạn văn không khớp với từ trong folder.");
+      if (rebuilt.length < Math.min(2, fallbackTasks.length)) throw new Error(extraMode === "passage" ? "Đoạn văn không khớp với từ trong folder." : "Các câu ví dụ không khớp với từ trong folder.");
       setStory({ key: passageIndex, tasks: rebuilt });
       setStoryState("ready");
       setIndex(0);
@@ -4046,12 +4951,11 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
     }
   }
 
-  // Khi đã chọn folder và bắt đầu học, dựng luôn nội dung sạch và liền mạch.
-  // Người dùng không phải nhìn câu PDF lỗi rồi bấm thêm một nút AI lần nữa.
+  // Khi bắt đầu học, dựng nội dung theo đúng kiểu người dùng đã chọn.
   useEffect(() => {
     if (choosing || !passage || storyState !== "idle") return;
     void buildStory();
-  }, [choosing, passageIndex, passage, storyState]);
+  }, [choosing, passageIndex, passage, storyState, extraMode]);
 
   // Người học thấy câu không hay thì xin câu khác cho chính từ đó.
   async function swapSentence() {
@@ -4139,6 +5043,13 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
     });
   }
   function next() {
+    // Ghi lại câu tiếng Anh cho câu vừa xong: bản người học viết nếu đúng, còn
+    // sai thì lấy bản sửa của AI để đoạn văn ghép lại vẫn chuẩn.
+    if (current) {
+      const mine = typed.trim();
+      const best = aiGrade && aiGrade.correct === false && aiGrade.suggestion?.trim() ? aiGrade.suggestion.trim() : mine;
+      if (best) setWritten((map) => ({ ...map, [current.word.id]: best }));
+    }
     setIndex((value) => value + 1);
     setTyped("");
     setChecked(false);
@@ -4151,6 +5062,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
     setChecked(false);
     setHintCount(0);
     setScores([]);
+    setWritten({});
     setAiGrade(null);
     setStory(null);
     setStoryState("idle");
@@ -4166,6 +5078,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
     setTyped("");
     setChecked(false);
     setHintCount(0);
+    setWritten({});
   }
 
   // Folder rỗng vẫn cho vào bước chọn, vì có thể học bằng danh sách tự nhập.
@@ -4187,7 +5100,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
         <button className="back" onClick={back}>← Chọn chế độ khác</button>
         <div className="eyebrow">BƯỚC CHỌN TỪ</div>
         <h1>Chọn từ để luyện dịch</h1>
-        <p className="page-sub">Folder có {usable.length} từ đủ dữ liệu. Chọn riêng những từ bạn muốn, hoặc tự nhập danh sách bên dưới — mỗi đoạn văn gồm {PASSAGE_SIZE} câu.</p>
+        <p className="page-sub">Folder có {usable.length} từ đủ dữ liệu. Chọn từ muốn học rồi quyết định luyện từng câu riêng hay ghép thành đoạn liền mạch.</p>
 
         <section className="extra-list">
           <b>Danh sách riêng của bạn</b>
@@ -4234,7 +5147,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
         <div className="picker-bar">
           {/* Số đoạn lấy từ kết quả gom nhóm thật, vì các từ khác chủ đề sẽ tách ra
               nhiều đoạn chứ không chỉ chia theo số lượng. */}
-          <b>Đã chọn {chosen.length} từ{passages.length ? ` · ${passages.length} đoạn` : ""}</b>
+          <b>Đã chọn {chosen.length} từ{extraMode === "passage" && passages.length ? ` · ${passages.length} đoạn` : ""}</b>
           <button className="primary" type="button" disabled={!chosen.length} onClick={() => { restart(); setChoosing(false); }}>
             Bắt đầu luyện dịch →
           </button>
@@ -4254,17 +5167,17 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
       </div>
     );
 
-  // Xong đoạn này mà còn đoạn khác thì mời sang đoạn kế, chưa tổng kết vội.
+  // Xong nhóm hiện tại mà còn nhóm khác thì mời sang nhóm kế, chưa tổng kết vội.
   if (index >= tasks.length && passageIndex + 1 < passages.length)
     return (
       <div className="page practice-session">
         <div className="panel practice-card">
           <span className="summary-mark">✓</span>
-          <h2>Xong đoạn {passageIndex + 1} / {passages.length}</h2>
-          <p className="page-sub">Đoạn tiếp theo — <b>{passages[passageIndex + 1].topic}</b>, {passages[passageIndex + 1].tasks.length} câu.</p>
+          <h2>Xong {extraMode === "passage" ? "đoạn" : "nhóm"} {passageIndex + 1} / {passages.length}</h2>
+          <p className="page-sub">{extraMode === "passage" ? "Đoạn" : "Nhóm"} tiếp theo — <b>{passages[passageIndex + 1].topic}</b>, {passages[passageIndex + 1].tasks.length} câu.</p>
           <div className="summary-actions">
             <button onClick={back}>Thoát</button>
-            <button className="primary" onClick={nextPassage}>Đoạn tiếp theo →</button>
+            <button className="primary" onClick={nextPassage}>{extraMode === "passage" ? "Đoạn" : "Nhóm"} tiếp theo →</button>
           </div>
         </div>
       </div>
@@ -4293,7 +5206,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
     <div className="page practice-session translate-page">
       <header className="translation-session-head">
         <div>
-          <span className="eyebrow">LUYỆN VIỆT → ANH · CÂU CHUYỆN TỪ BỘ TỪ CỦA BẠN</span>
+          <span className="eyebrow">LUYỆN VIỆT → ANH · {extraMode === "passage" ? "ĐOẠN VĂN LIỀN MẠCH" : "TỪNG CÂU RIÊNG"}</span>
           <h1>{passage.topic}</h1>
         </div>
         <div className="translation-session-stats">
@@ -4309,34 +5222,41 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
         <section className="translate-source">
           <div className="translate-head">
             <div>
-              <span className="eyebrow">ĐOẠN TIẾNG VIỆT</span>
-              <small>{passage.topic} · Đoạn {passageIndex + 1}/{passages.length}</small>
+              <span className="eyebrow">{extraMode === "passage" ? "ĐOẠN TIẾNG VIỆT" : "CÂU TIẾNG VIỆT"}</span>
+              <small>{passage.topic}{extraMode === "passage" ? ` · Đoạn ${passageIndex + 1}/${passages.length}` : ""}</small>
             </div>
             <b>Câu {index + 1} / {tasks.length}</b>
           </div>
-          {storyState === "ready" && <em className="story-flag">✦ Đoạn văn liền mạch do AI xây dựng từ các từ đã chọn</em>}
-          <div className={`translate-paragraph ${storyState !== "ready" ? "is-loading" : ""}`} aria-busy={storyState === "loading"}>
+          {storyState === "ready" && <em className="story-flag">✦ {extraMode === "passage" ? "Đoạn văn liền mạch" : "Câu ví dụ độc lập"} do AI tạo từ các từ đã chọn</em>}
+          <div className={`translate-paragraph ${extraMode === "sentences" ? "is-sentence" : ""} ${storyState !== "ready" ? "is-loading" : ""}`} aria-busy={storyState === "loading"}>
             {storyState !== "ready" ? (
               <div className={`story-loading-state ${storyState === "failed" ? "story-failed-state" : ""}`}>
                 {storyState === "failed" ? (
                   <>
-                    <b>Chưa tạo được đoạn văn đạt chuẩn</b>
+                    <b>{extraMode === "passage" ? "Chưa tạo được đoạn văn đạt chuẩn" : "Chưa tạo được câu ví dụ đạt chuẩn"}</b>
                     <small>Nội dung lỗi đã được ẩn. Hãy thử tạo lại để tiếp tục luyện.</small>
                   </>
                 ) : (
                   <>
                     <span className="story-loading-spinner" aria-hidden="true" />
-                    <b>Đang tạo đoạn văn tiếng Việt…</b>
-                    <small>AI đang viết nội dung mạch lạc từ những từ bạn đã chọn.</small>
+                    <b>{extraMode === "passage" ? "Đang tạo đoạn văn tiếng Việt…" : "Đang tạo các câu tiếng Việt…"}</b>
+                    <small>{extraMode === "passage" ? "AI đang viết nội dung mạch lạc từ những từ bạn đã chọn." : "AI đang viết một ngữ cảnh độc lập cho mỗi từ."}</small>
                   </>
                 )}
               </div>
             ) : (
-              tasks.map((task, position) => (
-                <span key={task.word.id} className={`${position === index ? "active" : position < index ? "done" : ""} ${replaced[task.word.id] ? "swapped" : ""}`}>
-                  {cleanStudyVietnamese(task.vi)}{" "}
-                </span>
-              ))
+              (extraMode === "sentences" && current ? [current] : tasks).map((task, position) => {
+                const isActive = extraMode === "sentences" || position === index;
+                const isDone = !isActive && position < index;
+                // Câu đã xong thì hiện chính câu tiếng Anh người học vừa viết —
+                // đoạn văn dần chuyển từ tiếng Việt sang bản dịch của mình.
+                const englishDone = isDone && written[task.word.id];
+                return (
+                  <span key={task.word.id} className={`translation-sentence ${isActive ? "active" : isDone ? "done" : ""} ${englishDone ? "written" : ""} ${replaced[task.word.id] ? "swapped" : ""}`}>
+                    {englishDone ? written[task.word.id] : cleanStudyVietnamese(task.vi)}
+                  </span>
+                );
+              })
             )}
           </div>
           <div className="translate-input">
@@ -4354,7 +5274,17 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
               aria-label="Bản dịch tiếng Anh của bạn"
               disabled={storyState !== "ready"}
               value={typed}
-              onChange={(event) => setTyped(event.target.value)}
+              onChange={(event) => {
+                setTyped(event.target.value);
+                // Khi sửa bài sau lúc chấm, đóng ngay phản hồi và câu mẫu để người
+                // học tự viết lại, đồng thời bỏ điểm tạm của chính lượt vừa chấm.
+                if (checked) {
+                  setChecked(false);
+                  setAiGrade(null);
+                  setHintCount(0);
+                  setScores((list) => list.slice(0, -1));
+                }
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
@@ -4371,7 +5301,11 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
           </div>
           {storyState !== "ready" && storyState !== "auto" && (
             <button className="story-build" type="button" disabled={storyState === "loading"} onClick={() => void buildStory()}>
-              {storyState === "loading" ? "◌ Đang viết đoạn văn…" : storyState === "failed" ? "↻ Thử viết lại đoạn văn liền mạch" : "✦ Viết lại thành đoạn văn liền mạch"}
+              {storyState === "loading"
+                ? extraMode === "passage" ? "◌ Đang viết đoạn văn…" : "◌ Đang viết từng câu…"
+                : storyState === "failed"
+                  ? extraMode === "passage" ? "↻ Thử viết lại đoạn văn liền mạch" : "↻ Thử tạo lại từng câu"
+                  : extraMode === "passage" ? "✦ Viết lại thành đoạn văn liền mạch" : "✦ Viết lại từng câu riêng"}
             </button>
           )}
           {swapNote && <p className="story-note">{swapNote}</p>}
@@ -4457,13 +5391,12 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
                     {aiGrade.comment && <p className="ai-grade-comment">{aiGrade.comment}</p>}
                   </section>
                 )}
-                {/* Khi đã chấm bằng mô hình, phần so câu mẫu chỉ còn là tham khảo và
-                    được thu gọn. Trước đây nó đứng ngang hàng rồi nói ngược: mô hình
-                    bảo "đúng 100/100" còn nó bảo "thiếu mạo từ the, cần sửa" — trong
-                    khi câu người học hoàn toàn đúng, chỉ khác cách diễn đạt. */}
+                {/* Phần đối chiếu luôn hiện đầy đủ sau khi chấm để người học xem ngay.
+                    Câu mẫu vẫn được ghi rõ là một cách tham khảo, tránh biến khác biệt
+                    cách diễn đạt thành lỗi khi mô hình đã chấm câu là đúng. */}
                 {aiGrade ? (
-                  <details className="reference-fold">
-                    <summary>Đối chiếu từng từ với một cách dịch mẫu</summary>
+                  <section className="reference-fold">
+                    <h3>Đối chiếu từng từ với một cách dịch mẫu</h3>
                     <p className="translate-diff">
                       {result.operations.map((item, position) => (
                         <span key={position} className={item.type}>
@@ -4473,7 +5406,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
                     </p>
                     <p className="translate-reference"><b>Một cách dịch:</b> <EnglishText text={current.en} /></p>
                     <p className="translate-caveat">Đây chỉ là một cách dịch để bạn tham khảo. Câu của bạn khác nó không có nghĩa là sai — phần chấm ở trên mới là kết luận.</p>
-                  </details>
+                  </section>
                 ) : (
                   <>
                     <h3>Đối chiếu với câu mẫu</h3>
@@ -4538,18 +5471,24 @@ function FlipCard({ card, flipped, flip, onSwipe }: { card: WordCard; flipped: b
   const moved = useRef(false);
   const decided = drag > SWIPE_THRESHOLD ? "known" : drag < -SWIPE_THRESHOLD ? "learning" : "";
 
-  function onPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+  function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (!onSwipe) return;
     startX.current = event.clientX;
     moved.current = false;
-    event.currentTarget.setPointerCapture(event.pointerId);
   }
-  function onPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+  function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     if (!onSwipe || startX.current === null) return;
     const offset = event.clientX - startX.current;
     // 12px là mức xê dịch quen thuộc của một cú bấm hơi rung tay; quá mức đó mới coi là kéo.
-    if (Math.abs(offset) > 12) moved.current = true;
-    setDrag(offset);
+    // Chỉ "bắt" con trỏ khi ĐÃ kéo thật — nếu bắt ngay từ pointerdown thì cú bấm
+    // vào một chữ trong câu ví dụ bị nuốt mất, không tra được từ.
+    if (Math.abs(offset) > 12) {
+      moved.current = true;
+      if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* con trỏ đã nhả */ }
+      }
+    }
+    if (moved.current) setDrag(offset);
   }
   function onPointerUp() {
     if (!onSwipe || startX.current === null) return;
@@ -4559,13 +5498,20 @@ function FlipCard({ card, flipped, flip, onSwipe }: { card: WordCard; flipped: b
   }
 
   return (
-    <button
+    // div role=button chứ không phải <button>: câu ví dụ bên trong có các chữ bấm
+    // được để tra nghĩa / nghe phát âm, mà <button> thì không được lồng phần tử
+    // tương tác khác.
+    <div
       className={`quizlet-flashcard ${flipped ? "is-flipped" : ""} ${drag ? "is-dragging" : ""} ${decided ? `swipe-${decided}` : ""}`}
+      role="button"
+      tabIndex={0}
+      aria-label={flipped ? `Nghĩa: ${card.meaning}. Nhấn để lật lại.` : `Từ: ${card.term}. Nhấn để lật thẻ.`}
       // Kéo xong thì đừng lật thẻ, nếu không mỗi lần phân loại sẽ lật oan một cái.
       onClick={() => {
         if (!moved.current) flip();
         moved.current = false;
       }}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); flip(); } }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -4586,8 +5532,8 @@ function FlipCard({ card, flipped, flip, onSwipe }: { card: WordCard; flipped: b
         <small>TIẾNG ANH</small>
         <b>{card.term}</b>
         <em className="flash-ipa">{card.ipa}</em>
-        <em>{card.example}</em>
-        <i>Nhấn để lật thẻ</i>
+        <em className="flash-example"><EnglishText text={card.example} /></em>
+        <i>Di chuột / bấm vào từ để tra nghĩa và nghe phát âm</i>
       </span>
       <span className="flash-back">
         <small>TIẾNG VIỆT</small>
@@ -4595,7 +5541,7 @@ function FlipCard({ card, flipped, flip, onSwipe }: { card: WordCard; flipped: b
         <em>{card.exampleVi || "(chưa có bản dịch câu ví dụ)"}</em>
         <i>Nhấn để lật lại</i>
       </span>
-    </button>
+    </div>
   );
 }
 
@@ -4844,7 +5790,7 @@ function LearnMode({ words, setMode, onResult }: { words: WordCard[]; setMode: (
           </div>
         ) : (
           <>
-            {askViToEn && <p className="learn-cloze">{current.cloze}</p>}
+            {askViToEn && <p className="learn-cloze"><EnglishText text={current.cloze} /></p>}
             <input
               className="listen-input"
               value={typed}
@@ -4866,7 +5812,7 @@ function LearnMode({ words, setMode, onResult }: { words: WordCard[]; setMode: (
           <div className={feedback.correct ? "practice-result good" : "practice-result"}>
             <span>
               {feedback.correct ? "Đúng rồi!" : `Đáp án: ${feedback.expected}`}
-              {!feedback.correct && <small className="learn-hint"> · {current.example}</small>}
+              {!feedback.correct && <small className="learn-hint"> · <EnglishText text={current.example} /></small>}
             </span>
             <button onClick={advance}>Tiếp →</button>
           </div>
@@ -5099,7 +6045,7 @@ function TestMode({ words, setMode, onResult }: { words: WordCard[]; setMode: (m
               )}
               {submitted && !correct && question.kind !== "match" && (
                 <p className="test-answer">
-                  Đáp án: <b>{question.kind === "tf" ? (question.shown?.id === question.word.id ? "Đúng" : "Sai") : answerText(question.word)}</b> · {question.word.example}
+                  Đáp án: <b>{question.kind === "tf" ? (question.shown?.id === question.word.id ? "Đúng" : "Sai") : answerText(question.word)}</b> · <EnglishText text={question.word.example} />
                 </p>
               )}
             </div>
@@ -5201,14 +6147,43 @@ const PERIODS = [
   { key: 365, label: "365 ngày qua" },
 ] as const;
 
+/**
+ * Việc của HÔM NAY, tính thuần từ kho từ.
+ *
+ * Dùng chung cho Trang chủ và Tiến độ. Trước đây mỗi màn tự tính lại, nên hai
+ * nơi hoàn toàn có thể nói hai con số khác nhau về cùng một ngày.
+ */
+function todayPlan(words: WordCard[]) {
+  const personal = words.filter((word) => !isPdfVocabulary(word));
+  const onlyPdf = !personal.length && words.length > 0;
+  const dueAgain = words.filter(isDueAgain);
+  const today = localDateString();
+  const queue = onlyPdf
+    ? buildCollectionQueue(words.filter(isPdfVocabulary)).slice(0, PDF_DAILY_PREVIEW_LIMIT)
+    : buildTodayQueue(personal);
+  const newCount = queue.filter((word) => wordState(word).key === "new").length;
+  const dueGroups = [...dueAgain.reduce(
+    (map, word) => map.set(groupLabelOf(word), (map.get(groupLabelOf(word)) ?? 0) + 1),
+    new Map<string, number>(),
+  )].sort((a, b) => b[1] - a[1]).slice(0, 4);
+  return {
+    onlyPdf,
+    newCount,
+    reviewCount: queue.length - newCount,
+    dueAgain,
+    overdue: dueAgain.filter((word) => word.dueDate && word.dueDate < today).length,
+    dueGroups,
+  };
+}
+
 function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: string; streak: { current: number; best: number } }) {
   // Dùng chung cách đếm với màn Luyện từ vựng, để hai chỗ không nói hai kiểu.
-  const dueCounts = deckStats(words) as { due: number; fresh: number };
-  const boxes = [1, 2, 3, 4, 5, 6].map((box) => ({
-    box,
-    count: words.filter((w) => w.box === box).length,
-  }));
-  const max = Math.max(1, ...boxes.map((b) => b.count));
+  const personal = words.filter((word) => !isPdfVocabulary(word));
+  const pdfCount = words.length - personal.length;
+  const masteredWords = words.filter((word) => wordState(word).key === "mastered");
+  const learningWords = words.filter((word) => wordState(word).key !== "mastered");
+  const reviewedWords = words.filter((word) => (word.reviewCount ?? 0) > 0).sort((a, b) => (b.reviewCount ?? 0) - (a.reviewCount ?? 0));
+  const reviewedAllTime = words.reduce((total, word) => total + (word.reviewCount ?? 0), 0);
   const [days, setDays] = useState<number>(7);
   // Nhật ký chỉ đọc được trên máy nên phải chờ hydrate, giống các state khác.
   const [log, setLog] = useState<ReviewEntry[]>([]);
@@ -5254,6 +6229,20 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
       <h1>Tiến độ</h1>
       <p className="page-sub">Tổng quan được tính trực tiếp trên {scopeLabel.toLowerCase()}.</p>
 
+      <h2 className="screen-group">Bạn đang ở đâu</h2>
+      <div className="stats-grid progress-library-stats">
+        <Stat label="Tổng số từ" value={String(words.length)} note={pdfCount ? `${personal.length} từ của bạn · ${pdfCount} từ bộ PDF` : "Trong thư viện của bạn"} icon="▤" tone="purple"
+          onOpen={() => setStatList({ title: "Tổng số từ", note: "TOÀN BỘ THƯ VIỆN", words })} />
+        <Stat label="Đang học" value={String(learningWords.length)} note="Chưa lên hộp 6" icon="◔" tone="orange"
+          onOpen={() => setStatList({ title: "Đang học", note: "CHƯA LÊN HỘP 6", words: learningWords })} />
+        <Stat label="Đã thuộc" value={String(masteredWords.length)} note="Đã lên hộp 6" icon="✓" tone="green"
+          onOpen={() => setStatList({ title: "Đã thuộc", note: "ĐÃ LÊN HỘP 6", words: masteredWords })} />
+        <Stat label="Lượt đã ôn" value={String(reviewedAllTime)} note="Toàn bộ thư viện" icon="♨" tone="pink"
+          onOpen={() => setStatList({ title: "Từ đã được ôn", note: "XẾP THEO SỐ LƯỢT ÔN", words: reviewedWords })} />
+      </div>
+      <WeeklyTracker words={words} />
+
+      <h2 className="screen-group">Bạn đã học thế nào</h2>
       <section className="period-block">
         <div className="period-head">
           <div>
@@ -5309,6 +6298,8 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
           </>
         )}
       </section>
+      <h2 className="screen-group">Cần chú ý</h2>
+      <div className="dashboard-grid">
       <section className="panel error-block">
         <div className="error-head">
           <div>
@@ -5347,44 +6338,6 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
           </>
         )}
       </section>
-
-      <div className="stats-grid stats-overview">
-        <Stat label="Tổng từ" value={String(words.length)} note={`Đang tính trên ${scopeLabel}`} icon="▤" tone="purple"
-          onOpen={() => setStatList({ title: "Tổng từ", note: "TOÀN BỘ THƯ VIỆN", words })} />
-        <Stat label="Đã thuộc" value={String(words.filter((w) => wordState(w).key === "mastered").length)} note="Hộp 6" icon="✓" tone="green"
-          onOpen={() => setStatList({ title: "Đã thuộc", note: "ĐÃ LÊN HỘP 6", words: words.filter((w) => wordState(w).key === "mastered") })} />
-        <Stat label="Từ cứng đầu" value={String(words.filter((w) => w.lapses >= 4).length)} note="Quên từ 4 lần" icon="♨" tone="pink"
-          onOpen={() => setStatList({ title: "Từ cứng đầu", note: "QUÊN TỪ 4 LẦN TRỞ LÊN", words: words.filter((w) => w.lapses >= 4).slice().sort((a, b) => b.lapses - a.lapses) })} />
-        {/* Đếm riêng từ tới hạn và từ chưa học: gộp lại thì con số này gần bằng
-            cả kho, mà không ai ôn ngần ấy từ trong một ngày. */}
-        <Stat
-          label={dueCounts.due > 0 ? "Đến hạn" : "Chưa học"}
-          value={String(dueCounts.due > 0 ? dueCounts.due : dueCounts.fresh)}
-          note={dueCounts.due > 0 ? "Cần ôn hôm nay" : "Chưa học lần nào"}
-          icon="◔"
-          tone="orange"
-          onOpen={() =>
-            setStatList(
-              dueCounts.due > 0
-                ? { title: "Đến hạn hôm nay", note: "CẦN ÔN LẠI", words: words.filter((word) => wordState(word).key === "due") }
-                : { title: "Chưa học lần nào", note: "TỪ MỚI", words: words.filter((word) => wordState(word).key === "new") },
-            )
-          }
-        />
-      </div>
-      <div className="dashboard-grid">
-        <section className="panel">
-          <h3>Phân bố theo hộp Leitner</h3>
-          <div className="bar-chart">
-            {boxes.map((b) => (
-              <div key={b.box}>
-                <span>{b.count}</span>
-                <i style={{ height: `${Math.max(8, (b.count / max) * 170)}px` }} />
-                <b>Hộp {b.box}</b>
-              </div>
-            ))}
-          </div>
-        </section>
         <section className="panel">
           <h3>Từ cần chú ý nhất</h3>
           {words
@@ -5408,7 +6361,7 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
   );
 }
 
-function BulkAddWords({ close, save, existingWords }: { close: () => void; save: (items: Omit<WordCard, "id" | "box" | "lapses">[]) => void; existingWords: WordCard[] }) {
+function BulkAddWords({ close, save, existingWords, legacyCollections }: { close: () => void; save: (items: Omit<WordCard, "id" | "box" | "lapses">[]) => void; existingWords: WordCard[]; legacyCollections: boolean }) {
   const [text, setText] = useState("");
   const [studyDay, setStudyDay] = useState(() => weekdayIndex());
   const normalizedExisting = useMemo(() => new Set(existingWords.map((word) => word.term.trim().toLowerCase().replace(/\s+/g, " "))), [existingWords]);
@@ -5496,7 +6449,7 @@ function BulkAddWords({ close, save, existingWords }: { close: () => void; save:
         status: "new",
         reviewCount: 0,
         addedDate: localDateString(),
-        studyDay,
+        studyDay: legacyCollections ? studyDay : undefined,
       };
     }));
   }
@@ -5511,7 +6464,7 @@ function BulkAddWords({ close, save, existingWords }: { close: () => void; save:
         </div>
         <p className="bulk-help">Mỗi dòng là một từ hoặc cụm từ. Có thể giữ nguyên dấu “/”, ví dụ: <b>shopping cart / trolley</b>.</p>
         <label>Danh sách của bạn<textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} placeholder={"grocery shopping\nshopping cart / trolley\nbuggy\ndepartment/section\naisle"} /></label>
-        <label>Folder ngày học<select value={studyDay} onChange={(event) => setStudyDay(Number(event.target.value))}>{dayNames.map((name, index) => <option value={index} key={name}>{name}</option>)}</select></label>
+        {legacyCollections && <label>Folder ngày học<select value={studyDay} onChange={(event) => setStudyDay(Number(event.target.value))}>{dayNames.map((name, index) => <option value={index} key={name}>{name}</option>)}</select></label>}
         {!!valid.length && (
           <section className="bulk-examples">
             <b>Ví dụ tiếng Việt cho các từ này</b>
@@ -5543,13 +6496,13 @@ function BulkAddWords({ close, save, existingWords }: { close: () => void; save:
         )}
         {!!preview.length && <section className="bulk-preview"><div className="bulk-summary"><b>{valid.length} mục sẽ được thêm</b><span>{preview.length - valid.length} mục trùng sẽ bỏ qua</span></div><div className="bulk-preview-list">{preview.map((item, index) => <span className={item.duplicate ? "duplicate" : ""} key={`${item.term}-${index}`}>{item.duplicate ? "⊘" : "✓"} {item.term}</span>)}</div></section>}
         <p className="bulk-note">Sau khi lưu, dùng nút “Bổ sung từ thiếu” để tự điền nghĩa, IPA, ví dụ, cụm từ và nội dung IELTS.</p>
-        <div className="modal-actions"><button type="button" onClick={close}>Hủy</button><button className="primary" type="submit" disabled={!valid.length}>Thêm {valid.length || ""} từ vào {dayNames[studyDay]}</button></div>
+        <div className="modal-actions"><button type="button" onClick={close}>Hủy</button><button className="primary" type="submit" disabled={!valid.length}>Thêm {valid.length || ""} từ{legacyCollections ? ` vào ${dayNames[studyDay]}` : " vào Từ của tôi"}</button></div>
       </form>
     </div>
   );
 }
 
-function AddWord({ close, save, existingWords }: { close: () => void; save: (w: Omit<WordCard, "id" | "box" | "lapses">) => void; existingWords: WordCard[] }) {
+function AddWord({ close, save, existingWords, legacyCollections }: { close: () => void; save: (w: Omit<WordCard, "id" | "box" | "lapses">) => void; existingWords: WordCard[]; legacyCollections: boolean }) {
   const [term, setTerm] = useState("");
   const [meaning, setMeaning] = useState("");
   const [example, setExample] = useState("");
@@ -5715,7 +6668,9 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
       setPartOfSpeech(data.part_of_speech || "");
       setMeaning((current) => current.trim() || data.meaning_vi || "");
       setSenses(data.senses || []);
-      setChosenSense(data.sense);
+      // Kết quả đầu tiên chỉ là gợi ý tự động của từ điển. Chỉ đánh dấu một
+      // nghĩa là "đã chọn" khi chính người dùng bấm vào nghĩa đó.
+      setChosenSense(sense === undefined ? undefined : data.sense);
       setDefinition(data.definition_en || "");
       setCollocation(data.collocation || "");
       setCollocationVi(data.collocation_vi || "");
@@ -5765,10 +6720,10 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
       setLookupMessage(`⚠ Từ “${duplicate.term}” đã được thêm trước đó. Không thể lưu thêm bản trùng.`);
       return;
     }
-    if (!collocation.trim() || !collocationVi.trim()) {
-      setLookupMessage("Mỗi từ cần có cụm đi cùng và nghĩa của cụm. Hãy bấm “Tra và tự động điền” trước khi lưu.");
-      return;
-    }
+    // Nghĩa, cụm từ và các gợi ý AI đều là nội dung bổ trợ. Người dùng có thể
+    // lưu ngay từ họ tự nhập rồi bổ sung thông tin vào lần sau.
+    lookupRequest.current++;
+    setLoading(false);
     const safeTerm = term.trim().replace(/\s+/g, " ");
     const escapedTerm = safeTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     save({
@@ -5792,7 +6747,7 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
       ieltsTopics: ieltsTopics.split(",").map((item) => item.trim()).filter(Boolean),
       topic,
       addedDate: localDateString(),
-      studyDay,
+      studyDay: legacyCollections ? studyDay : undefined,
       status: "new",
       reviewCount: 0,
     });
@@ -5804,7 +6759,7 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
         <div className="form-screen-head">
           <span className="eyebrow">THÊM TỪ</span>
           <h1>Từ mới của bạn</h1>
-          <p>Nhập từ rồi bấm tra để app tự điền phiên âm, nghĩa và câu ví dụ.</p>
+          <p>Chỉ cần nhập từ là có thể lưu. Tra tự động và các lựa chọn bên dưới đều là gợi ý không bắt buộc.</p>
         </div>
         <label className="term-field">
           Từ hoặc cụm từ tiếng Anh
@@ -5817,6 +6772,8 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
               setLoading(false);
               setLookupMessage("");
               setTerm(e.target.value);
+              setSenses([]);
+              setChosenSense(undefined);
               setPickedSuggestion(false);
               setHighlight(-1);
             }}
@@ -5839,24 +6796,30 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
           />
           {/* Gợi ý từ theo tiền tố đang gõ, để không phải nhớ chính xác mặt chữ. */}
           {!!visibleSuggestions.length && (
-            <div className="term-suggest" role="listbox">
-              {visibleSuggestions.map((word, position) => {
-                const had = existingWords.some((item) => item.term.trim().toLowerCase() === word);
-                return (
-                  <button
-                    type="button"
-                    key={word}
-                    role="option"
-                    aria-selected={position === highlight}
-                    className={position === highlight ? "active" : ""}
-                    onMouseEnter={() => setHighlight(position)}
-                    onClick={() => chooseSuggestion(word)}
-                  >
-                    <span>{word}</span>
-                    {had && <em>đã có trong kho</em>}
-                  </button>
-                );
-              })}
+            <div className="term-suggest">
+              <div className="term-suggest-head"><b>Gợi ý từ</b><small>Không bắt buộc</small></div>
+              <div role="listbox">
+                {visibleSuggestions.map((word, position) => {
+                  const had = existingWords.some((item) => item.term.trim().toLowerCase() === word);
+                  return (
+                    <button
+                      type="button"
+                      key={word}
+                      role="option"
+                      aria-selected={position === highlight}
+                      className={position === highlight ? "active" : ""}
+                      onMouseEnter={() => setHighlight(position)}
+                      onClick={() => chooseSuggestion(word)}
+                    >
+                      <span>{word}</span>
+                      {had && <em>đã có trong kho</em>}
+                    </button>
+                  );
+                })}
+              </div>
+              <button className="term-suggest-skip" type="button" onClick={() => setPickedSuggestion(true)}>
+                Giữ “{term.trim()}” và tiếp tục nhập →
+              </button>
             </div>
           )}
         </label>
@@ -5885,11 +6848,13 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
             <input value={meaning} onChange={(e) => setMeaning(e.target.value)} placeholder="Tự động điền nghĩa..." />
           </label>
           {senses.length > 1 && (
-            // Một từ mang nhiều nghĩa xa nhau ("fixed" = đã sửa / cố định / đã triệt sản).
-            // Máy chỉ xếp thứ tự theo nghĩa bạn gõ; chọn ở đây mới là chốt, và mọi trường
-            // còn lại được lấy lại theo đúng nghĩa đã chọn.
+            // Một từ có thể mang nhiều nghĩa xa nhau. Đây chỉ là các lối tắt để
+            // tự điền lại biểu mẫu; người dùng luôn được giữ nghĩa họ tự nhập.
             <section className="sense-picker">
-              <b>Từ này có {senses.length} nghĩa — chọn đúng nghĩa bạn cần</b>
+              <header>
+                <b>Gợi ý {senses.length} nghĩa từ từ điển</b>
+                <span>Không bắt buộc chọn — bạn có thể nhập nghĩa riêng ở ô trên.</span>
+              </header>
               <div>
                 {senses.map((item) => (
                   <button
@@ -5908,7 +6873,7 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
               </div>
             </section>
           )}
-          <label>
+          {legacyCollections && <label>
             Ngày học
             <select value={studyDay} onChange={(e) => setStudyDay(Number(e.target.value))}>
               {dayNames.map((name, index) => (
@@ -5918,7 +6883,7 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
                 </option>
               ))}
             </select>
-          </label>
+          </label>}
           <label>
             Chủ đề
             <select value={topic} onChange={(e) => setTopic(e.target.value)}>
@@ -5947,11 +6912,11 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
         </label>
         <div className="form-grid collocation-fields">
           <label>
-            Cụm nên học
+            Cụm nên học <small>(không bắt buộc)</small>
             <input value={collocation} onChange={(e) => setCollocation(e.target.value)} placeholder="Ví dụ: pull out weeds" />
           </label>
           <label>
-            Nghĩa của cụm
+            Nghĩa của cụm <small>(không bắt buộc)</small>
             <input value={collocationVi} onChange={(e) => setCollocationVi(e.target.value)} placeholder="Ví dụ: nhổ cỏ dại" />
           </label>
         </div>
@@ -5961,13 +6926,11 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
             <label>Từ đồng nghĩa<input value={synonyms} onChange={(e) => updateUsageList(e.target.value, setSynonyms, setSynonymDetails)} placeholder="Các từ cách nhau bằng dấu phẩy" /></label>
             <label>Từ trái nghĩa<input value={antonyms} onChange={(e) => updateUsageList(e.target.value, setAntonyms, setAntonymDetails)} placeholder="Các từ cách nhau bằng dấu phẩy" /></label>
           </div>
-          <label>Từ hay đi cùng chủ đề<input value={related} onChange={(e) => updateUsageList(e.target.value, setRelated, setRelatedDetails)} placeholder="Các từ liên quan cách nhau bằng dấu phẩy" /></label>
-          {(synonymDetails.length > 0 || antonymDetails.length > 0 || relatedDetails.length > 0) && (
+          {(synonymDetails.length > 0 || antonymDetails.length > 0) && (
             <div className="add-usage-details">
               <p>Gợi ý sử dụng — các nội dung dưới đây sẽ được lưu cùng thẻ từ.</p>
               {usagePreview("Ngữ cảnh từ đồng nghĩa", synonymDetails)}
               {usagePreview("Ngữ cảnh từ trái nghĩa", antonymDetails)}
-              {usagePreview("Ngữ cảnh từ cùng chủ đề", relatedDetails)}
             </div>
           )}
           <label>Cách paraphrase<textarea value={paraphrases} onChange={(e) => setParaphrases(e.target.value)} placeholder="Các cách diễn đạt cách nhau bằng dấu chấm phẩy" /></label>
@@ -5985,64 +6948,9 @@ function AddWord({ close, save, existingWords }: { close: () => void; save: (w: 
           <button type="button" onClick={close}>
             Hủy
           </button>
-          <button className="primary" type="submit" disabled={loading || !!duplicate || !collocation.trim() || !collocationVi.trim()} title={duplicate ? "Từ này đã tồn tại trong kho của bạn" : !collocation.trim() ? "Hãy tra từ để tự động tạo cụm trước khi lưu" : undefined}>
+          <button className="primary" type="submit" disabled={!!duplicate || !term.trim()} title={duplicate ? "Từ này đã tồn tại trong kho của bạn" : !term.trim() ? "Nhập một từ hoặc cụm từ trước khi lưu" : "Lưu từ bạn đã nhập; các gợi ý không bắt buộc"}>
             Lưu từ mới
           </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function AuthModal({ close, signedInEmail }: { close: () => void; signedInEmail: string | null }) {
-  useEscape(close);
-  const [email, setEmail] = useState("");
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function login(e: FormEvent) {
-    e.preventDefault();
-    if (!supabase) {
-      setMessage("Chưa cấu hình kết nối Supabase cho ứng dụng.");
-      return;
-    }
-    if (!email) return;
-    setBusy(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin },
-    });
-    setMessage(error ? error.message : "✓ Đã gửi liên kết đăng nhập. Hãy mở email trên thiết bị này và bấm vào liên kết để hoàn tất.");
-    setBusy(false);
-  }
-  async function logout() {
-    await supabase?.auth.signOut();
-    location.reload();
-  }
-  return (
-    <div className="modal-backdrop" onMouseDown={close}>
-      <form className="modal auth-modal" onMouseDown={(e) => e.stopPropagation()} onSubmit={login}>
-        <div className="modal-head">
-          <div>
-            <span className="eyebrow">TÀI KHOẢN CỦA BẠN</span>
-            <h2>{signedInEmail ? "Đã đăng nhập" : "Đăng nhập bằng email"}</h2>
-          </div>
-          <button type="button" onClick={close}>
-            ×
-          </button>
-        </div>
-        <p className="auth-copy">{signedInEmail ? `Dữ liệu đang được lưu riêng cho ${signedInEmail}.` : "Không cần mật khẩu. Chúng tôi sẽ gửi một liên kết đăng nhập vào email; dữ liệu sau đó được lưu riêng cho tài khoản này."}</p>
-        {!signedInEmail && <label>
-          Địa chỉ email
-          <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ban@example.com" />
-        </label>}
-        {message && <p className="auth-message">{message}</p>}
-        <div className="modal-actions">
-          {signedInEmail ? <button className="primary" type="button" onClick={() => void logout()}>Đăng xuất</button> : <>
-            <button type="button" onClick={close}>Để sau</button>
-            <button className="primary" disabled={busy || !email}>
-              {busy ? "Đang gửi…" : "Gửi liên kết đăng nhập"}
-            </button>
-          </>}
         </div>
       </form>
     </div>

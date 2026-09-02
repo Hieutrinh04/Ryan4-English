@@ -18,19 +18,40 @@ function limitFromEnv(name: string, fallback: number) {
 }
 
 // Khách vãng lai bị khoá chặt vì chỉ nhận diện được bằng địa chỉ IP, mà IP thì
-// chia sẻ được và đổi được.
+// chia sẻ được và đổi được. Thành viên free rộng hơn, Premium rộng hơn nữa.
 const guestLimiter = createLimiter({
   windowMs: 60_000,
-  burst: limitFromEnv("AI_GUEST_BURST", 4),
-  dailyQuota: limitFromEnv("AI_GUEST_DAILY", 40),
+  burst: limitFromEnv("AI_GUEST_BURST", 3),
+  dailyQuota: limitFromEnv("AI_GUEST_DAILY", 15),
 });
-const memberLimiter = createLimiter({
+const freeLimiter = createLimiter({
   windowMs: 60_000,
-  burst: limitFromEnv("AI_MEMBER_BURST", 12),
-  dailyQuota: limitFromEnv("AI_MEMBER_DAILY", 400),
+  burst: limitFromEnv("AI_FREE_BURST", 4),
+  dailyQuota: limitFromEnv("AI_FREE_DAILY", 25),
+});
+// Lite đã trả tiền nên phải rộng hơn hẳn Free, nhưng vẫn dưới Premium: bậc này
+// không có bóc lời video — thứ ngốn hạn mức lượt/ngày nhiều nhất.
+const liteLimiter = createLimiter({
+  windowMs: 60_000,
+  burst: limitFromEnv("AI_LITE_BURST", 8),
+  dailyQuota: limitFromEnv("AI_LITE_DAILY", 300),
+});
+const premiumLimiter = createLimiter({
+  windowMs: 60_000,
+  burst: limitFromEnv("AI_PREMIUM_BURST", 12),
+  dailyQuota: limitFromEnv("AI_PREMIUM_DAILY", 800),
 });
 
-export type Caller = { userId: string | null; token: string | null; key: string };
+/** Bộ đếm tương ứng với gói. Không rõ gói (route cũ) → suy từ việc có userId. */
+function limiterFor(caller: Caller, plan?: string) {
+  if (plan === "premium" || plan === "admin") return premiumLimiter;
+  if (plan === "lite") return liteLimiter;
+  if (plan === "free") return freeLimiter;
+  if (plan === "guest") return guestLimiter;
+  return caller.userId ? freeLimiter : guestLimiter;
+}
+
+export type Caller = { userId: string | null; email: string | null; token: string | null; key: string };
 
 function bearer(request: Request) {
   const header = request.headers.get("authorization") ?? "";
@@ -47,31 +68,36 @@ function callerAddress(request: Request) {
 /** Xác thực token nếu có. Token hỏng bị coi như khách, không phải lỗi. */
 export async function identify(request: Request): Promise<Caller> {
   const token = bearer(request);
-  if (!token || !url || !publishableKey) return { userId: null, token: null, key: `ip:${callerAddress(request)}` };
+  const guest: Caller = { userId: null, email: null, token: null, key: `ip:${callerAddress(request)}` };
+  if (!token || !url || !publishableKey) return guest;
   try {
     const client = createClient(url, publishableKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data, error } = await client.auth.getUser(token);
-    if (error || !data.user) return { userId: null, token: null, key: `ip:${callerAddress(request)}` };
-    return { userId: data.user.id, token, key: `user:${data.user.id}` };
+    if (error || !data.user) return guest;
+    return { userId: data.user.id, email: data.user.email ?? null, token, key: `user:${data.user.id}` };
   } catch {
-    return { userId: null, token: null, key: `ip:${callerAddress(request)}` };
+    return guest;
   }
 }
 
 /** Trừ một lượt. Trả về NextResponse 429 nếu hết lượt, null nếu được đi tiếp. */
-export function spend(caller: Caller, now = Date.now()) {
-  const limiter = caller.userId ? memberLimiter : guestLimiter;
-  const verdict = limiter.take(caller.key, now);
+export function spend(caller: Caller, plan?: string, now = Date.now()) {
+  const verdict = limiterFor(caller, plan).take(caller.key, now);
   if (verdict.ok) return null;
   return NextResponse.json(
-    { error: limitMessage(verdict.reason, verdict.retryAfterSeconds) },
+    { error: limitMessage(verdict.reason, verdict.retryAfterSeconds), code: verdict.reason === "quota" ? "quota" : "burst" },
     { status: 429, headers: { "retry-after": String(verdict.retryAfterSeconds) } },
   );
 }
 
 /** Trả lại lượt khi hỏng vì phía chúng ta — người học không đáng bị trừ. */
-export function refund(caller: Caller, now = Date.now()) {
-  (caller.userId ? memberLimiter : guestLimiter).refund(caller.key, now);
+export function refund(caller: Caller, plan?: string, now = Date.now()) {
+  limiterFor(caller, plan).refund(caller.key, now);
+}
+
+/** Còn bao nhiêu lượt AI rẻ trong ngày cho gói này (để hiện lên giao diện). */
+export function remainingToday(caller: Caller, plan?: string, now = Date.now()) {
+  return limiterFor(caller, plan).peek(caller.key, now);
 }
 
 type Usage = { feature: string; ok: boolean; promptChars: number; latencyMs: number; provider?: string; model?: string };

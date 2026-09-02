@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MIN_WORDS_PER_SECOND, TAIL_PAD, isSoundLabel, spokenEnd, trimSilentTails } from "../lib/caption-timing.mjs";
+import {
+  MIN_WORDS_PER_SECOND,
+  TAIL_PAD,
+  isSoundLabel,
+  segmentPlaybackEnd,
+  spokenEnd,
+  trimSilentTails,
+  usesLegacyHalfSecondBoundaries,
+} from "../lib/caption-timing.mjs";
 
 // Mười từ ở tốc độ chậm nhất còn coi là nói: 10 / 1.2 + 0.6 = 8.93 giây.
 const tranMuoiTu = 10 / MIN_WORDS_PER_SECOND + TAIL_PAD;
@@ -12,10 +20,10 @@ test("mốc phụ đề bình thường thì giữ nguyên", () => {
   assert.equal(spokenEnd(10, 13.5, text), 13.5);
 });
 
-test("đuôi im lặng dài bị cắt về mức nói được", () => {
-  // Phụ đề khai 30 giây cho 10 từ — phần thừa là nhạc nền.
+test("mốc kết thúc hợp lệ không bị tốc độ nói ước lượng cắt hụt", () => {
+  // Người nói có thể nói chậm hoặc ngắt nhịp; đã có endMs thật thì phải tin nó.
   const text = "one two three four five six seven eight nine ten";
-  assert.equal(+spokenEnd(10, 40, text).toFixed(2), +(10 + tranMuoiTu).toFixed(2));
+  assert.equal(spokenEnd(10, 40, text), 40);
 });
 
 test("không bao giờ lấn sang đoạn kế tiếp", () => {
@@ -58,11 +66,21 @@ test("trimSilentTails: cắt cả dãy, mỗi đoạn nhìn sang đoạn kế ti
     { start: 0, end: 30, text: "Hello and welcome to the programme" },
     { start: 6, end: 60, text: "Today we talk about sleep" },
   ]);
-  // Sáu từ chỉ cần 5,6 giây — mốc tốc độ nói chặn trước cả mốc đoạn kế tiếp.
-  assert.equal(cat[0].end, 5.6);
+  // Mốc đoạn kế tiếp là hàng rào chắc chắn; không suy đoán theo số từ nữa.
+  assert.equal(cat[0].end, 6);
   assert.ok(cat[0].end <= 6, "không bao giờ chạm vào đoạn sau");
-  assert.ok(cat[1].end < 60, "đoạn cuối bị cắt theo tốc độ nói");
+  assert.equal(cat[1].end, 60, "đoạn cuối giữ nguyên mốc phụ đề đã khai");
   assert.equal(cat[1].text, "Today we talk about sleep", "không đụng tới nội dung");
+});
+
+test("cue có endMs thật được phép chồng nhẹ để không mất từ cuối", () => {
+  const [first] = trimSilentTails([
+    { start: 27, end: 31.1, text: "compliments ever. So, thank you." },
+    { start: 30, end: 34, text: "So today let's talk about filming." },
+  ], { nextStartPad: 1.2 });
+  assert.equal(first.end, 31.1);
+  assert.equal(segmentPlaybackEnd(27, 31.1, 30, false, 1.2), 31.1);
+  assert.equal(segmentPlaybackEnd(27, 31.1, 30), 30, "mốc tròn giây vẫn dùng ranh giới cứng");
 });
 
 test("trimSilentTails: dãy rỗng hoặc sai kiểu thì không nổ", () => {
@@ -89,4 +107,15 @@ test("isSoundLabel: nhãn nằm giữa câu thật thì vẫn giữ nguyên câu
   assert.equal(isSoundLabel("Well (laughs) that was close."), false);
   assert.equal(isSoundLabel("The music was lovely."), false);
   assert.equal(isSoundLabel("[Music] starts the show."), false);
+});
+
+test("bài DOM bản 8 dừng bù lại nửa giây cũ, không phát sang câu kế", () => {
+  const sentences = [
+    { start: 1, end: 5.5, text: "Hello there. As you can see, I'm not in my usual setting." },
+    { start: 5.5, end: 11.5, text: "Today we are in New York City." },
+    { start: 11.5, end: 19.5, text: "I just finished season 2." },
+  ];
+  assert.equal(usesLegacyHalfSecondBoundaries(sentences, 8), true);
+  assert.equal(segmentPlaybackEnd(1, 5.5, 5.5, true), 5);
+  assert.equal(usesLegacyHalfSecondBoundaries(sentences, 9), false, "bản mới không được tự trừ nửa giây");
 });

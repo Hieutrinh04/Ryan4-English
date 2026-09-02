@@ -34,9 +34,9 @@ test("hai bản cắt câu ra kết quả giống hệt nhau", async () => {
   assert.deepEqual(copy.sentencesFrom(copy.cuesFromJson3(payload)), app.sentencesFrom(app.cuesFromJson3(payload)));
 });
 
-test("hai bản cắt đuôi im lặng giống hệt nhau", async () => {
-  // Phụ đề mẫu ở trên đều khít nhau nên luật cắt đuôi không đụng tới gì — bản
-  // chép cũ thiếu luật đó vẫn qua được. Mẫu này có đuôi thật để bài kiểm bắt được.
+test("hai bản giữ mốc kết thúc hợp lệ giống hệt nhau", async () => {
+  // Không được rút mốc kết thúc hợp lệ bằng cách đoán tốc độ đọc. Cơ chế cũ
+  // làm người nói chậm bị mất 2–3 từ cuối dù nguồn đã có endMs chính xác.
   const copy = await import(copyPath.href);
   const payload = {
     events: [
@@ -46,7 +46,7 @@ test("hai bản cắt đuôi im lặng giống hệt nhau", async () => {
   };
   const cues = app.cuesFromJson3(payload);
   assert.equal(cues.length, 1, "dòng [Music] không phải lời nói, phải bị bỏ hẳn");
-  assert.ok(cues[0].end < 5, `câu chào giữ ${cues[0].end} giây — đuôi im lặng chưa bị cắt`);
+  assert.equal(cues[0].end, 40, "mốc kết thúc hợp lệ không được bị rút theo số từ");
   assert.deepEqual(copy.cuesFromJson3(payload), cues);
 });
 

@@ -26,6 +26,8 @@ export type WordCard = {
   intervalDays?: number;
   reviewCount?: number;
   partOfSpeech?: string;
+  /** Bậc CEFR ước lượng (A1–C2). Xem lib/word-level.mjs. */
+  cefr?: string;
   note?: string;
   collocation?: string;
   collocationVi?: string;
@@ -42,6 +44,8 @@ export type WordCard = {
   lastReviewedAt?: string;
   source?: string;
   enrichmentCheckedAt?: string;
+  /** Số lần đã thử tra bổ sung. Sau vài lần vẫn thiếu thì thôi, khỏi tra mãi. */
+  enrichmentTries?: number;
 };
 export type UsageDetail = { term: string; meaningVi: string; example: string; exampleVi: string };
 
@@ -76,6 +80,11 @@ export type ExampleMap = Record<string, [string, string]>;
 // máy như từ người dùng tự thêm; nhiều chỗ cần phân biệt hai loại này.
 export function isPdfVocabulary(word: Pick<WordCard, "id" | "source">) {
   return word.source?.includes("MochiMochi") || word.id.startsWith("pdf-");
+}
+
+/** Bộ PDF và workbook theo thứ là kho cá nhân từ phiên bản một người dùng cũ. */
+export function isLegacyOwnerVocabulary(word: Pick<WordCard, "id" | "source">) {
+  return isPdfVocabulary(word) || word.source?.toLowerCase().endsWith(".xlsx") === true;
 }
 
 // Năm từ mẫu dựng sẵn lúc chưa có dữ liệu; không lưu và không tính vào thống kê.

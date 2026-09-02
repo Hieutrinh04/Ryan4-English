@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "./Icon";
 import { groupByLesson, readSaved, removeSentence } from "../lib/saved-sentences.mjs";
-import { addLessonsToCatalogue, addToCatalogue, countNew, groupByChannel, readCatalogue, removeFromCatalogue, shelves, withLessonState } from "../lib/catalogue.mjs";
+import { addLessonsToCatalogue, addToCatalogue, countNew, groupByChannel, readCatalogue, removeFromCatalogue, shelves, videoProgress, withLessonState } from "../lib/catalogue.mjs";
 import { readableLength } from "../lib/youtube-list.mjs";
 import { readLessonProgress } from "../lib/lessons.mjs";
 import { LEVELS, lessonLevel, matchesLevel } from "../lib/level-estimate.mjs";
@@ -39,7 +39,7 @@ type Saved = { key: string; lessonId: string; lessonTitle: string; index: number
 type SavedGroup = { lessonId: string; title: string; items: Saved[] };
 
 const FILTERS: { value: Filter; label: string }[] = [
-  { value: "all", label: "Tất cả" },
+  { value: "all", label: "Kho video" },
   { value: "video", label: "Video của tôi" },
   { value: "saved", label: "Câu đã lưu" },
 ];
@@ -84,6 +84,7 @@ function VideoCard({
   tone,
   onOpen,
   onRemove,
+  onPromote,
 }: {
   video: ShelfVideo;
   level: string | null;
@@ -91,6 +92,7 @@ function VideoCard({
   tone?: string;
   onOpen: () => void;
   onRemove?: () => void;
+  onPromote?: () => void;
 }) {
   return (
     <div className="catalogue-card">
@@ -101,6 +103,7 @@ function VideoCard({
               {level}
             </em>
           )}
+          {video.lesson?.source === "system" && <em className="system-badge">Hệ thống</em>}
           {video.seconds > 0 && <em className="duration-badge">◷ {readableLength(video.seconds)}</em>}
           {/* Thanh tiến độ nằm ngay trên ảnh: lướt mắt là thấy còn bao nhiêu,
               không phải đọc số. */}
@@ -114,6 +117,11 @@ function VideoCard({
           ×
         </button>
       )}
+      {onPromote && (
+        <button className="catalogue-promote" onClick={onPromote} aria-label={`Đặt ${video.title} làm video mặc định`}>
+          Hệ thống ＋
+        </button>
+      )}
     </div>
   );
 }
@@ -121,17 +129,23 @@ function VideoCard({
 export default function LessonLibrary({
   mode,
   lessons,
+  initialFilter,
   pickVideo,
   addVideo,
+  promoteVideo,
   close,
 }: {
   mode: "dictation" | "shadowing";
   lessons: VideoLessonCard[];
+  initialFilter?: Extract<Filter, "video">;
   pickVideo: (lesson: VideoLessonCard) => void;
   addVideo: () => void;
+  promoteVideo: (lesson: VideoLessonCard | VideoLessonCard[]) => Promise<void>;
   close: () => void;
 }) {
-  const [filter, setFilter] = useState<Filter>("all");
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const [controlsHeight, setControlsHeight] = useState(228);
+  const [filter, setFilter] = useState<Filter>(initialFilter ?? "all");
   // Chủ đề đang mở. Rỗng nghĩa là đang đứng ở màn hình chọn chủ đề.
   const [topic, setTopic] = useState("");
   const [saved, setSaved] = useState<Saved[]>([]);
@@ -142,7 +156,26 @@ export default function LessonLibrary({
   const [channelFilter, setChannelFilter] = useState("");
   const [levelFilter, setLevelFilter] = useState("");
   const [progress, setProgress] = useState<Record<string, unknown>>({});
+  const [promoting, setPromoting] = useState("");
+  const [promotionNote, setPromotionNote] = useState("");
   const rows = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Khung điều khiển dùng position:fixed nên cần một khoảng giữ chỗ đúng bằng
+  // chiều cao thật của nó. ResizeObserver cập nhật cả khi chip xuống dòng, đổi
+  // chủ đề làm xuất hiện bộ lọc kênh, hoặc màn hình đổi kích thước.
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const measure = () => setControlsHeight(Math.ceil(controls.getBoundingClientRect().height));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(controls);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
 
   /** Cuộn một kệ đi đúng một màn. Băng chuyền dài thì kéo tay rất mỏi. */
   function slide(key: string, direction: number) {
@@ -239,9 +272,74 @@ export default function LessonLibrary({
   }
 
   const savedGroups = useMemo(() => groupByLesson(saved) as SavedGroup[], [saved]);
+  // `lessons` mới là nguồn sự thật cho “Video của tôi”. Catalogue có bộ lọc
+  // thời lượng dành cho playlist (bỏ Shorts/quá dài), vì vậy một bài đã lưu phụ
+  // đề vẫn có thể không còn entry catalogue và trước đây tạo ra cảnh số đếm > 0
+  // nhưng màn hình trống. Thiếu metadata thì dựng thẻ tối thiểu từ chính lesson.
+  const userLessons = useMemo(() => lessons.filter((lesson) => lesson.source !== "system"), [lessons]);
+  const lessonCatalogue = useMemo(() => {
+    const byId = new Map(catalogue.map((video) => [video.videoId, video]));
+    return userLessons.map((lesson) => byId.get(lesson.videoId) ?? {
+      videoId: lesson.videoId,
+      title: lesson.title,
+      channel: lesson.author || "Video của tôi",
+      seconds: lesson.seconds || 0,
+      thumbnail: `https://i.ytimg.com/vi/${lesson.videoId}/hqdefault.jpg`,
+      ready: true,
+    });
+  }, [catalogue, userLessons]);
+  // “Video của tôi” phải thật sự chỉ hiện các bài người dùng đã lấy phụ đề,
+  // không phải lặp lại toàn bộ danh mục hàng trăm video. Sắp theo `lessons` vì
+  // saveLesson luôn đặt bài vừa thêm lên đầu — nhờ vậy thông báo “đã thêm” và
+  // thẻ người dùng cần tìm luôn ở cùng một chỗ.
+  const visibleCatalogue = useMemo(() => {
+    if (filter !== "video") return catalogue;
+    return lessonCatalogue;
+  }, [catalogue, filter, lessonCatalogue]);
+  // Kệ riêng cho bài người dùng vừa thêm, luôn xếp bài mới nhất trước. Bài vẫn
+  // có thể xuất hiện trong chủ đề tương ứng ở bên dưới, nhưng không còn bị lẫn
+  // giữa hàng trăm video khiến thông báo thành công trông như không có tác dụng.
+  const personalVideos = useMemo(() => {
+    const byId = new Map(lessonCatalogue.map((video) => [video.videoId, video]));
+    return userLessons
+      .map((lesson) => {
+        const video = byId.get(lesson.videoId);
+        if (!video) return null;
+        return { ...video, lesson, ...videoProgress(lesson, progress, mode) } as ShelfVideo;
+      })
+      .filter((video): video is ShelfVideo => Boolean(video))
+      .slice(0, 8);
+  }, [lessonCatalogue, mode, progress, userLessons]);
+
+  async function promote(lesson: VideoLessonCard) {
+    if (promoting) return;
+    setPromoting(lesson.videoId);
+    setPromotionNote("");
+    try {
+      await promoteVideo(lesson);
+      setPromotionNote(`Đã đưa “${lesson.title}” vào kho video mặc định của hệ thống.`);
+    } catch (problem) {
+      setPromotionNote(problem instanceof Error ? problem.message : "Không đưa được video vào kho hệ thống.");
+    } finally {
+      setPromoting("");
+    }
+  }
+  async function promoteAll() {
+    if (promoting || !userLessons.length) return;
+    setPromoting("all");
+    setPromotionNote("");
+    try {
+      await promoteVideo(userLessons);
+      setPromotionNote(`Đã đưa ${userLessons.length} video vào kho mặc định của hệ thống.`);
+    } catch (problem) {
+      setPromotionNote(problem instanceof Error ? problem.message : "Không đưa được video vào kho hệ thống.");
+    } finally {
+      setPromoting("");
+    }
+  }
   const allGroups = useMemo(
-    () => groupByChannel(withLessonState(catalogue, lessons)) as ChannelGroup[],
-    [catalogue, lessons],
+    () => groupByChannel(withLessonState(visibleCatalogue, lessons)) as ChannelGroup[],
+    [visibleCatalogue, lessons],
   );
   // Trình độ đo từ chính lời thoại của bài, nên chỉ có với video đã lấy được
   // phụ đề. Tính một lần rồi dùng lại cho cả bộ lọc lẫn nhãn trên thẻ.
@@ -252,40 +350,28 @@ export default function LessonLibrary({
   }, [lessons]);
 
   const shelfTopics = useMemo(
-    () => topicShelves(catalogue, lessons) as { id: string; name: string; blurb: string; levels: string; icon: string; count: number; ready: number }[],
-    [catalogue, lessons],
+    () => topicShelves(visibleCatalogue, lessons) as { id: string; name: string; blurb: string; levels: string; icon: string; count: number; ready: number }[],
+    [visibleCatalogue, lessons],
   );
   const openTopic = topic ? (shelfTopics.find((item) => item.id === topic) ?? null) : null;
-  // Mỗi dãy chỉ lấy vài thẻ đầu; xem hết thì bấm "Xem thêm" để vào hẳn chủ đề.
-  const ROW_SIZE = 8;
-  const topicRows = useMemo(() => {
-    const map = new Map<string, ShelfVideo[]>();
-    const withState = withLessonState(catalogue, lessons) as ShelfVideo[];
-    for (const item of shelfTopics) {
-      let list = (videosInTopic(withState, item.id) as ShelfVideo[]);
-      if (levelFilter) list = list.filter((video) => matchesLevel(levelOf.get(video.videoId) ?? null, levelFilter));
-      if (list.length) map.set(item.id, list.slice(0, ROW_SIZE));
-    }
-    return map;
-  }, [catalogue, lessons, shelfTopics, levelFilter, levelOf]);
-
   const shelf = useMemo(() => {
-    let list = topic ? (videosInTopic(catalogue, topic) as CatalogueVideo[]) : catalogue;
+    let list = topic ? (videosInTopic(visibleCatalogue, topic) as CatalogueVideo[]) : visibleCatalogue;
     if (channelFilter) list = list.filter((item) => item.channel === channelFilter);
     if (levelFilter) list = list.filter((item) => matchesLevel(levelOf.get(item.videoId) ?? null, levelFilter));
     return shelves(list, lessons, progress, mode) as Record<ShelfKey, ShelfVideo[]>;
-  }, [catalogue, lessons, progress, channelFilter, levelFilter, levelOf, mode, topic]);
+  }, [visibleCatalogue, lessons, progress, channelFilter, levelFilter, levelOf, mode, topic]);
   // Chỉ còn một nguồn video: video bạn tự thêm. Kho bài "hệ thống" cũ đã bỏ —
   // nó gắn nhãn "Video hệ thống" nhưng không có video nào, chỉ là từng câu chữ
   // lẻ kèm icon micro, nhại một câu rời như vậy không luyện được gì.
-  const showVideo = mode === "shadowing" || filter === "all" || filter === "video";
+  const showVideo = filter === "all" || filter === "video";
   const showSaved = filter === "all" || filter === "saved";
 
   return (
     <div className="page lesson-library lesson-library-v2">
+      <div ref={controlsRef} className="library-sticky-controls">
       <header className="library-hero">
         <div className="library-title-row">
-          <button className="library-back" onClick={close} aria-label="Quay lại">←</button>
+          <button className="library-back" onClick={close} aria-label="Quay lại không gian kỹ năng">←</button>
           <span className="library-mode-icon"><Icon name={mode === "dictation" ? "headphones" : "mic"} size={19} /></span>
           <div>
             <h1>{mode === "dictation" ? "Nghe chép" : "Nói nhại"}</h1>
@@ -307,10 +393,9 @@ export default function LessonLibrary({
       <div className="library-filter-panel">
         {/* Hàng chip chủ đề. Chủ đề chưa có bài nào vẫn hiện, kèm nút nạp — ẩn đi
             thì người học tưởng app không có chủ đề đó. */}
-        {mode === "dictation" && (
-          <div className="topic-chips" role="group" aria-label="Lọc theo chủ đề">
+        <div className="topic-chips" role="group" aria-label="Lọc theo chủ đề">
             <button className={topic ? "" : "active"} onClick={() => { setTopic(""); setChannelFilter(""); }}>
-              Tất cả <em>{catalogue.length}</em>
+              Tất cả <em>{visibleCatalogue.length}</em>
             </button>
             {shelfTopics.map((item) =>
               item.count ? (
@@ -327,31 +412,57 @@ export default function LessonLibrary({
                 </button>
               ),
             )}
-          </div>
-        )}
-        {mode === "dictation" ? (
+        </div>
+        <div className="library-filter-meta">
           <div className="library-filters" role="group" aria-label="Lọc nguồn bài">
             {FILTERS.map((item) => (
-              <button key={item.value} className={filter === item.value ? "active" : ""} onClick={() => setFilter(item.value)}>
+              <button
+                key={item.value}
+                className={filter === item.value ? "active" : ""}
+                onClick={() => {
+                  setFilter(item.value);
+                  // Bài vừa thêm có thể thuộc một chủ đề khác với chủ đề đang mở.
+                  // Trở về gốc để “Video của tôi” không trông như một danh sách rỗng.
+                  if (item.value === "video") {
+                    setTopic("");
+                    setChannelFilter("");
+                    setLevelFilter("");
+                  }
+                }}
+              >
                 {item.label}
-                {item.value === "video" && lessons.length > 0 && <em>{lessons.length}</em>}
+                {item.value === "video" && userLessons.length > 0 && <em>{userLessons.length}</em>}
                 {item.value === "saved" && saved.length > 0 && <em>{saved.length}</em>}
               </button>
             ))}
           </div>
-        ) : null}
+          {visibleCatalogue.length > 0 && (
+            <div className="catalogue-filter levels" role="group" aria-label="Lọc theo cấp độ">
+              <button className={levelFilter ? "" : "active"} onClick={() => setLevelFilter("")}>
+                Tất cả cấp độ
+              </button>
+                            {(LEVELS as string[]).map((item) => (
+                <button
+                  key={item}
+                  className={levelFilter === item ? "active" : ""}
+                  onClick={() => setLevelFilter(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {/* Bộ lọc đặt ngay dưới tiêu đề, không để tận cuối trang: nó là thứ
             người học dùng trước khi chọn bài, chứ không phải thứ tìm thấy sau
             khi đã cuộn qua hết danh sách. */}
         {/* Lọc theo kênh và cấp độ chỉ có nghĩa khi đã vào trong một chủ đề.
             Để ở màn hình chọn chủ đề thì nó đếm gộp cả kho, mâu thuẫn với con số
             ghi trên từng thẻ ngay bên dưới. */}
-        {catalogue.length > 0 && (mode === "shadowing" || topic) && (
-          <>
-                  {/* Thanh lọc theo kênh, kèm số lượng — nhìn là biết kênh nào nhiều bài. */}
-                  <div className="catalogue-filter" role="group" aria-label="Lọc theo kênh">
+        {visibleCatalogue.length > 0 && topic && (
+          <div className="catalogue-filter library-channel-filter" role="group" aria-label="Lọc theo kênh">
                     <button className={channelFilter ? "" : "active"} onClick={() => setChannelFilter("")}>
-                      Tất cả <em>{catalogue.length}</em>
+                      Tất cả <em>{visibleCatalogue.length}</em>
                     </button>
                     {allGroups.map((group) => (
                       <button
@@ -362,76 +473,54 @@ export default function LessonLibrary({
                         {group.channel} <em>{group.videos.length}</em>
                       </button>
                     ))}
-                  </div>
-
-                  </>
-                )}
-                {catalogue.length > 0 && (
-                  <>
-                  {/* Cấp độ luôn hiện, kể cả ở mức Tất cả: nó là thứ người học
-                      lọc trước khi chọn mảng nội dung, không phải sau.
-
-                      Đo từ chính lời thoại nên chỉ video đã có phụ đề mới có mức.
-                      Lọc theo mức sẽ bỏ qua video chưa đo được — đó là chủ ý, chứ xếp
-                      đại vào một mức thì bộ lọc thành vô nghĩa. */}
-                  <div className="catalogue-filter levels" role="group" aria-label="Lọc theo cấp độ">
-                    <button className={levelFilter ? "" : "active"} onClick={() => setLevelFilter("")}>
-                      Tất cả cấp độ
-                    </button>
-                    {(LEVELS as string[]).map((item) => (
-                      <button
-                        key={item}
-                        className={levelFilter === item ? "active" : ""}
-                        onClick={() => setLevelFilter(item)}
-                      >
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-          </>
+          </div>
         )}
       </div>
+      </div>
+      <div className="library-sticky-spacer" style={{ height: controlsHeight }} aria-hidden="true" />
 
 
-      {/* Chưa chọn chủ đề nào thì bày theo CHỦ ĐỀ, mỗi chủ đề một dãy ngang.
-          Chọn rồi thì mới xếp theo trạng thái học (đang dở / mới / đã xong), vì
-          lúc đó người học đã biết mình muốn nghe mảng nào. */}
-      {showVideo && mode === "dictation" && !topic && catalogue.length > 0 && (
-        <section className="library-block library-catalogue">
-          {shelfTopics.map((item) => {
-            const videos = topicRows.get(item.id) ?? [];
-            if (!videos.length) return null;
-            return (
-              <div key={item.id} className="catalogue-shelf">
-                <div className="catalogue-shelf-head">
-                  <b>{item.name}</b>
-                  <em>{item.count}</em>
-                  <small>{item.levels}</small>
-                  <button className="shelf-more" onClick={() => setTopic(item.id)}>Xem thêm</button>
-                </div>
-                <div className="catalogue-row">
-                  {videos.map((video) => (
-                    <VideoCard
-                      key={video.videoId}
-                      video={video}
-                      level={levelOf.get(video.videoId) ?? null}
-                      label={topicLabel(video)}
-                      onOpen={() => {
-                        if (video.lesson) pickVideo(video.lesson);
-                        else window.open(`https://www.youtube.com/watch?v=${video.videoId}`, "_blank", "noopener");
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+      {showVideo && filter === "all" && !topic && personalVideos.length > 0 && (
+        <section className="library-block library-catalogue library-personal-shelf" aria-labelledby="personal-video-title">
+          <div className="catalogue-shelf">
+            <div className="catalogue-shelf-head">
+              <b id="personal-video-title">Video của tôi</b>
+              <em>{userLessons.length}</em>
+              <small>Bài bạn vừa thêm — mới nhất ở đầu</small>
+              <button className="shelf-more promote-all" disabled={Boolean(promoting)} onClick={() => void promoteAll()}>
+                {promoting === "all" ? "Đang lưu…" : "Đặt tất cả làm mặc định"}
+              </button>
+              <button className="shelf-more" onClick={() => setFilter("video")}>Xem tất cả</button>
+              <span className="catalogue-arrows">
+                <button onClick={() => slide("personal", -1)} aria-label="Lùi video của tôi">←</button>
+                <button onClick={() => slide("personal", 1)} aria-label="Xem thêm video của tôi">→</button>
+              </span>
+            </div>
+            <div className="catalogue-row" ref={(node) => { rows.current.personal = node; }}>
+              {personalVideos.map((video, index) => (
+                <VideoCard
+                  key={video.videoId}
+                  video={video}
+                  level={levelOf.get(video.videoId) ?? null}
+                  label={index === 0 ? "Vừa thêm · bấm để mở" : topicLabel(video)}
+                  tone={index === 0 ? "recent" : undefined}
+                  onOpen={() => pickVideo(video.lesson as VideoLessonCard)}
+                  onPromote={() => void promote(video.lesson as VideoLessonCard)}
+                />
+              ))}
+            </div>
+          </div>
         </section>
       )}
+      {promotionNote && <p className="catalogue-note system-promotion-note">{promotionNote}</p>}
 
-      {showVideo && (mode === "shadowing" || topic) && (
+      {showVideo && !topic && !visibleCatalogue.length && filter === "video" && (
+        <p className="catalogue-empty">Chưa có video nào trong “Video của tôi”. Hãy bấm “Thêm video” để tạo bài đầu tiên.</p>
+      )}
+
+      {showVideo && visibleCatalogue.length > 0 && (
         <section className="library-block library-catalogue">
-          {mode === "dictation" && openTopic && (
+          {openTopic && (
             <nav className="topic-trail" aria-label="Đường dẫn chủ đề">
               <button onClick={() => { setTopic(""); setChannelFilter(""); setLevelFilter(""); }}>Tất cả chủ đề</button>
               <span aria-hidden="true">›</span>
@@ -439,7 +528,7 @@ export default function LessonLibrary({
               {openTopic.levels && <em>{openTopic.levels}</em>}
             </nav>
           )}
-          {catalogue.length > 0 && (
+          {visibleCatalogue.length > 0 && (
             <>
               {/* Xếp theo TRẠNG THÁI HỌC chứ không theo kênh: mở lên là thấy ngay
                   việc cần làm tiếp, không phải tự nhớ hôm qua đang dở bài nào. */}
@@ -478,7 +567,7 @@ export default function LessonLibrary({
                             if (video.lesson) pickVideo(video.lesson);
                             else window.open(`https://www.youtube.com/watch?v=${video.videoId}`, "_blank", "noopener");
                           }}
-                          onRemove={() => setCatalogue(removeFromCatalogue(video.videoId) as CatalogueVideo[])}
+                          onRemove={video.lesson?.source === "system" ? undefined : () => setCatalogue(removeFromCatalogue(video.videoId) as CatalogueVideo[])}
                         />                      ))}
                     </div>
                   </div>

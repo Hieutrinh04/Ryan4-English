@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { identify, spend } from "../../../lib/ai-guard";
+import { CAPTION_VERSION } from "../../../lib/caption-timing.mjs";
 import { cuesFromJson3, pickEnglishTrack, secondsFromIso, sentencesFrom, sliceJsonArray, videoIdFrom } from "../../../lib/youtube.mjs";
 
 // Đọc một video YouTube thành bài luyện nghe.
@@ -96,18 +97,23 @@ export async function POST(request: Request) {
   const track = pickEnglishTrack(tracks) as Track | null;
 
   let sentences: unknown[] = [];
+  let timingPrecision: "millisecond" | "word" = "millisecond";
   if (track?.baseUrl) {
     try {
       const response = await fetch(`${track.baseUrl}&fmt=json3`, { headers: { ...BROWSER, referer: `https://www.youtube.com/watch?v=${videoId}` } });
       const body = await response.text();
       // YouTube trả 200 kèm thân rỗng khi từ chối phục vụ phụ đề cho máy chủ.
-      if (body.trim().startsWith("{")) sentences = sentencesFrom(cuesFromJson3(JSON.parse(body))) as unknown[];
+      if (body.trim().startsWith("{")) {
+        const payload = JSON.parse(body) as { events?: { segs?: { tOffsetMs?: number }[] }[] };
+        if (payload.events?.some((event) => event.segs?.some((segment) => segment.tOffsetMs !== undefined))) timingPrecision = "word";
+        sentences = sentencesFrom(cuesFromJson3(payload)) as unknown[];
+      }
     } catch {
       sentences = [];
     }
   }
 
-  if (sentences.length) return NextResponse.json({ ...base, sentences, reason: "ok" });
+  if (sentences.length) return NextResponse.json({ ...base, sentences, captionVersion: CAPTION_VERSION, timingPrecision, reason: "ok" });
 
   return NextResponse.json({
     ...base,

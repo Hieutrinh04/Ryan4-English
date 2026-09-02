@@ -19,6 +19,15 @@ test("splitSentences: dấu chấm của chữ viết tắt không phải hết 
   assert.deepEqual(splitSentences("It costs 5 vs. 6 dollars."), ["It costs 5 vs. 6 dollars."]);
 });
 
+test("splitSentences: dấu ba chấm là ý đang tiếp diễn, không cắt thành câu mới", () => {
+  assert.deepEqual(
+    splitSentences("The first thing I saw was ... Meta laid off 8,000 employees."),
+    ["The first thing I saw was ... Meta laid off 8,000 employees."],
+  );
+  assert.equal(endsCleanly("The first thing I saw was ..."), false);
+  assert.equal(endsCleanly("Wait…"), false);
+});
+
 test("splitLongText: câu ngắn thì để nguyên", () => {
   assert.deepEqual(splitLongText("Ba từ thôi", 30), ["Ba từ thôi"]);
   assert.deepEqual(splitLongText("", 30), []);

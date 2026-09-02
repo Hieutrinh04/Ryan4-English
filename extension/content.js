@@ -90,7 +90,8 @@ function json3FromTranscript(payload) {
       segs: [{ utf8: text }],
     });
   }
-  return { events };
+  // Endpoint trả startMs/endMs thật, không phải con số nguyên giây đang vẽ ở UI.
+  return { timingPrecision: "millisecond", events };
 }
 
 function secondsOf(timestamp) {
@@ -99,15 +100,51 @@ function secondsOf(timestamp) {
   return parts.reduce((total, part) => total * 60 + part, 0);
 }
 
-function transcriptFromDom() {
-  const rows = [...document.querySelectorAll("ytd-transcript-segment-renderer")];
-  const cues = rows
-    .map((row) => ({
-      start: secondsOf(row.querySelector(".segment-timestamp")?.textContent),
-      text: row.querySelector(".segment-text")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
-    }))
-    .filter((cue) => cue.text);
+/**
+ * Đọc một dòng transcript ở cả hai giao diện YouTube.
+ *
+ * Từ đầu 2026, YouTube dần thay `ytd-transcript-segment-renderer` bằng
+ * `transcript-segment-view-model`. Tên lớp của mốc giờ và lời thoại cũng đổi
+ * theo. Giữ cả hai bộ selector vì giao diện được bật theo từng tài khoản, nên
+ * hai người mở cùng một video vẫn có thể nhận hai cấu trúc DOM khác nhau.
+ */
+function cueFromTranscriptRow(row) {
+  const timestamp = row.querySelector(
+    ".ytwTranscriptSegmentViewModelTimestamp, #timestamp, .segment-timestamp",
+  )?.textContent;
+  const text = row.querySelector(
+    '.ytAttributedStringHost[role="text"], .yt-core-attributed-string[role="text"], span[role="text"], #segment-text, .segment-text',
+  )?.textContent;
   return {
+    start: secondsOf(timestamp),
+    text: text?.replace(/\s+/g, " ").trim() ?? "",
+  };
+}
+
+function transcriptFromDom() {
+  const rows = [
+    ...document.querySelectorAll(
+      "transcript-segment-view-model, .ytwTranscriptSegmentViewModelHost, ytd-transcript-segment-renderer",
+    ),
+  ];
+  // Giao diện mới có lúc để cả custom element và host class lồng nhau; selector
+  // trên vì thế nhìn thấy cùng một dòng hai lần. Khử trùng theo giờ + nội dung
+  // trước khi gửi sang bộ chia câu.
+  const seen = new Set();
+  const cues = rows
+    .map(cueFromTranscriptRow)
+    .filter((cue) => {
+      if (!cue.text) return false;
+      const key = `${cue.start}\u0000${cue.text.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.start - b.start);
+  return {
+    // Giao diện chỉ hiện 0:16, không có mili giây. Phần xử lý dùng cờ này để
+    // đặt một ranh giới chung ở giữa giây cho cuối dòng trước/đầu dòng sau.
+    timingPrecision: "second",
     events: cues.map((cue, index) => ({
       tStartMs: cue.start * 1000,
       dDurationMs: Math.max(0, ((cues[index + 1]?.start ?? cue.start + 3) - cue.start) * 1000),
@@ -227,21 +264,28 @@ async function readViaPlayer(baseUrl) {
     performance
       .getEntriesByType("resource")
       .map((entry) => entry.name)
-      .filter((name) => name.includes("/api/timedtext") && name.includes("pot="))
+      // Có phiên dùng token pot, có phiên dùng URL đã ký nhưng không có pot.
+      // Cả hai đều là request thật của chính trình phát và đều đáng ưu tiên hơn
+      // bảng transcript chỉ hiện timestamp làm tròn.
+      .filter((name) => name.includes("/api/timedtext"))
       .pop();
 
   let source = withToken();
   const button = document.querySelector(".ytp-subtitles-button");
   const wasOn = button?.getAttribute("aria-pressed") === "true";
-  if (!source && button instanceof HTMLElement && !wasOn) {
-    // Bật phụ đề để trình phát tự gọi. Bật xong trả lại đúng trạng thái cũ, đừng
-    // để người dùng quay lại thấy phụ đề tự nhiên hiện lên.
+  if (!source && button instanceof HTMLElement) {
+    // Buộc trình phát gọi lại file phụ đề kể cả khi CC đang bật từ trước. Sau đó
+    // trả nút về đúng trạng thái ban đầu.
+    if (wasOn) {
+      button.click();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
     button.click();
     for (let step = 0; step < 25 && !source; step += 1) {
       await new Promise((resolve) => setTimeout(resolve, 200));
       source = withToken();
     }
-    button.click();
+    if (!wasOn) button.click();
   }
   if (!source) return null;
 
@@ -259,29 +303,67 @@ async function readViaPlayer(baseUrl) {
 }
 
 /** Tải một bản phụ đề. Chỉ chạy được ở đây, không chạy được từ máy chủ. */
-async function readCaptions(baseUrl) {
+async function readCaptions(baseUrl, expectedSeconds = 0) {
+  const candidates = [];
+  const stats = (payload) => {
+    const events = Array.isArray(payload?.events) ? payload.events : [];
+    const textLength = events.reduce((sum, event) => sum + (event?.segs ?? []).reduce((part, seg) => part + String(seg?.utf8 ?? "").length, 0), 0);
+    const lastMs = events.reduce((latest, event) => Math.max(latest, (Number(event?.tStartMs) || 0) + (Number(event?.dDurationMs) || 0)), 0);
+    const timedSegments = events.reduce((sum, event) => sum + (event?.segs ?? []).filter((seg) => seg?.tOffsetMs !== undefined).length, 0);
+    return { events: events.length, textLength, lastMs, timedSegments };
+  };
+  const score = (payload) => {
+    const value = stats(payload);
+    return value.textLength + value.lastMs / 100 + value.timedSegments * 2;
+  };
+  const best = () => candidates.sort((a, b) => score(b) - score(a))[0];
+  const withTimingPrecision = (payload) => {
+    if (!payload || payload.timingPrecision) return payload;
+    return { ...payload, timingPrecision: stats(payload).timedSegments ? "word" : "millisecond" };
+  };
+  const completeEnough = (payload) => {
+    const value = stats(payload);
+    if (value.events < 2 || value.textLength < 40) return false;
+    const durationMs = Math.max(0, Number(expectedSeconds) || 0) * 1000;
+    // Outro không lời có thể chiếm một phần video, nên 65% là ngưỡng bảo thủ.
+    return !durationMs || durationMs < 45000 || value.lastMs >= durationMs * 0.65;
+  };
   try {
     const url = new URL(baseUrl);
     url.searchParams.set("fmt", "json3");
     const response = await fetch(url, { credentials: "include" });
     const body = await response.text();
-    if (body.trim().startsWith("{")) return JSON.parse(body);
+    if (body.trim().startsWith("{")) candidates.push(JSON.parse(body));
   } catch {
     // Thử hai đường dưới.
   }
   try {
     const viaPlayer = await readViaPlayer(baseUrl);
-    if (viaPlayer?.events?.length) return viaPlayer;
+    if (viaPlayer?.events?.length) candidates.push(viaPlayer);
   } catch {
     // Chuyển sang endpoint Bản chép lời ở dưới.
   }
-  return readTranscriptPanel();
+  // Hai nguồn trên đều dùng đúng track người dùng chọn và còn timestamp chi
+  // tiết. Nếu đã phủ phần lớn video thì không đổi sang transcript mặc định của
+  // giao diện YouTube (có thể là ngôn ngữ khác).
+  if (candidates.length && completeEnough(best())) return withTimingPrecision(best());
+  try {
+    const panel = await readTranscriptPanel();
+    if (panel?.events?.length) candidates.push(panel);
+  } catch {
+    // Dùng ứng viên tốt nhất đã lấy được ở hai đường trên.
+  }
+  if (!candidates.length) throw new Error("Không đọc được nội dung phụ đề của video.");
+
+  // timedtext đôi khi trả 200 nhưng bị cắt giữa chừng. Khi đó so cả bản panel
+  // và lấy ứng viên có nhiều chữ, mốc phủ xa hơn, ưu tiên timing từng từ.
+  return withTimingPrecision(best());
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, reply) => {
   const run = async () => {
     if (message?.type === "doc") return { ok: true, data: await readPage() };
-    if (message?.type === "captions") return { ok: true, data: await readCaptions(message.baseUrl) };
+    if (message?.type === "captions") return { ok: true, data: await readCaptions(message.baseUrl, message.seconds) };
     return { ok: false, error: "Yêu cầu không hợp lệ." };
   };
   run()
