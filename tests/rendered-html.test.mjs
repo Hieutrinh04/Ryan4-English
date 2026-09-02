@@ -475,3 +475,39 @@ test("công cụ mở từ không gian kỹ năng thì có đường lùi, vào 
   // Ở trong thư mục con thì đường dẫn lo việc lùi từng cấp, không hiện thêm nút.
   assert.match(page, /\{onExitTool && atRoot && \(/);
 });
+
+// Mỗi màn từng tự vẽ một kiểu nút lùi: chỗ chữ tím trơn, chỗ ô vuông chỉ có mũi
+// tên với màu cắm cứng không theo chủ đề. Test giữ cho tất cả đi qua một lớp
+// .back duy nhất, để sửa dáng một lần là cả ứng dụng đổi theo.
+test("mọi nút lùi dùng chung lớp .back", async () => {
+  const files = ["../app/page.tsx", "../components/Dictionary.tsx", "../components/LessonLibrary.tsx",
+    "../components/VideoLesson.tsx", "../components/SpeakingPractice.tsx", "../components/VocabPractice.tsx"];
+  const sources = await Promise.all(files.map((file) => readFile(new URL(file, import.meta.url), "utf8")));
+
+  for (const [index, source] of sources.entries()) {
+    // Nút lùi = mũi tên ← mở đầu nhãn, hoặc ô chỉ có mũi tên nhưng nhãn trợ năng
+    // nói "Quay lại". Cặp ←/→ để lật thẻ là phân trang, không tính.
+    const buttons = source.match(/<button[^>]*>[^<]*/g) ?? [];
+    for (const button of buttons) {
+      const label = button.slice(button.indexOf(">") + 1).trim();
+      if (!label.startsWith("←")) continue;
+      const isPager = label === "←" && !/aria-label="[^"]*Quay lại/.test(button);
+      if (isPager) continue;
+      assert.match(button, /className="[^"]*\bback\b/, `${files[index]} còn nút lùi ngoài .back: ${button}`);
+    }
+  }
+
+  // Không còn lớp riêng nào cạnh tranh với .back cho cùng một việc.
+  const all = sources.join("\n");
+  assert.doesNotMatch(all, /className="library-back"/);
+  assert.doesNotMatch(all, /className="back tool-back"/);
+  assert.doesNotMatch(all, /className="drill-icon"[^>]*aria-label="Quay lại/);
+
+  // Kiểu dáng nằm một chỗ, và biến thể chỉ-mũi-tên dùng lại chính lớp đó.
+  const css = await readFile(new URL("../app/workspace-redesign.css", import.meta.url), "utf8");
+  assert.match(css, /\.lexilo-workspace \.back \{/);
+  assert.match(css, /\.lexilo-workspace \.back\.is-icon \{/);
+  // Màu phải lấy từ biến chủ đề, nếu không thì chủ đề sáng lại có ô đen như cũ.
+  const block = css.slice(css.indexOf(".lexilo-workspace .back {"), css.indexOf(".lexilo-workspace .back.is-icon {"));
+  assert.doesNotMatch(block, /#[0-9a-fA-F]{3,6}/, "nút lùi không được cắm cứng mã màu");
+});

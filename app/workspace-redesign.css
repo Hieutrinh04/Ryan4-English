@@ -993,9 +993,15 @@ button:disabled{cursor:not-allowed;opacity:.48}
   .lexilo-workspace .plan-steps { grid-template-columns: 1fr; }
 }
 
-/* Nút lùi của công cụ mở từ không gian kỹ năng. Chỉ hiện khi thật sự có một cấp
-   để lùi lên — vào thẳng Kho từ vựng hay Từ điển từ sườn trái thì không có. */
-.lexilo-workspace .tool-back {
+/* ── Nút lùi: một kiểu dáng cho cả ứng dụng ──────────────────────────────────
+   Trước đây mỗi màn tự vẽ một kiểu: chỗ là chữ tím trơn không viền, chỗ là ô
+   vuông chỉ có mũi tên với màu cắm cứng không theo chủ đề. Cùng một hành động
+   mà mỗi nơi trông một khác thì người dùng phải học lại ở từng màn.
+
+   Nay tất cả dùng chung .back. Biến thể .is-icon giữ nguyên viền, bo góc và màu
+   ấy nhưng thu về hình vuông, dành cho nút nằm CHEN trong một hàng tiêu đề —
+   ở đó một viên thuốc có chữ sẽ đẩy tiêu đề lệch đi. */
+.lexilo-workspace .back {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1007,11 +1013,31 @@ button:disabled{cursor:not-allowed;opacity:.48}
   color: var(--text-2);
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.2;
   cursor: pointer;
   transition: border-color var(--t-base), background var(--t-base), color var(--t-base);
 }
-.lexilo-workspace .tool-back:hover {
+.lexilo-workspace .back:hover {
   border-color: var(--purple);
   background: var(--tint-purple);
   color: var(--purple-dark);
+}
+/* Nằm CHEN trong một hàng thao tác thì nhận lại hình dáng của hàng: một nút bo
+   tròn khác kiểu giữa ba nút vuông đọc như lỗi chứ không phải tín hiệu. Màu và
+   mũi tên vẫn giữ nguyên nên vẫn nhận ra ngay đó là nút lùi. */
+.lexilo-workspace .translate-actions .back,
+.lexilo-workspace .practice-empty-actions .back { margin: 0; }
+/* Hai hàng này có số đo riêng, lấy đúng số của từng hàng chứ không lấy xấp xỉ:
+   lệch một pixel còn khó chịu hơn là khác hẳn. */
+.lexilo-workspace .translate-actions .back { border-radius: 10px; padding: 11px 16px; }
+.lexilo-workspace .practice-empty-actions .back { border-radius: 11px; padding: 10px 16px; }
+.lexilo-workspace .back.is-icon {
+  margin: 0;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  justify-content: center;
+  font-size: 16px;
+  flex: none;
 }

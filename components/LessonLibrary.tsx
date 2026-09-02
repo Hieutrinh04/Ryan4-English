@@ -371,7 +371,7 @@ export default function LessonLibrary({
       <div ref={controlsRef} className="library-sticky-controls">
       <header className="library-hero">
         <div className="library-title-row">
-          <button className="library-back" onClick={close} aria-label="Quay lại không gian kỹ năng">←</button>
+          <button className="back is-icon" onClick={close} aria-label="Quay lại không gian kỹ năng">←</button>
           <span className="library-mode-icon"><Icon name={mode === "dictation" ? "headphones" : "mic"} size={19} /></span>
           <div>
             <h1>{mode === "dictation" ? "Nghe chép" : "Nói nhại"}</h1>

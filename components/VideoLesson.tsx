@@ -938,7 +938,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
 
   const lessonTop = (
     <div className="lesson-top">
-      <button className="drill-icon" onClick={close} aria-label="Quay lại">←</button>
+      <button className="back is-icon" onClick={close} aria-label="Quay lại bài học khác">←</button>
       <span className="lesson-level">B1</span>
       <div className="lesson-title">
         <b>{lesson.title}</b>

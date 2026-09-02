@@ -3282,7 +3282,7 @@ function Words({ words, legacyCollections, query, setQuery, toggleStar, add, bul
   return (
     <div className="page words-page">
       {onExitTool && atRoot && (
-        <button className="back tool-back" onClick={onExitTool}>← Quay lại không gian kỹ năng</button>
+        <button className="back" onClick={onExitTool}>← Quay lại không gian kỹ năng</button>
       )}
       <div className="section-head">
         <div>
@@ -4484,7 +4484,7 @@ function Practice({ words, intent, launch, openLesson, initialLibraryFilter, les
           <h1>Thêm vài từ để bắt đầu luyện tập</h1>
           <p>Chỉ cần lưu từ đầu tiên. Lexilo sẽ dùng chính kho từ của bạn để tạo thẻ ghi nhớ, bài nghe, nói và luyện viết có ngữ cảnh.</p>
           <div className="practice-empty-actions">
-            <button onClick={onExitTool}>← Quay lại không gian kỹ năng</button>
+            <button className="back" onClick={onExitTool}>← Quay lại không gian kỹ năng</button>
             <button className="primary" onClick={() => lookupVocab?.openDictionary("")}><Icon name="search" size={17} /> Tra và lưu từ</button>
             <button onClick={onAddVideo}><Icon name="play" size={17} /> Thêm video luyện nghe</button>
           </div>
@@ -5342,7 +5342,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
           )}
           {swapNote && <p className="story-note">{swapNote}</p>}
           <div className="translate-actions">
-            <button onClick={backToPicker}>← Chọn từ</button>
+            <button className="back" onClick={backToPicker}>← Chọn từ</button>
             {/* Câu không hay thì xin câu khác cho chính từ này, bài làm dở được xoá. */}
             <button disabled={swapping} onClick={() => void swapSentence()} title="Viết câu khác cho từ này">
               {swapping ? "◌ Đang đổi…" : "↻ Câu khác"}
