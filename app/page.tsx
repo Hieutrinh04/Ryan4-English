@@ -2329,7 +2329,7 @@ function Dashboard({ words, lessons, openLesson, openPractice, exam, setExam, st
           <button className="primary" onClick={startDueReview}>Ôn ngay {plan.dueAgain.length} từ →</button>
         </section>
       )}
-      <LearningPlan reviewCount={plan.reviewCount} newCount={plan.newCount} startVocabulary={() => startReview(plan.onlyPdf ? "pdf" : undefined)} openPractice={() => openPractice("dictation")} />
+      <LearningPlan reviewCount={plan.reviewCount} newCount={plan.newCount} startVocabulary={() => startReview(plan.onlyPdf ? "pdf" : undefined)} openPractice={openPractice} />
       <h2 className="screen-group">Bạn đang ở đâu</h2>
       <div className="home-stats">
         <div className={streak.studiedToday ? "home-stat is-live" : "home-stat"}>
@@ -2550,7 +2550,24 @@ function buildCollectionQueue(words: WordCard[]) {
   return buildFullCollectionQueue(words) as WordCard[];
 }
 
-function LearningPlan({ reviewCount, newCount, startVocabulary, openPractice }: { reviewCount: number; newCount: number; startVocabulary: () => void; openPractice: () => void }) {
+/**
+ * Kế hoạch một buổi học, mỗi bước mở đúng màn của bước đó.
+ *
+ * Trước đây bước 02 và 03 dùng chung một hàm đã gắn sẵn "dictation", nên bấm
+ * "Nói/viết" lại rơi vào Nghe chép. Nay mỗi bước tự khai chế độ nó cần, và thẻ
+ * có đủ bốn bước đúng như tiêu đề "4 kỹ năng" của chính nó.
+ */
+function LearningPlan({ reviewCount, newCount, startVocabulary, openPractice }: {
+  reviewCount: number;
+  newCount: number;
+  startVocabulary: () => void;
+  openPractice: (mode: Exclude<PracticeMode, "menu">) => void;
+}) {
+  const steps: { mode: Exclude<PracticeMode, "menu">; label: string; time: string; note: string }[] = [
+    { mode: "dictation", label: "Nghe chép", time: "7–10 phút", note: "3–5 câu đúng trình độ; nghe, gõ rồi sửa" },
+    { mode: "speak", label: "Luyện nói", time: "4–5 phút", note: "Nói lại bằng từ vừa học, AI nghe và chấm" },
+    { mode: "translate", label: "Viết", time: "4–5 phút", note: "Dịch vài câu về chính mình, AI chỉ lỗi" },
+  ];
   return (
     <section className="learning-plan panel">
       <div className="panel-title">
@@ -2566,16 +2583,14 @@ function LearningPlan({ reviewCount, newCount, startVocabulary, openPractice }: 
           <small>{reviewCount} từ đến hạn trước · tối đa {DAILY_NEW_LIMIT} từ mới</small>
           <i>Bắt đầu phiên →</i>
         </button>
-        <button onClick={openPractice}>
-          <span>02</span><b>Nghe chép · 8–10 phút</b>
-          <small>3–5 câu đúng trình độ; nghe, gõ, sửa rồi đọc nhại</small>
-          <i>Mở luyện tập →</i>
-        </button>
-        <button onClick={openPractice}>
-          <span>03</span><b>Nói/viết · 5–10 phút</b>
-          <small>Dùng 3 từ vừa học để nói hoặc viết về chính mình</small>
-          <i>Mở luyện tập →</i>
-        </button>
+        {steps.map((step, position) => (
+          <button key={step.mode} onClick={() => openPractice(step.mode)}>
+            <span>{String(position + 2).padStart(2, "0")}</span>
+            <b>{step.label} · {step.time}</b>
+            <small>{step.note}</small>
+            <i>Mở {step.label.toLowerCase()} →</i>
+          </button>
+        ))}
       </div>
     </section>
   );

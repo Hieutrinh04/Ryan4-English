@@ -492,6 +492,7 @@ button:disabled{cursor:not-allowed;opacity:.48}
 .lexilo-workspace .plan-steps button:nth-child(1){--step-tone:var(--tone-1)}
 .lexilo-workspace .plan-steps button:nth-child(2){--step-tone:var(--tone-2)}
 .lexilo-workspace .plan-steps button:nth-child(3){--step-tone:var(--tone-3)}
+.lexilo-workspace .plan-steps button:nth-child(4){--step-tone:var(--tone-4)}
 .lexilo-workspace .plan-steps button{border-color:color-mix(in srgb,var(--step-tone) 19%,var(--ui-line));box-shadow:inset 3px 0 0 var(--step-tone)}
 .lexilo-workspace .day-cards button:nth-child(7n+1),.lexilo-workspace .period-stat:nth-child(4n+1){--day-tone:var(--tone-1)}
 .lexilo-workspace .day-cards button:nth-child(7n+2),.lexilo-workspace .period-stat:nth-child(4n+2){--day-tone:var(--tone-2)}
@@ -980,4 +981,14 @@ button:disabled{cursor:not-allowed;opacity:.48}
   font-weight: 700;
   color: var(--purple);
   white-space: nowrap;
+}
+
+/* Kế hoạch có bốn bước — đúng bằng bốn kỹ năng — nên lưới ba cột để lại bước
+   cuối trơ trọi một hàng. Bốn cột khi đủ rộng, hai cột khi vừa, một khi hẹp. */
+.lexilo-workspace .plan-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1100px) {
+  .lexilo-workspace .plan-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .lexilo-workspace .plan-steps { grid-template-columns: 1fr; }
 }

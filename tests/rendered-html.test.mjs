@@ -419,3 +419,30 @@ test("opens the three writing paths directly from the Writing workspace", async 
   assert.doesNotMatch(writing, /← Chọn chức năng khác|← Luyện viết/);
   assert.match(page, /Chưa có từ để tạo bài viết/);
 });
+
+// Kế hoạch hôm nay từng có hai bước dùng CHUNG một hàm đã gắn sẵn "dictation",
+// nên bấm "Nói/viết" lại rơi vào Nghe chép. Test khoá lại: mỗi bước phải tự khai
+// chế độ của nó, và Trang chủ phải truyền thẳng openPractice chứ không bọc lại
+// bằng một chế độ cố định.
+test("mỗi bước trong kế hoạch hôm nay mở đúng màn của bước đó", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const plan = page.slice(page.indexOf("function LearningPlan("), page.indexOf("function DailyStudy("));
+
+  // Bốn kỹ năng, bốn đích khác nhau — trùng nhau là lại sai như cũ.
+  const modes = [...plan.matchAll(/mode: "([a-z]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(modes, ["dictation", "speak", "translate"]);
+  assert.equal(new Set(modes).size, modes.length);
+  // Bước 01 là từ vựng, đi bằng đường riêng chứ không qua openPractice.
+  assert.match(plan, /onClick=\{startVocabulary\}/);
+  assert.match(plan, /onClick=\{\(\) => openPractice\(step\.mode\)\}/);
+
+  // Thẻ tự xưng "4 kỹ năng" thì phải có đủ bốn bước: 01 + ba bước sinh từ mảng.
+  assert.match(plan, /Học đủ 4 kỹ năng/);
+  assert.equal(modes.length + 1, 4);
+
+  // Nơi gọi phải chuyền thẳng hàm điều hướng. Bọc lại bằng một chế độ cố định —
+  // openPractice={() => openPractice("dictation")} — chính là lỗi cũ.
+  const call = page.slice(page.indexOf("<LearningPlan "), page.indexOf("<LearningPlan ") + 400);
+  assert.match(call, /openPractice={openPractice}/);
+  assert.doesNotMatch(call, /openPractice={() =>/);
+});
