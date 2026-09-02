@@ -992,3 +992,26 @@ button:disabled{cursor:not-allowed;opacity:.48}
 @media (max-width: 560px) {
   .lexilo-workspace .plan-steps { grid-template-columns: 1fr; }
 }
+
+/* Nút lùi của công cụ mở từ không gian kỹ năng. Chỉ hiện khi thật sự có một cấp
+   để lùi lên — vào thẳng Kho từ vựng hay Từ điển từ sườn trái thì không có. */
+.lexilo-workspace .tool-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+  padding: 7px 13px 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color var(--t-base), background var(--t-base), color var(--t-base);
+}
+.lexilo-workspace .tool-back:hover {
+  border-color: var(--purple);
+  background: var(--tint-purple);
+  color: var(--purple-dark);
+}

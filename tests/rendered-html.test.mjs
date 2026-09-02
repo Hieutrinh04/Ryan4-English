@@ -446,3 +446,32 @@ test("mỗi bước trong kế hoạch hôm nay mở đúng màn của bước �
   assert.match(call, /openPractice={openPractice}/);
   assert.doesNotMatch(call, /openPractice={() =>/);
 });
+
+// Kho từ vựng và Từ điển AI là công cụ "tab" của không gian Từ vựng, nhưng nhánh
+// tab trong openTool không lưu lại nơi xuất phát nên hai màn đó từng cụt đường
+// lùi. Test khoá lại cả hai mặt: có đường lùi khi vào từ kỹ năng, và KHÔNG có
+// khi vào thẳng — nút lùi chỉ có nghĩa khi nó đi lên đúng một cấp.
+test("công cụ mở từ không gian kỹ năng thì có đường lùi, vào thẳng thì không", async () => {
+  const [page, dictionary] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/Dictionary.tsx", import.meta.url), "utf8"),
+  ]);
+
+  // openTool ghi lại kỹ năng đang mở TRƯỚC khi xoá nó đi.
+  const openTool = page.slice(page.indexOf("const openTool = "), page.indexOf("const [detailWord"));
+  const setOrigin = openTool.indexOf("setToolOrigin(skillHub)");
+  const clearHub = openTool.indexOf("setSkillHub(null)");
+  assert.ok(setOrigin > -1 && clearHub > -1, "openTool phải làm cả hai việc");
+  assert.ok(setOrigin < clearHub, "ghi lại nơi xuất phát trước khi xoá, nếu không luôn là null");
+
+  // Đi thẳng từ sườn trái hay thanh trên cùng thì xoá nơi xuất phát.
+  const goTab = page.slice(page.indexOf("const goTab = "), page.indexOf("/** Mở màn tổng quan"));
+  assert.match(goTab, /setToolOrigin\(null\)/);
+
+  // Cả hai màn đều nhận đường lùi, và chỉ hiện nút khi thật sự có đường.
+  assert.match(page, /<Words\b[\s\S]{0,900}?onExitTool=\{toolOrigin \? \(\) => openSkill\(toolOrigin\) : undefined\}/);
+  assert.match(page, /<Dictionary\b[\s\S]{0,200}?onExitTool=\{toolOrigin \? \(\) => openSkill\(toolOrigin\) : undefined\}/);
+  assert.match(dictionary, /\{onExitTool && \(/);
+  // Ở trong thư mục con thì đường dẫn lo việc lùi từng cấp, không hiện thêm nút.
+  assert.match(page, /\{onExitTool && atRoot && \(/);
+});

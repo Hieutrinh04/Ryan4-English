@@ -37,7 +37,9 @@ function speak(text: string, region: "US" | "UK") {
   window.speechSynthesis?.speak(utterance);
 }
 
-export default function Dictionary({ onSave, wordId, collectionOf, studyDayOf, setStudyDay, folders, updateFolders, initialWord, legacyCollections = false }: {
+export default function Dictionary({ onSave, wordId, collectionOf, studyDayOf, setStudyDay, folders, updateFolders, initialWord, legacyCollections = false, onExitTool }: {
+  /** Có mặt khi màn này được mở từ không gian kỹ năng, để lùi lên đúng một cấp. */
+  onExitTool?: () => void;
   onSave: (word: NewWord) => string;
   wordId: (term: string) => string | null;
   collectionOf: (term: string) => "mine" | "pdf";
@@ -162,6 +164,9 @@ export default function Dictionary({ onSave, wordId, collectionOf, studyDayOf, s
 
   return (
     <div className="page dictionary-page">
+      {onExitTool && (
+        <button className="back tool-back" onClick={onExitTool}>← Quay lại không gian kỹ năng</button>
+      )}
       <form className="dictionary-search" onSubmit={(event) => { event.preventDefault(); void lookup(query); }}>
         <Icon name="search" size={18} />
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm kiếm từ tiếng Anh…" aria-label="Từ cần tra" autoComplete="off" spellCheck={false} />

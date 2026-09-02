@@ -401,8 +401,18 @@ export default function Home() {
     if (next !== "practice") setLibraryLaunch(null);
     // Mở một công cụ cụ thể thì đóng màn tổng quan kỹ năng đang che nội dung.
     setSkillHub(null);
+    // Đi thẳng từ sườn trái hoặc thanh trên cùng thì không có cấp nào để lùi về.
+    setToolOrigin(null);
     setTab(next);
   };
+
+  /**
+   * Kỹ năng mà công cụ đang mở xuất phát từ đó — null nếu vào thẳng.
+   *
+   * Chỉ dùng để quyết định có hiện nút lùi hay không: nút lùi chỉ có nghĩa khi
+   * nó đi LÊN đúng một cấp, chứ không phải mọi màn đều cần một nút về trang chủ.
+   */
+  const [toolOrigin, setToolOrigin] = useState<SkillId | null>(null);
 
   /** Mở màn tổng quan của một kỹ năng. */
   const openSkill = (id: SkillId) => {
@@ -439,6 +449,8 @@ export default function Home() {
 
   const openTool = (tool: SkillTool) => {
     if (reviewing) exitReview();
+    // Ghi lại trước khi xoá: nút lùi của công cụ cần biết nó thuộc kỹ năng nào.
+    setToolOrigin(skillHub);
     setSkillHub(null);
     if (tool.kind === "tab") {
       setLibraryLaunch(null);
@@ -1814,6 +1826,7 @@ export default function Home() {
             backfill={backfill}
             assignLevels={assignLevels}
             leveling={leveling}
+            onExitTool={toolOrigin ? () => openSkill(toolOrigin) : undefined}
             setStudyDay={setWordStudyDay}
             remove={(id) => {
               markDeleted(id);
@@ -1861,6 +1874,7 @@ export default function Home() {
         {!skillHub && tab === "stats" && <Stats words={words} scopeLabel="toàn bộ thư viện" streak={streakFrom(studyDays)} />}
         {!skillHub && tab === "dictionary" && (
           <Dictionary
+            onExitTool={toolOrigin ? () => openSkill(toolOrigin) : undefined}
             initialWord={dictionaryWord}
             legacyCollections={legacyCollections}
             wordId={(term) => words.find((word) => word.term.trim().toLowerCase() === term.trim().toLowerCase())?.id ?? null}
@@ -2992,7 +3006,7 @@ function WordListModal({ title, note, words, close }: { title: string; note: str
   );
 }
 
-function Words({ words, legacyCollections, query, setQuery, toggleStar, add, bulkAdd, openDictionary, remove, importWords, folders, updateFolders, collectionFilter, setCollectionFilter, startWordListReview, setStudyDay, openWordDetail, fillMissingFields, backfill, assignLevels, leveling }: { words: WordCard[]; legacyCollections: boolean; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; openDictionary: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; folders: FolderStore; updateFolders: (next: FolderStore) => void; collectionFilter: "root" | "daily" | "pdf"; setCollectionFilter: (view: "root" | "daily" | "pdf") => void; startWordListReview: (list: WordCard[]) => void; setStudyDay: (id: string, day: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null; assignLevels: (targets: WordCard[], quiet?: boolean) => void; leveling: { done: number; total: number } | null }) {
+function Words({ words, legacyCollections, query, setQuery, toggleStar, add, bulkAdd, openDictionary, remove, importWords, folders, updateFolders, collectionFilter, setCollectionFilter, startWordListReview, setStudyDay, openWordDetail, fillMissingFields, backfill, assignLevels, leveling, onExitTool }: { words: WordCard[]; legacyCollections: boolean; query: string; setQuery: (s: string) => void; toggleStar: (id: string) => void; add: () => void; bulkAdd: () => void; openDictionary: () => void; remove: (id: string) => void; importWords: (w: Omit<WordCard, "id" | "lapses">[]) => void; folders: FolderStore; updateFolders: (next: FolderStore) => void; collectionFilter: "root" | "daily" | "pdf"; setCollectionFilter: (view: "root" | "daily" | "pdf") => void; startWordListReview: (list: WordCard[]) => void; setStudyDay: (id: string, day: number) => void; openWordDetail: (id: string) => void; fillMissingFields: () => void; backfill: { done: number; total: number; failed: number } | null; assignLevels: (targets: WordCard[], quiet?: boolean) => void; leveling: { done: number; total: number } | null; onExitTool?: () => void }) {
   const PAGE_SIZE = 25;
   const fileRef = useRef<HTMLInputElement>(null);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -3267,6 +3281,9 @@ function Words({ words, legacyCollections, query, setQuery, toggleStar, add, bul
   }
   return (
     <div className="page words-page">
+      {onExitTool && atRoot && (
+        <button className="back tool-back" onClick={onExitTool}>← Quay lại không gian kỹ năng</button>
+      )}
       <div className="section-head">
         <div>
           <div className="eyebrow">THƯ VIỆN CỦA BẠN</div>
