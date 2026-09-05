@@ -241,7 +241,7 @@ button:disabled{cursor:not-allowed;opacity:.48}
 /* Biểu mẫu dài là một trang riêng, chỉ có một vùng cuộn. */
 .full-screen-form{inset:0 0 0 var(--ui-sidebar-width);z-index:60;padding:30px 32px 64px;background:var(--ui-bg);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
 .full-screen-form>.form-screen{width:min(100%,880px);max-width:880px;max-height:none;margin:0 auto;padding:26px 28px 24px;border:1px solid var(--ui-line);border-radius:20px;background:var(--ui-card);overflow:visible;box-shadow:none}
-.full-screen-form>.form-screen .modal-actions{background:color-mix(in srgb,var(--ui-card) 96%,transparent);backdrop-filter:blur(12px)}
+.full-screen-form>.form-screen .modal-actions{position:static;bottom:auto;margin:8px 0 0;padding:18px 0 0;border-radius:0;background:transparent;backdrop-filter:none}
 
 /* Tablet */
 @media(max-width:1180px) and (min-width:901px){
@@ -359,10 +359,32 @@ button:disabled{cursor:not-allowed;opacity:.48}
 .lexilo-workspace .term-suggest>div[role="listbox"]{max-height:176px;overflow-y:auto;overscroll-behavior:contain}
 .lexilo-workspace .term-suggest>.term-suggest-skip{justify-content:center;border-top:1px solid var(--ui-line);background:color-mix(in srgb,var(--ui-accent-soft) 50%,var(--ui-card));color:var(--ui-accent-strong);font-size:10px;font-weight:800}
 .lexilo-workspace .term-suggest>.term-suggest-skip:hover{background:var(--ui-accent-soft)}
-.lexilo-workspace .sense-picker{padding:12px;border:1px solid var(--ui-line);border-radius:13px;background:color-mix(in srgb,var(--ui-card-soft) 56%,var(--ui-card))}
-.lexilo-workspace .sense-picker>header{display:grid;gap:3px;margin-bottom:9px}
-.lexilo-workspace .sense-picker>header b{font-size:11px;color:var(--ui-text-soft)}
-.lexilo-workspace .sense-picker>header span{color:var(--ui-muted);font-size:9px;line-height:1.5}
+.lexilo-workspace .add-word-block{display:grid;gap:14px;padding:16px;border:1px solid var(--ui-line);border-radius:14px;background:color-mix(in srgb,var(--ui-card-soft) 48%,var(--ui-card))}
+.lexilo-workspace .add-word-block-head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;padding-bottom:11px;border-bottom:1px solid var(--ui-line)}
+.lexilo-workspace .add-word-block-head b{color:var(--ui-text);font-size:13px}
+.lexilo-workspace .add-word-block-head span{color:var(--ui-muted);font-size:10px;text-align:right}
+.lexilo-workspace .add-word-block label{margin-bottom:0}
+.lexilo-workspace .add-word-basics .field-wide{grid-column:1/-1}
+.lexilo-workspace .lexical-type-picker{display:grid;gap:10px;margin:0;padding:14px;border:1px solid var(--ui-line);border-radius:14px;background:var(--ui-card-soft)}
+.lexilo-workspace .lexical-type-picker legend{padding:0 6px;color:var(--ui-text);font-size:12px;font-weight:800}
+.lexilo-workspace .lexical-type-picker>p{margin:0;color:var(--ui-muted);font-size:11px}
+.lexilo-workspace .lexical-type-picker>div{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.lexilo-workspace .lexical-type-picker button{display:grid;gap:3px;min-height:56px;padding:10px;text-align:left;border:1px solid var(--ui-line);border-radius:10px;background:var(--ui-card);color:var(--ui-text)}
+.lexilo-workspace .lexical-type-picker button.active{border-color:var(--ui-accent);background:var(--ui-accent-soft);box-shadow:inset 3px 0 0 var(--ui-accent)}
+.lexilo-workspace .lexical-type-picker button small{color:var(--ui-muted);font-size:9px;font-weight:500}
+.lexilo-workspace .lexical-type-badge{display:inline-flex;margin-right:6px;padding:3px 7px;border:1px solid var(--ui-line);border-radius:999px;background:var(--ui-card-soft);color:var(--ui-accent-strong);font-size:10px;font-weight:800}
+@media(max-width:760px){.lexilo-workspace .lexical-type-picker>div{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.lexilo-workspace .sense-picker{margin:0;padding:0;border:1px solid var(--ui-line);border-radius:11px;background:var(--ui-card);overflow:hidden}
+.lexilo-workspace .sense-picker>summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 13px;cursor:pointer;list-style:none}
+.lexilo-workspace .sense-picker>summary::-webkit-details-marker{display:none}
+.lexilo-workspace .sense-picker>summary>span{display:grid;gap:3px;min-width:0}
+.lexilo-workspace .sense-picker>summary b{font-size:11px;color:var(--ui-text-soft)}
+.lexilo-workspace .sense-picker>summary small{color:var(--ui-muted);font-size:9px;line-height:1.45}
+.lexilo-workspace .sense-picker>summary>em{flex:none;color:var(--ui-accent-strong);font-size:10px;font-style:normal;font-weight:750}
+.lexilo-workspace .sense-picker[open]>summary{border-bottom:1px solid var(--ui-line);background:var(--ui-accent-soft)}
+.lexilo-workspace .sense-picker[open]>summary>em{font-size:0}
+.lexilo-workspace .sense-picker[open]>summary>em::after{content:"Thu gọn";font-size:10px}
+.lexilo-workspace .sense-picker>div{margin:0;padding:10px;max-height:260px}
 .lexilo-workspace .collocation-fields label>small{color:var(--ui-muted);font-size:9px;font-weight:600}
 
 @media(max-width:380px){
@@ -489,10 +511,17 @@ button:disabled{cursor:not-allowed;opacity:.48}
 .lexilo-workspace .progress-library-stats .stat:nth-child(4){--stat-tone:var(--tone-4)}
 .lexilo-workspace .progress-library-stats .stat::after{content:"";position:absolute;right:-18px;bottom:-28px;width:78px;height:78px;border-radius:50%;background:color-mix(in srgb,var(--stat-tone) 10%,transparent)}
 .lexilo-workspace .learning-plan{border-color:color-mix(in srgb,var(--tone-1) 18%,var(--ui-line));background:linear-gradient(130deg,color-mix(in srgb,var(--tone-1) 8%,var(--ui-card)),var(--ui-card) 62%)}
+.lexilo-workspace .daily-guidance{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0 0 14px}
+.lexilo-workspace .daily-guidance>div{display:grid;gap:5px;padding:14px 16px;border:1px solid var(--ui-line);border-radius:12px;background:var(--ui-card-soft)}
+.lexilo-workspace .daily-guidance span{color:var(--ui-muted);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
+.lexilo-workspace .daily-guidance b{color:var(--ui-text);font-size:13px}
+.lexilo-workspace .daily-guidance small{color:var(--ui-muted);font-size:10px;line-height:1.45}
 .lexilo-workspace .plan-steps button:nth-child(1){--step-tone:var(--tone-1)}
 .lexilo-workspace .plan-steps button:nth-child(2){--step-tone:var(--tone-2)}
 .lexilo-workspace .plan-steps button:nth-child(3){--step-tone:var(--tone-3)}
 .lexilo-workspace .plan-steps button:nth-child(4){--step-tone:var(--tone-4)}
+.lexilo-workspace .plan-steps button:nth-child(5){--step-tone:var(--tone-2)}
+.lexilo-workspace .plan-steps button:nth-child(6){--step-tone:var(--tone-3)}
 .lexilo-workspace .plan-steps button{border-color:color-mix(in srgb,var(--step-tone) 19%,var(--ui-line));box-shadow:inset 3px 0 0 var(--step-tone)}
 .lexilo-workspace .day-cards button:nth-child(7n+1),.lexilo-workspace .period-stat:nth-child(4n+1){--day-tone:var(--tone-1)}
 .lexilo-workspace .day-cards button:nth-child(7n+2),.lexilo-workspace .period-stat:nth-child(4n+2){--day-tone:var(--tone-2)}
@@ -983,14 +1012,14 @@ button:disabled{cursor:not-allowed;opacity:.48}
   white-space: nowrap;
 }
 
-/* Kế hoạch có bốn bước — đúng bằng bốn kỹ năng — nên lưới ba cột để lại bước
-   cuối trơ trọi một hàng. Bốn cột khi đủ rộng, hai cột khi vừa, một khi hẹp. */
-.lexilo-workspace .plan-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* Sáu bước của vòng học V2 xếp thành hai hàng cân bằng. */
+.lexilo-workspace .plan-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (max-width: 1100px) {
   .lexilo-workspace .plan-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 560px) {
   .lexilo-workspace .plan-steps { grid-template-columns: 1fr; }
+  .lexilo-workspace .daily-guidance { grid-template-columns: 1fr; }
 }
 
 /* ── Nút lùi: một kiểu dáng cho cả ứng dụng ──────────────────────────────────
@@ -998,9 +1027,8 @@ button:disabled{cursor:not-allowed;opacity:.48}
    vuông chỉ có mũi tên với màu cắm cứng không theo chủ đề. Cùng một hành động
    mà mỗi nơi trông một khác thì người dùng phải học lại ở từng màn.
 
-   Nay tất cả dùng chung .back. Biến thể .is-icon giữ nguyên viền, bo góc và màu
-   ấy nhưng thu về hình vuông, dành cho nút nằm CHEN trong một hàng tiêu đề —
-   ở đó một viên thuốc có chữ sẽ đẩy tiêu đề lệch đi. */
+   Nay tất cả dùng chung BackButton với cả mũi tên và tên màn đích. Không còn
+   biến thể chỉ có biểu tượng khiến người dùng phải đoán nó sẽ quay về đâu. */
 .lexilo-workspace .back {
   display: inline-flex;
   align-items: center;
@@ -1022,22 +1050,267 @@ button:disabled{cursor:not-allowed;opacity:.48}
   background: var(--tint-purple);
   color: var(--purple-dark);
 }
-/* Nằm CHEN trong một hàng thao tác thì nhận lại hình dáng của hàng: một nút bo
-   tròn khác kiểu giữa ba nút vuông đọc như lỗi chứ không phải tín hiệu. Màu và
-   mũi tên vẫn giữ nguyên nên vẫn nhận ra ngay đó là nút lùi. */
+/* BackButton là hợp đồng chung của cả bốn kỹ năng: luôn có mũi tên + tên đích,
+   cùng chiều cao và độ bo. Các màn chỉ được đổi khoảng cách bố cục, không được
+   tự đổi hình dáng hoặc giấu phần chữ. */
+.lexilo-workspace .back.app-back-button {
+  min-height: 36px;
+  padding: 8px 13px 8px 11px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.lexilo-workspace .back.app-back-button > span:first-child {
+  font-size: 16px;
+  line-height: 1;
+}
+.lexilo-workspace .lesson-top .back.app-back-button,
+.lexilo-workspace .library-title-row .back.app-back-button {
+  margin-bottom: 0;
+}
+/* Chỉ khoảng cách với hàng xung quanh được thay đổi; hình dáng nút vẫn giữ
+   nguyên ở mọi vị trí. */
 .lexilo-workspace .translate-actions .back,
 .lexilo-workspace .practice-empty-actions .back { margin: 0; }
-/* Hai hàng này có số đo riêng, lấy đúng số của từng hàng chứ không lấy xấp xỉ:
-   lệch một pixel còn khó chịu hơn là khác hẳn. */
-.lexilo-workspace .translate-actions .back { border-radius: 10px; padding: 11px 16px; }
-.lexilo-workspace .practice-empty-actions .back { border-radius: 11px; padding: 10px 16px; }
-.lexilo-workspace .back.is-icon {
-  margin: 0;
-  padding: 0;
-  width: 32px;
-  height: 32px;
+.lexilo-workspace .translate-actions .back.app-back-button,
+.lexilo-workspace .practice-empty-actions .back.app-back-button {
+  min-height: 36px;
+  padding: 8px 13px 8px 11px;
   border-radius: 10px;
-  justify-content: center;
-  font-size: 16px;
-  flex: none;
+}
+
+/* Vỏ bọc của hộp thoại được portal ra <body>. Nó chỉ tồn tại để giữ lớp
+   .lexilo-workspace cho các luật giao diện khớp tiếp; không sinh hộp nào. */
+.modal-host { display: contents; }
+
+/* Kiểu luyện mà bộ thẻ chưa đủ dữ liệu — ví dụ Nghe – viết trên bộ không có
+   phát âm. Dùng đúng cách màn Luyện từ vựng đã làm với .mode-option:disabled,
+   để cùng một tình huống trông giống nhau ở cả hai màn. */
+.lexilo-workspace .review-modes button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+.lexilo-workspace .review-modes button:disabled:hover {
+  border-color: var(--line);
+  transform: none;
+  box-shadow: none;
+}
+
+/* ── Chọn cách học trong phiên ôn: một hàng tab, không phải lưới thẻ ─────────
+   Trước đây sáu kiểu xếp thành lưới 3×2 thẻ cao 62px, cộng dòng chú thích là
+   156px — gần một phần sáu màn hình trôi qua trước khi thấy từ cần học. Lưới
+   lại chỉ rộng 482px trong khi thẻ học bên dưới rộng gấp đôi, nên hai khối
+   không thẳng hàng nhau.
+
+   Nay là một dải tab ngang chiếm trọn bề ngang, cao bằng một dòng: chọn kiểu
+   là việc làm một lần đầu buổi, không đáng chiếm chỗ của thứ đang học. */
+.lexilo-workspace .review-modes {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-auto-flow: row;
+  gap: 6px;
+  width: 100%;
+  overflow: visible;
+  padding-bottom: 0;
+}
+.lexilo-workspace .review-modes button {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  /* Số đo tính cho trường hợp chật nhất: 820px chia 6 tab, trừ 5 khoảng 6px,
+     còn 131.6px mỗi tab. Trừ đệm 16, biểu tượng 22 và khoảng 7 thì nhãn còn
+     86px — đủ cho nhãn dài nhất ("Luyện tổng hợp" ~83px) mà không phải cắt. */
+  gap: 7px;
+  min-height: 0;
+  padding: 8px;
+  border-radius: 10px;
+}
+.lexilo-workspace .review-mode-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+}
+.lexilo-workspace .review-mode-copy b {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Nhãn "Đề xuất" từng neo tuyệt đối ở góc trên; trong một tab thấp nó sẽ đè lên
+   chữ, nên cho nó đứng thành phần tử thứ ba của hàng. */
+.lexilo-workspace .review-modes button em {
+  position: static;
+  padding: 2px 6px;
+  font-size: 8px;
+}
+
+/* Dòng chú thích từng dính liền: "Luyện tổng hợpLuân phiên nhiều kỹ năng" —
+   hai thẻ inline cạnh nhau, không có gì ngăn cách. */
+.lexilo-workspace .review-mode-note {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 9px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.lexilo-workspace .review-mode-note b { color: var(--text-2); font-weight: 700; }
+.lexilo-workspace .review-mode-note span::before {
+  content: "·";
+  margin-right: 8px;
+  opacity: .55;
+}
+
+/* Chữ chỉ vừa khi mỗi tab đủ ~131px (biểu tượng 22 + nhãn 86 + đệm 16 + khoảng
+   7), tức dải tab phải rộng 816px — chỉ đạt được từ khoảng 1090px khung nhìn trở
+   lên, sau khi trừ cột trái. Hẹp hơn thì trước đây dải tab cuộn ngang: chữ bị cắt
+   ngang chừng ("Luy…") kèm một thanh cuộn xám. Thà bỏ chữ còn hơn cắt chữ —
+   dòng ngay dưới đã gọi tên kiểu đang chọn, và mỗi tab vẫn có tooltip đầy đủ. */
+@media (max-width: 1090px) {
+  .lexilo-workspace .review-modes button {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding: 9px 6px;
+  }
+  .lexilo-workspace .review-mode-copy { display: none; }
+  .lexilo-workspace .review-modes button em { top: 4px; right: 4px; }
+}
+/* Dải tab lấy đúng bề ngang của thanh tiến độ ngay trên nó (min(820px,100%)).
+   Trước đây nó trải hết khung nên phần "vỏ" của phiên học lại rộng hơn cả thứ
+   đang học — ba khối chồng lên nhau mà mỗi khối một bề ngang. */
+.lexilo-workspace .review-mode-tabs { width: min(820px, 100%); }
+/* Nhãn "Đề xuất" trên tab thu về một chấm: ở bề ngang 132px, chữ của nó cắt mất
+   tên kiểu luyện ("Luyện tổng hợp" còn 27px). Chữ vẫn nằm trong DOM cho trình
+   đọc màn hình, và hiện đầy đủ ở dòng chú thích khi kiểu đó đang được chọn. */
+.lexilo-workspace .review-modes button em {
+  /* Neo vào góc chứ không đứng trong hàng: đứng trong hàng thì kể cả một chấm
+     6px cộng khoảng cách vẫn ăn mất 14px, đủ để cắt cụt "Luyện tổng hợp". */
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0;
+  line-height: 0;
+  overflow: hidden;
+  color: transparent;
+}
+.lexilo-workspace .review-mode-flag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--tint-purple);
+  color: var(--purple-dark);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: .3px;
+}
+
+/* ── Phiên ôn phải vừa đúng chỗ của nó ───────────────────────────────────────
+   .content đã chừa sẵn chỗ cho thanh trên cùng bằng padding-top, rồi .review
+   bên trong lại đòi trọn 100dvh nữa. Cộng lại là 72px thừa: nội dung phiên học
+   bị đẩy lệch xuống, dưới đáy hở một mảng đen, và trang sinh ra 72px cuộn dọc
+   không có gì để xem.
+
+   Không dùng thẳng --ui-topbar-height được: dưới 900px biến đó bằng 0 (thanh
+   trên cùng bị ẩn) trong khi .content vẫn chừa 60px cho header mobile. Nên khai
+   riêng một biến cho "phần vỏ nằm trên nội dung", đúng bằng padding-top thật. */
+.lexilo-workspace { --ui-chrome-top: var(--ui-topbar-height); }
+@media (max-width: 900px) {
+  .lexilo-workspace { --ui-chrome-top: 60px; }
+}
+.lexilo-workspace .review { min-height: calc(100dvh - var(--ui-chrome-top)); }
+
+/* Dải tab đọc như một khối phân đoạn, không phải sáu mảnh rời.
+
+   Trước đây mỗi tab nhận một vệt tô mép trái 3px xoay vòng bốn tông theo vị trí
+   (nth-child 4n+1…4n). Trên thẻ lớn có nền đặc thì đó là điểm nhấn; trên tab
+   cao 40px nền trong suốt thì chỉ còn thấy vệt cong ở mép — một dấu ngoặc lạc
+   lõng. Tệ hơn: màu của tab phụ thuộc CHỖ ĐỨNG của nó, nên "Nghe – viết" xanh
+   hay hồng là do nó đứng thứ ba, không do nó là gì. */
+.lexilo-workspace .review-modes button {
+  box-shadow: none;
+  border-color: var(--ui-line);
+  background: var(--ui-card-soft);
+}
+.lexilo-workspace .review-modes button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ui-accent) 45%, var(--ui-line));
+  background: var(--ui-card);
+}
+/* Tab đang chọn dùng đúng màu nhấn của ứng dụng, không đổi theo vị trí. */
+.lexilo-workspace .review-modes button.active {
+  border-color: color-mix(in srgb, var(--ui-accent) 55%, var(--ui-line));
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+}
+.lexilo-workspace .review-modes button.active .review-mode-icon {
+  background: var(--ui-accent);
+  color: #fff;
+}
+
+/* ── Lỗi lặp nhiều nhất ──────────────────────────────────────────────────────
+   Hai cột số là hai quãng 7 và 30 ngày, đặt cạnh nhau để đọc được xu hướng:
+   số bảy ngày nhỏ hơn nhiều so với ba mươi ngày nghĩa là đang đỡ dần. */
+.lexilo-workspace .recurring {
+  margin: 16px 0 4px;
+  border: 1px solid var(--ui-line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.lexilo-workspace .recurring-head,
+.lexilo-workspace .recurring-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 46px 46px auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+}
+.lexilo-workspace .recurring-head {
+  background: var(--ui-card-soft);
+  border-bottom: 1px solid var(--ui-line);
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+.lexilo-workspace .recurring-head b { font-size: 12px; font-weight: 700; }
+.lexilo-workspace .recurring-head span {
+  grid-column: 3 / span 2;
+  text-align: right;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.lexilo-workspace .recurring-row { border-top: 1px solid var(--ui-line); font-size: 13px; }
+.lexilo-workspace .recurring-row:first-of-type { border-top: 0; }
+.lexilo-workspace .recurring-row b { font-weight: 700; }
+.lexilo-workspace .recurring-row span {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+.lexilo-workspace .recurring-row > button {
+  border: 1px solid var(--ui-line-strong, var(--line-accent));
+  background: var(--ui-card-soft);
+  color: var(--purple-dark);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 10.5px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+/* Trạng thái mang màu ngữ nghĩa riêng, tách khỏi màu nhấn của ứng dụng. */
+.lexilo-workspace .recurring-row em {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  padding: 2px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.lexilo-workspace .recurring-row.is-weak em { background: var(--tint-pink); color: var(--pink); }
+.lexilo-workspace .recurring-row.is-improving em { background: var(--tint-orange); color: var(--orange); }
+.lexilo-workspace .recurring-row.is-mastered em { background: var(--tint-green); color: var(--green); }
+@media (max-width: 560px) {
+  .lexilo-workspace .recurring-head,
+  .lexilo-workspace .recurring-row { grid-template-columns: minmax(0, 1fr) auto 36px 36px; gap: 7px; padding: 9px 11px; }
+  .lexilo-workspace .recurring-row > button { grid-column: 1 / -1; width: 100%; }
 }

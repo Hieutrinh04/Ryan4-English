@@ -7,6 +7,7 @@ import { DRILL_MODES, choicesFor, deckSupports, hasIpa, isCorrect, resolveMode, 
 import { COLLECTIONS, deckStats, progressOf, searchSets, setsFor, splitLabel } from "../lib/word-sets.mjs";
 import { buildDailyQueue } from "../lib/study-queue.mjs";
 import Icon, { type IconName } from "./Icon";
+import BackButton from "./BackButton";
 
 // Buổi luyện từ vựng: một bộ thẻ, sáu cách luyện, đổi qua lại bằng thanh tab mà
 // không mất chỗ đang đứng.
@@ -52,7 +53,9 @@ function speak(text: string, region: "US" | "UK" = "US", rate = 1) {
 }
 
 export default function VocabPractice({ words, close, onStudied, onResult, onToggleStar, onPickOther, onStartReview }: { words: WordCard[]; close: () => void; onStudied?: () => void; onResult?: (id: string, rating: Rating) => void; onToggleStar?: (id: string) => void; onPickOther?: (mode: string) => void; onStartReview?: (words: WordCard[], mode: ReviewMode) => void }) {
-  const [mode, setMode] = useState<Mode>("card");
+  // Cùng mặc định với các lối vào từ Trang chủ/folder: luôn bắt đầu bằng kiểu
+  // tổng hợp, không âm thầm giữ lại kiểu của phiên trước.
+  const [mode, setMode] = useState<Mode>("mixed");
   // Chọn bộ từ trước, rồi mới tới cách luyện. null nghĩa là đang ở màn thư viện.
   const [chosen, setChosen] = useState<WordSet | null>(null);
   const [collection, setCollection] = useState("all");
@@ -264,7 +267,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
   if (!chosen)
     return (
       <div className="page vocab-library">
-        <button className="back" onClick={close}>← Chọn chức năng khác</button>
+        <BackButton destination="Từ vựng" onClick={close} />
 
         <header className="writing-hero">
           <span className="writing-hero-icon"><Icon name="book" size={20} /></span>
@@ -351,13 +354,13 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
   if (!started)
     return (
       <div className="page vocab-drill">
-        <button className="back" onClick={() => setChosen(null)}>← Chọn bộ từ khác</button>
+        <BackButton destination="chọn bộ từ" onClick={() => setChosen(null)} />
         <div className="mode-picker">
           <h1>{chosen.label}</h1>
           <p className="page-sub">Chọn cách bạn muốn luyện {deck.length} từ trong bộ này</p>
 
           <div className="mode-options" role="radiogroup" aria-label="Chế độ luyện tập">
-            {DRILL_MODES.map((item: { value: string; label: string; icon: string; hint: string }) => (
+            {DRILL_MODES.map((item: { value: string; label: string; icon: string; hint: string; badge?: string }) => (
               <button
                 key={item.value}
                 role="radio"
@@ -371,6 +374,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
                   <b>{item.label}</b>
                   <small>{deckSupports(deck, item.value) ? item.hint : "Bộ từ này chưa đủ dữ liệu cho cách luyện đó"}</small>
                 </span>
+                {item.badge && <em className="mode-option-badge">{item.badge}</em>}
                 <i className="mode-option-dot" />
               </button>
             ))}
@@ -395,7 +399,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
             }}
             disabled={!deck.length}
           >
-            Bắt đầu luyện tập
+            Bắt đầu học
           </button>
 
           {onPickOther && (
@@ -420,7 +424,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
   if (!deck.length)
     return (
       <div className="page vocab-drill">
-        <button className="back" onClick={close}>← Chọn chức năng khác</button>
+        <BackButton destination="Từ vựng" onClick={close} />
         <p className="empty">Bộ này chưa có từ nào để luyện.</p>
       </div>
     );
@@ -428,7 +432,7 @@ export default function VocabPractice({ words, close, onStudied, onResult, onTog
   if (done)
     return (
       <div className="page vocab-drill">
-        <button className="back" onClick={() => setStarted(false)}>← Đổi chế độ luyện</button>
+        <BackButton destination="chọn chế độ" onClick={() => setStarted(false)} />
         <div className="panel drill-summary">
           <span className="summary-mark">✓</span>
           <h2>Xong {deck.length} thẻ{focusIds ? " · phần làm sai" : ""}</h2>

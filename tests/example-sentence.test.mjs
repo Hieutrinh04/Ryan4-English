@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { exampleUsesVocabulary, vocabularyForms } from "../lib/example-match.mjs";
 
 const source = await readFile(new URL("../app/api/ai/enrich/route.ts", import.meta.url), "utf8");
 
@@ -19,7 +20,7 @@ function extract(name) {
 
 const names = ["isSentenceShape", "isUsableSentence", "sentenceScore", "cleanExample"];
 const stripped = names.map(extract).join("\n").replace(/:\s*string/g, "");
-const { isSentenceShape, isUsableSentence, sentenceScore, cleanExample } = new Function(`${stripped}; return { ${names.join(", ")} };`)();
+const { isSentenceShape, isUsableSentence, sentenceScore, cleanExample } = new Function("exampleUsesVocabulary", `${stripped}; return { ${names.join(", ")} };`)(exampleUsesVocabulary);
 
 test("isUsableSentence: nhận câu thật có chứa từ đang học", () => {
   assert.equal(isUsableSentence("I don't like such sports as boxing and hockey.", "hockey"), true);
@@ -48,6 +49,11 @@ test("isUsableSentence: khớp cả dạng số nhiều của từ", () => {
   assert.equal(isUsableSentence("Lychees taste a lot like grapes.", "lychee"), true);
 });
 
+test("isUsableSentence: không nhầm danh từ closets với động từ closeted", () => {
+  assert.equal(isUsableSentence("The bedrooms have large closets for winter coats.", "closets", "noun"), true);
+  assert.equal(isUsableSentence("The ambassador was closeted with the prime minister all afternoon.", "closets", "noun"), false);
+});
+
 test("sentenceScore: chuộng câu 8–14 chữ", () => {
   const vua = "I don't like such sports as boxing and hockey.";
   const ngan = "That's a maple.";
@@ -69,4 +75,27 @@ test("isSentenceShape: không đòi câu phải chứa từ đang học", () => 
 test("cleanExample: cắt phần trích nguồn phía sau dấu gạch dài", () => {
   assert.equal(cleanExample("She blinked twice. — Some Author"), "She blinked twice.");
   assert.equal(cleanExample("  Look   in the closet!  "), "Look in the closet!");
+});
+
+// Thẻ "closets" (danh từ số nhiều) từng nhận câu ví dụ dùng "closeted" (động từ,
+// nghĩa hoàn toàn khác). Nó lọt vì metadata ghi nhầm partOfSpeech là "verb", và
+// bộ so khớp khi đó chia động từ từ MỌI dạng danh từ suy ra được — kể cả dạng số
+// ít "closet" — nên "closeted" được coi là hợp lệ.
+test("không chấp nhận câu dùng dạng chia của một từ loại khác", () => {
+  const sai = "The ambassador has been closeted with the prime minister all afternoon.";
+  const dung = "The bedrooms have large closets for winter coats.";
+
+  // Dù metadata ghi nhầm là động từ, thẻ số nhiều vẫn không nhận câu "closeted".
+  assert.equal(exampleUsesVocabulary(sai, "closets", "verb"), false);
+  assert.equal(exampleUsesVocabulary(dung, "closets", "verb"), true);
+  assert.equal(exampleUsesVocabulary(dung, "closets", "noun"), true);
+
+  // Thẻ động từ thật thì vẫn nhận đúng các dạng chia của CHÍNH nó.
+  assert.equal(exampleUsesVocabulary(sai, "closet", "verb"), true);
+  assert.equal(exampleUsesVocabulary("I am studying English tonight.", "study", "verb"), true);
+  assert.equal(exampleUsesVocabulary("He walked home alone.", "walk", "verb"), true);
+
+  // Dạng chia chỉ sinh từ chính chữ đang học, không từ dạng số ít của nó.
+  assert.ok(!vocabularyForms("closets", "verb").includes("closeted"));
+  assert.ok(vocabularyForms("closet", "verb").includes("closeted"));
 });

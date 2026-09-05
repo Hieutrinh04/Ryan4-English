@@ -6,6 +6,7 @@
 export type Rating = "again" | "hard" | "good" | "easy";
 export type ReviewMode = "card" | "vi_en" | "en_vi" | "quiz" | "listen" | "mixed";
 export type ExamGoal = { date: string; label: string };
+export type LexicalType = "word" | "chunk" | "collocation" | "phrase";
 
 export type WordCard = {
   id: string;
@@ -26,6 +27,8 @@ export type WordCard = {
   intervalDays?: number;
   reviewCount?: number;
   partOfSpeech?: string;
+  /** Đơn vị từ vựng V2: không ép mọi mục người dùng lưu thành một "từ". */
+  lexicalType?: LexicalType;
   /** Bậc CEFR ước lượng (A1–C2). Xem lib/word-level.mjs. */
   cefr?: string;
   note?: string;

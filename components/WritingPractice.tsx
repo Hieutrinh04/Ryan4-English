@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon, { type IconName } from "./Icon";
+import BackButton from "./BackButton";
 import TaskChart, { type Chart } from "./TaskChart";
 import { aiFetch } from "../lib/supabase";
 import { CRITERIA, EXAMS, countWords, makeAttempt, readAttempts, saveAttempt, summarise } from "../lib/writing.mjs";
@@ -339,6 +340,7 @@ export default function WritingPractice({ onStudied, openTranslate }: { onStudie
   if (paragraphTask && paragraphSentence)
     return (
       <div className="page paragraph-session translate-page">
+        <BackButton destination="thư viện đoạn văn" onClick={() => setParagraphTask(null)} />
         <header className="paragraph-session-head translation-session-head">
           <div><span className="eyebrow">LUYỆN VIỆT → ANH · ĐOẠN VĂN</span><h1>{paragraphTask.title}</h1></div>
           <div className="translation-session-stats">
@@ -387,7 +389,6 @@ export default function WritingPractice({ onStudied, openTranslate }: { onStudie
               <div className="paragraph-input-help translate-input-help"><span><kbd>Enter</kbd> chấm câu · <kbd>Shift</kbd> + <kbd>Enter</kbd> xuống dòng</span>{paragraphAnswer && !paragraphChecked ? <button type="button" onClick={() => setParagraphAnswer("")}>Xóa nội dung</button> : null}</div>
             </div>
             <div className="paragraph-actions translate-actions">
-              <button onClick={() => setParagraphTask(null)}>← Thư viện</button>
               <button onClick={() => setParagraphAnswer(paragraphSentence.en.split(" ").slice(0, 2).join(" "))}>♦ Gợi ý</button>
               {!paragraphChecked ? <button className="primary" disabled={!paragraphAnswer.trim() || paragraphGrading} onClick={() => void checkParagraphSentence()}>Chấm câu này</button> : paragraphGrading ? <button className="primary" disabled>Đang chấm ngữ nghĩa…</button> : paragraphGradeError ? <button className="primary retry" type="button" onClick={() => void requestParagraphAiGrade()}>Chấm lại bằng AI</button> : paragraphPassed ? <button className="primary" onClick={nextParagraphSentence}>{paragraphIndex + 1 === paragraphTask.sentences.length ? "Xem tổng kết →" : "Câu tiếp →"}</button> : <button className="primary retry" type="button" onClick={retryParagraphSentence}>Viết lại câu này</button>}
             </div>
@@ -427,7 +428,7 @@ export default function WritingPractice({ onStudied, openTranslate }: { onStudie
   if (task)
     return (
       <div className="page writing-task">
-        <button className="back" onClick={backToLibrary}>← Chọn đề khác</button>
+        <BackButton destination="chọn đề" onClick={backToLibrary} />
 
         <div className="writing-task-body">
           <section className="panel writing-prompt">
@@ -572,7 +573,7 @@ export default function WritingPractice({ onStudied, openTranslate }: { onStudie
   if (route === "paragraphs")
     return (
       <div className="page paragraph-library">
-        <button className="back" onClick={() => setRoute("home")}>← Viết</button>
+        <BackButton destination="Viết" onClick={() => setRoute("home")} />
         <header className="writing-hub-head"><span className="writing-hero-icon"><Icon name="book" size={20} /></span><div><h1>Đoạn văn có sẵn</h1><p>Chọn trình độ và nội dung, sau đó dịch từng câu trong một mạch văn hoàn chỉnh.</p></div></header>
         <div className="paragraph-toolbar">
           <label><Icon name="search" size={16} /><input value={paragraphQuery} onChange={(event) => setParagraphQuery(event.target.value)} placeholder="Tìm theo tên bài hoặc chủ đề…" /></label>
@@ -594,7 +595,7 @@ export default function WritingPractice({ onStudied, openTranslate }: { onStudie
   // ── Màn chọn đề kỳ thi ────────────────────────────────────────────────────
   return (
     <div className="page writing-library">
-      <button className="back" onClick={() => setRoute("home")}>← Viết</button>
+      <BackButton destination="Viết" onClick={() => setRoute("home")} />
 
       <header className="writing-hero">
         <span className="writing-hero-icon"><Icon name="pen" size={20} /></span>

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "./Icon";
+import BackButton from "./BackButton";
 import { groupByLesson, readSaved, removeSentence } from "../lib/saved-sentences.mjs";
 import { addLessonsToCatalogue, addToCatalogue, countNew, groupByChannel, readCatalogue, removeFromCatalogue, shelves, videoProgress, withLessonState } from "../lib/catalogue.mjs";
 import { readableLength } from "../lib/youtube-list.mjs";
@@ -371,7 +372,7 @@ export default function LessonLibrary({
       <div ref={controlsRef} className="library-sticky-controls">
       <header className="library-hero">
         <div className="library-title-row">
-          <button className="back is-icon" onClick={close} aria-label="Quay lại không gian kỹ năng">←</button>
+          <BackButton destination={mode === "dictation" ? "Nghe" : "Nói"} onClick={close} />
           <span className="library-mode-icon"><Icon name={mode === "dictation" ? "headphones" : "mic"} size={19} /></span>
           <div>
             <h1>{mode === "dictation" ? "Nghe chép" : "Nói nhại"}</h1>

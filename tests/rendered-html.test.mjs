@@ -117,6 +117,24 @@ test("lets the owner clear an optional weekday in the vocabulary picker", async 
   assert.match(styles, /lesson-lookup-lists\{max-height:min\(520px,60vh\);overflow-y:auto;overflow-x:hidden\}/);
 });
 
+test("keeps weekday scheduling separate from user-selected vocabulary folders", async () => {
+  const [page, picker] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/WordListPicker.tsx", import.meta.url), "utf8"),
+  ]);
+  const addWord = page.slice(page.indexOf("function AddWord"));
+  assert.match(addWord, /Ngày học/);
+  assert.match(addWord, /!legacyCollections && <WordListPicker/);
+  assert.match(addWord, /selectedFolderIds=\{folderIds\}/);
+  assert.match(addWord, /onSelectedFolderIdsChange=\{setFolderIds\}/);
+  assert.match(page, /save=\{\(word, folderIds\) =>/);
+  assert.match(page, /addWords\(current, folderId, \[created\.id\]\)/);
+  assert.match(picker, /Lưu vào danh sách/);
+  assert.match(picker, /Không bắt buộc · có thể chọn nhiều danh sách/);
+  assert.match(picker, /Tạo và chọn/);
+  assert.doesNotMatch(picker, /<form onSubmit/);
+});
+
 test("renders one folder detail panel instead of duplicating the list", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.equal((page.match(/Danh sách này chưa có từ nào/g) ?? []).length, 1);
@@ -173,6 +191,21 @@ test("keeps word and dictionary-sense suggestions optional when adding vocabular
   assert.match(addWord, /disabled=\{!!duplicate \|\| !term\.trim\(\)\}/);
   assert.doesNotMatch(addWord.slice(addWord.indexOf("function submit"), addWord.indexOf("return (")), /Mỗi từ cần có cụm đi cùng/);
   assert.match(redesign, /\.term-suggest-skip/);
+});
+
+test("keeps the add-word layout stable when a lookup returns many senses", async () => {
+  const [page, redesign] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/workspace-redesign.css", import.meta.url), "utf8"),
+  ]);
+  const addWord = page.slice(page.indexOf("function AddWord"));
+  assert.match(addWord, /<details className="sense-picker">/);
+  assert.match(addWord, /Mở để đổi nghĩa/);
+  assert.match(addWord, /className="field-wide"[\s\S]*Nghĩa tiếng Việt/);
+  assert.match(addWord, /Thông tin cơ bản/);
+  assert.match(addWord, /Cách dùng/);
+  assert.match(redesign, /\.full-screen-form>\.form-screen \.modal-actions\{position:static/);
+  assert.match(redesign, /\.add-word-basics \.field-wide\{grid-column:1\/-1\}/);
 });
 
 test("studies every word when a folder is selected", async () => {
@@ -312,15 +345,16 @@ test("falls back to a second dictionary when adding a common new word", async ()
 });
 
 test("keeps the learning workspace usable across mobile breakpoints", async () => {
-  const [page, styles] = await Promise.all([
+  const [page, styles, redesign] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/extras.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/workspace-redesign.css", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /\{!reviewing && <nav className="mobile-nav"/);
-  assert.match(page, /goTab\("dictionary"\)[\s\S]*Từ điển/);
+  assert.match(page, /openDictionaryPage[\s\S]*Từ điển/);
   assert.match(styles, /\.mobile-nav\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
-  assert.match(styles, /\.review-modes\{display:grid;grid-template-columns:none;grid-auto-flow:column/);
+  assert.match(redesign, /\.lexilo-workspace \.review-modes \{[\s\S]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/);
   assert.match(styles, /\.word-tools select,\.word-tools>button\{display:flex/);
   assert.match(styles, /\.word-table \.word-tr:not\(\.word-th\)\{position:relative;display:grid/);
   assert.match(styles, /\.lesson-lookup-popover\{position:fixed/);
@@ -397,7 +431,11 @@ test("returns every practice tool to its owning skill hub", async () => {
   // nó không nhận close: nút "về trang chủ" ở đó chỉ lặp lại thứ đã luôn hiện sẵn.
   assert.doesNotMatch(practice, /WritingPractice[sS]*close=/);
   assert.match(practice, /MatchGame words=\{activeWords\} close=\{returnToVocabPractice\}/);
-  assert.match(practice, /onClick=\{onExitTool\}>← Quay lại không gian kỹ năng/);
+  // Màn "chưa có từ nào" chỉ tới được từ luồng từ vựng: guard worksWithoutVocabulary
+  // ngay phía trên đã loại hết dictation/shadow/speak/translate. Trước đây chỗ này
+  // là một chuỗi ba nhánh chọn đích theo mode, nhưng TypeScript chỉ ra không nhánh
+  // nào trong số đó chạy được — nên đích lùi luôn là Từ vựng.
+  assert.match(practice, /<BackButton destination="Từ vựng" onClick=\{onExitTool\} \/>/);
 });
 
 test("opens the three writing paths directly from the Writing workspace", async () => {
@@ -415,8 +453,8 @@ test("opens the three writing paths directly from the Writing workspace", async 
   assert.match(writing, /Viết theo kỳ thi/);
   assert.match(writing, /Viết bằng từ vựng của bạn/);
   assert.doesNotMatch(writing, /← Trang chủ/);
-  assert.equal((writing.match(/← Viết/g) ?? []).length, 2);
-  assert.doesNotMatch(writing, /← Chọn chức năng khác|← Luyện viết/);
+  assert.equal((writing.match(/<BackButton destination="Viết"/g) ?? []).length, 2);
+  assert.doesNotMatch(writing, /← Chọn chức năng khác|← Luyện viết|<button className="back/);
   assert.match(page, /Chưa có từ để tạo bài viết/);
 });
 
@@ -428,17 +466,17 @@ test("mỗi bước trong kế hoạch hôm nay mở đúng màn của bước �
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const plan = page.slice(page.indexOf("function LearningPlan("), page.indexOf("function DailyStudy("));
 
-  // Bốn kỹ năng, bốn đích khác nhau — trùng nhau là lại sai như cũ.
+  // Ba bước video/nói dùng mảng; Review, Error Practice và Writing có hành động riêng.
   const modes = [...plan.matchAll(/mode: "([a-z]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(modes, ["dictation", "speak", "translate"]);
+  assert.deepEqual(modes, ["dictation", "shadow", "speak"]);
   assert.equal(new Set(modes).size, modes.length);
   // Bước 01 là từ vựng, đi bằng đường riêng chứ không qua openPractice.
   assert.match(plan, /onClick=\{startVocabulary\}/);
   assert.match(plan, /onClick=\{\(\) => openPractice\(step\.mode\)\}/);
 
-  // Thẻ tự xưng "4 kỹ năng" thì phải có đủ bốn bước: 01 + ba bước sinh từ mảng.
-  assert.match(plan, /Học đủ 4 kỹ năng/);
-  assert.equal(modes.length + 1, 4);
+  assert.match(plan, /Review → Listening → Shadowing → Speaking → Error Practice/);
+  assert.match(plan, /openPractice\("translate"\)/);
+  assert.match(plan, /onClick=\{openErrors\}/);
 
   // Nơi gọi phải chuyền thẳng hàm điều hướng. Bọc lại bằng một chế độ cố định —
   // openPractice={() => openPractice("dictation")} — chính là lỗi cũ.
@@ -470,44 +508,102 @@ test("công cụ mở từ không gian kỹ năng thì có đường lùi, vào 
 
   // Cả hai màn đều nhận đường lùi, và chỉ hiện nút khi thật sự có đường.
   assert.match(page, /<Words\b[\s\S]{0,900}?onExitTool=\{toolOrigin \? \(\) => openSkill\(toolOrigin\) : undefined\}/);
-  assert.match(page, /<Dictionary\b[\s\S]{0,200}?onExitTool=\{toolOrigin \? \(\) => openSkill\(toolOrigin\) : undefined\}/);
+  assert.match(page, /<Dictionary\b[\s\S]{0,300}?onExitTool=\{dictionaryOrigin \? returnFromDictionary : toolOrigin \? \(\) => openSkill\(toolOrigin\) : undefined\}/);
   assert.match(dictionary, /\{onExitTool && \(/);
   // Ở trong thư mục con thì đường dẫn lo việc lùi từng cấp, không hiện thêm nút.
   assert.match(page, /\{onExitTool && atRoot && \(/);
 });
 
+test("từ điển quay lại đúng màn nguồn và ví dụ cụm từ dùng ngữ cảnh thật", async () => {
+  const [page, dictionary, route] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/Dictionary.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/ai/enrich/route.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /setDictionaryOrigin\(\{ tab, skillHub, reviewing, label:/);
+  assert.match(page, /function returnFromDictionary\(\)[\s\S]*setTab\(dictionaryOrigin\.tab\)[\s\S]*setReviewing\(dictionaryOrigin\.reviewing\)/);
+  assert.match(page, /openDictionary: openDictionaryPage/);
+  assert.match(dictionary, /<BackButton destination=\{backDestination \|\| "Từ vựng"\}/);
+  assert.match(route, /"ears scratched":\{phrase:"have one's ears scratched"[\s\S]*The dog loves having his ears scratched\./);
+  assert.match(route, /const practical=practicalPhrases\[word\];[\s\S]*const example=practical\?\.example\?\?corpus\?\.text\?\?frame\.example/);
+});
+
 // Mỗi màn từng tự vẽ một kiểu nút lùi: chỗ chữ tím trơn, chỗ ô vuông chỉ có mũi
 // tên với màu cắm cứng không theo chủ đề. Test giữ cho tất cả đi qua một lớp
-// .back duy nhất, để sửa dáng một lần là cả ứng dụng đổi theo.
-test("mọi nút lùi dùng chung lớp .back", async () => {
+// BackButton duy nhất, để nhãn, trợ năng và kiểu dáng không thể lệch giữa bốn kỹ năng.
+test("mọi màn con của bốn kỹ năng dùng chung BackButton", async () => {
   const files = ["../app/page.tsx", "../components/Dictionary.tsx", "../components/LessonLibrary.tsx",
-    "../components/VideoLesson.tsx", "../components/SpeakingPractice.tsx", "../components/VocabPractice.tsx"];
+    "../components/VideoLesson.tsx", "../components/SpeakingPractice.tsx", "../components/VocabPractice.tsx",
+    "../components/WritingPractice.tsx"];
   const sources = await Promise.all(files.map((file) => readFile(new URL(file, import.meta.url), "utf8")));
 
   for (const [index, source] of sources.entries()) {
-    // Nút lùi = mũi tên ← mở đầu nhãn, hoặc ô chỉ có mũi tên nhưng nhãn trợ năng
-    // nói "Quay lại". Cặp ←/→ để lật thẻ là phân trang, không tính.
-    const buttons = source.match(/<button[^>]*>[^<]*/g) ?? [];
-    for (const button of buttons) {
-      const label = button.slice(button.indexOf(">") + 1).trim();
-      if (!label.startsWith("←")) continue;
-      const isPager = label === "←" && !/aria-label="[^"]*Quay lại/.test(button);
-      if (isPager) continue;
-      assert.match(button, /className="[^"]*\bback\b/, `${files[index]} còn nút lùi ngoài .back: ${button}`);
-    }
+    // Không màn nào được tự vẽ lại nút lùi. Cặp ←/→ để lật thẻ là phân trang,
+    // không mang class .back nên không tính vào hợp đồng này.
+    assert.doesNotMatch(source, /<button[^>]*className="[^"]*\bback\b/, `${files[index]} còn tự dựng nút .back`);
+    assert.doesNotMatch(source, /<button[^>]*>\s*←\s*(?:Quay lại|Chọn|Đổi|Viết|Thư viện)/, `${files[index]} còn nhãn nút lùi viết tay`);
   }
 
-  // Không còn lớp riêng nào cạnh tranh với .back cho cùng một việc.
+  const component = await readFile(new URL("../components/BackButton.tsx", import.meta.url), "utf8");
+  assert.match(component, /className="back app-back-button"/);
+  assert.match(component, /<span>Quay lại \{destination\}<\/span>/);
+  assert.match(component, /type="button"/);
+
+  // Không còn biến thể chỉ có mũi tên hoặc lớp riêng cạnh tranh cho cùng một việc.
   const all = sources.join("\n");
   assert.doesNotMatch(all, /className="library-back"/);
   assert.doesNotMatch(all, /className="back tool-back"/);
   assert.doesNotMatch(all, /className="drill-icon"[^>]*aria-label="Quay lại/);
+  assert.doesNotMatch(all, /\bis-icon\b/);
 
-  // Kiểu dáng nằm một chỗ, và biến thể chỉ-mũi-tên dùng lại chính lớp đó.
+  // Kiểu dáng nằm một chỗ và luôn có cùng chiều cao, độ bo.
   const css = await readFile(new URL("../app/workspace-redesign.css", import.meta.url), "utf8");
   assert.match(css, /\.lexilo-workspace \.back \{/);
-  assert.match(css, /\.lexilo-workspace \.back\.is-icon \{/);
+  assert.match(css, /\.lexilo-workspace \.back\.app-back-button \{[\s\S]*min-height: 36px;[\s\S]*border-radius: 10px;/);
+  assert.doesNotMatch(css, /\.back\.is-icon/);
   // Màu phải lấy từ biến chủ đề, nếu không thì chủ đề sáng lại có ô đen như cũ.
-  const block = css.slice(css.indexOf(".lexilo-workspace .back {"), css.indexOf(".lexilo-workspace .back.is-icon {"));
+  const block = css.slice(css.indexOf(".lexilo-workspace .back {"), css.indexOf("/* Chỉ khoảng cách"));
   assert.doesNotMatch(block, /#[0-9a-fA-F]{3,6}/, "nút lùi không được cắm cứng mã màu");
+});
+
+// Hai luồng từ vựng — màn "Luyện từ vựng" và phiên ôn — làm cùng một việc với
+// cùng sáu kiểu, nhưng từng là hai bộ code song song: hai bảng nhãn, hai danh
+// sách vòng xoay, hai cách xử lý kiểu mà bộ thẻ không đủ dữ liệu. Test giữ cho
+// chúng chỉ còn một nguồn.
+test("hai luồng từ vựng dùng chung một nguồn cho nhãn, vòng xoay và điều kiện", async () => {
+  const [page, drill, vocab] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/vocab-drill.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../components/VocabPractice.tsx", import.meta.url), "utf8"),
+  ]);
+
+  // Nhãn và mô tả suy ra từ DRILL_MODES, không chép tay lần thứ hai.
+  assert.match(page, /const reviewModes[\s\S]{0,200}= DRILL_MODES\.map\(/);
+  assert.doesNotMatch(page, /label: "Thẻ ghi nhớ"/);
+
+  // Vòng xoay của "Luyện tổng hợp" cũng vậy — trước đây là một mảng chép tay
+  // cùng nội dung nhưng khác thứ tự, nên cùng một lựa chọn cho ra hai chuỗi bài.
+  assert.match(page, /rotatingModes[\s\S]{0,120}MIXED_POOL/);
+  assert.doesNotMatch(page, /rotatingModes: ReviewMode\[\] = \["/);
+
+  // Bảng ánh xạ hai chiều suy ra từ nhau, không khai hai lần.
+  assert.match(page, /reviewToDrillMode = Object\.fromEntries/);
+
+  // Kiểu mà bộ thẻ chưa đủ dữ liệu bị chặn ở CẢ HAI màn, bằng cùng một hàm.
+  assert.match(vocab, /disabled=\{!deckSupports\(deck, item\.value\)\}/);
+  assert.match(page, /disabled=\{!deckSupports\(deck, reviewToDrillMode\[item\.value\]\)\}/);
+  assert.match(drill, /export function deckSupports/);
+
+  // Cả hai vào bằng cùng một kiểu mặc định.
+  assert.match(page, /useState<ReviewMode>\("mixed"\)/);
+  assert.match(vocab, /useState<Mode>\("mixed"\)/);
+});
+
+// Một ô trống trong thẻ từ chỉ được làm mất một dòng chữ, không được làm sập
+// phiên học. Từ lưu từ bản cũ hoàn toàn có thể thiếu cloze hoặc definition.
+test("chữ tiếng Anh thiếu nội dung thì bỏ qua, không làm sập màn", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const fn = page.slice(page.indexOf("function EnglishText"), page.indexOf("function EnglishText") + 3000);
+  assert.match(fn, /if \(!text\) return null;[\s\S]{0,200}text\.split/);
 });

@@ -21,6 +21,7 @@ create extension if not exists "pgcrypto";
 create table if not exists public.vocabulary_catalog (
   id uuid primary key default gen_random_uuid(),
   term text not null,
+  lexical_type text not null default 'word' check (lexical_type in ('word', 'chunk', 'collocation', 'phrase')),
   part_of_speech text,
   ipa text,
   meaning_vi text not null,
@@ -51,6 +52,7 @@ create table if not exists public.user_custom_words (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   term text not null,
+  lexical_type text not null default 'word' check (lexical_type in ('word', 'chunk', 'collocation', 'phrase')),
   part_of_speech text,
   ipa text,
   meaning_vi text not null,
@@ -194,18 +196,53 @@ create table if not exists public.error_events (
   user_id uuid not null references auth.users(id) on delete cascade,
   attempt_id uuid references public.translation_attempts(id) on delete cascade,
   error_type text not null check (error_type in (
-    'article', 'preposition', 'verb_form', 'verb_tense', 'word_order',
-    'agreement', 'vocabulary', 'collocation', 'spelling', 'natural_expression', 'other'
+    'tense', 'grammar', 'article', 'preposition', 'word_order',
+    'vocabulary', 'collocation', 'meaning', 'naturalness', 'vietnamese_translation'
   )),
   wrong_text text,
   correct_text text,
   explanation text,
+  source_skill text not null default 'writing' check (source_skill in ('writing', 'speaking', 'listening', 'vocab')),
+  rule text,
+  example text,
   -- Từ vựng liên quan, để nối lỗi ngược về lịch ôn của chính từ đó.
   catalog_id uuid references public.vocabulary_catalog(id) on delete set null,
   custom_word_id uuid references public.user_custom_words(id) on delete set null,
   created_at timestamptz not null default now()
 );
 create index if not exists error_events_user_type_idx on public.error_events (user_id, error_type, created_at desc);
+
+create table if not exists public.error_mastery (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  error_type text not null check (error_type in (
+    'tense', 'grammar', 'article', 'preposition', 'word_order',
+    'vocabulary', 'collocation', 'meaning', 'naturalness', 'vietnamese_translation'
+  )),
+  occurrence_count integer not null default 0,
+  clean_days integer not null default 0,
+  last_seen date,
+  status text not null default 'improving' check (status in ('weak', 'improving', 'mastered')),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, error_type)
+);
+
+create or replace function public.refresh_error_mastery_from_event()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.error_mastery (user_id, error_type, occurrence_count, last_seen, status, updated_at)
+  values (new.user_id, new.error_type, 1, new.created_at::date, 'improving', now())
+  on conflict (user_id, error_type) do update
+    set occurrence_count = public.error_mastery.occurrence_count + 1,
+        last_seen = greatest(public.error_mastery.last_seen, excluded.last_seen),
+        status = case when public.error_mastery.occurrence_count + 1 >= 3 then 'weak' else 'improving' end,
+        clean_days = 0,
+        updated_at = now();
+  return new;
+end;
+$$;
+drop trigger if exists error_events_refresh_mastery on public.error_events;
+create trigger error_events_refresh_mastery after insert on public.error_events
+for each row execute function public.refresh_error_mastery_from_event();
 
 -- ── Nghe chép ──────────────────────────────────────────────────────────────
 
@@ -301,6 +338,7 @@ alter table public.study_sessions enable row level security;
 alter table public.translation_exercises enable row level security;
 alter table public.translation_attempts enable row level security;
 alter table public.error_events enable row level security;
+alter table public.error_mastery enable row level security;
 alter table public.dictation_attempts enable row level security;
 alter table public.ai_usage enable row level security;
 alter table public.rag_chunks enable row level security;
@@ -317,7 +355,7 @@ begin
   -- Các bảng có cột user_id: mỗi người chỉ thấy dòng của mình.
   foreach t in array array[
     'user_custom_words', 'user_word_states', 'review_logs', 'study_sessions',
-    'translation_exercises', 'translation_attempts', 'error_events',
+    'translation_exercises', 'translation_attempts', 'error_events', 'error_mastery',
     'dictation_attempts', 'ai_usage', 'rag_chunks', 'rag_retrieval_logs'
   ] loop
     execute format(

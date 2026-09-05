@@ -152,10 +152,13 @@ export function clearLegacyRelated(words: WordCard[]) {
 
 export function mergeStoredWords(loaded: WordCard[]) {
   const deleted = readDeletedIds();
-  const kept = loaded.filter((word) => !deleted.has(word.id));
+  // Năm thẻ minh họa đời đầu không phải dữ liệu của người dùng. Một số máy đã
+  // từng ghi chúng xuống localStorage trước khi có chốt writeLocalWords, nên
+  // phải lọc cả ở đường đọc để Dashboard và Kho từ không lệch nhau 5 mục.
+  const kept = loaded.filter((word) => !deleted.has(word.id) && !isSeedWord(word));
   const ids = new Set(kept.map((word) => word.id));
   return applyProgress(
-    clearLegacyRelated([...readLocalWords().filter((word) => !ids.has(word.id)), ...kept])
+    clearLegacyRelated([...readLocalWords().filter((word) => !isSeedWord(word) && !ids.has(word.id)), ...kept])
       .map(composeVietnamese)
       .map((word) => sanitiseVocabularyCard(word) as WordCard),
   );

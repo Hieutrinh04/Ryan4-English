@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import YouTubePlayer, { type PlayerHandle } from "./YouTubePlayer";
 import Icon from "./Icon";
+import BackButton from "./BackButton";
 import WordListPicker from "./WordListPicker";
 import { createRecogniser, hasRecognition, micError, type Recognition } from "../lib/speech";
 import { clearLessonProgress, doneSentences, needsRecapture, markSentence, readLessonProgress, readReports, reportedSentences, toggleReport } from "../lib/lessons.mjs";
@@ -22,6 +23,8 @@ import { foldersOf } from "../lib/folders.mjs";
 import { aiFetch } from "../lib/supabase";
 import { fallbackLessonSummary, normalizeLessonSummary } from "../lib/lesson-summary.mjs";
 import { MAX_CUE_OVERLAP, segmentPlaybackEnd, usesLegacyHalfSecondBoundaries } from "../lib/caption-timing.mjs";
+import { canReplay, LISTENING_MODES, replayLimit } from "../lib/listening-mode.mjs";
+import { logAttempt, makeAttempt } from "../lib/error-log.mjs";
 import type { NewWord } from "./Dictionary";
 
 type FolderStore = Parameters<typeof foldersOf>[0];
@@ -54,6 +57,8 @@ export type LookupVocab = {
 type Sentence = { index: number; start: number; end: number; text: string };
 export type Lesson = { id: string; videoId: string; title: string; author: string; seconds: number; captionVersion?: number; timingPrecision?: "second" | "millisecond" | "word"; sentences: Sentence[] };
 type Mode = "dictation" | "shadowing";
+type ListeningMode = "easy" | "normal" | "exam";
+type ShadowStage = "listen" | "shadow" | "retell" | "free" | "feedback";
 type CoachTip = { word: string; ipa: string; how: string };
 type CoachLink = { pair: string; rule: string; blend: string; how: string };
 type LessonSummary = ReturnType<typeof fallbackLessonSummary>;
@@ -158,6 +163,15 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
   const [prosody, setProsody] = useState<ProsodyScore | null>(null);
   // Chấm xong tự sang câu kế tiếp. Tắt mặc định vì người mới cần đọc lại chỗ sai.
   const [autoNext, setAutoNext] = useState(false);
+  const [listeningMode, setListeningMode] = useState<ListeningMode>("normal");
+  const [replays, setReplays] = useState<Record<number, number>>({});
+  const [examPhase, setExamPhase] = useState<"ready" | "playing" | "answering" | "checked">("ready");
+  const [examAnswer, setExamAnswer] = useState("");
+  const [missedSaved, setMissedSaved] = useState<Set<string>>(() => new Set());
+  const [shadowStage, setShadowStage] = useState<ShadowStage>("listen");
+  const [shadowResponse, setShadowResponse] = useState("");
+  const [shadowFeedback, setShadowFeedback] = useState<{ reply: string; correction?: { type?: string; wrong?: string; right?: string; why?: string; rule?: string; example?: string } | null } | null>(null);
+  const [shadowChecking, setShadowChecking] = useState(false);
 
   const stage = useRef<HTMLDivElement>(null);
   const player = useRef<PlayerHandle | null>(null);
@@ -275,6 +289,9 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
   // sang câu kế, Ctrl nghe lại mà không phải với chuột lên nút.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // Exam chỉ cho nghe một lượt liên tục. Phím tắt không được trở thành đường
+      // vòng để nghe lại, lộ đáp án hoặc chấm khi audio chưa kết thúc.
+      if (mode === "dictation" && listeningMode === "exam" && examPhase !== "checked") return;
       if (event.key === "Control") {
         playSentence();
         return;
@@ -373,15 +390,43 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
   // chạy 40 lần/giây nên không cần trừ sớm 60ms; trừ sớm chính là đủ để nuốt
   // phụ âm cuối ở các từ ngắn như "it", "did", "thank".
   useEffect(() => {
-    if (lessonView === "overview" || !sentence || !player.current?.playing()) return;
+    if (lessonView === "overview" || !sentence || !player.current?.playing() || (listeningMode === "exam" && examPhase === "playing")) return;
     if (at >= playbackEnd) player.current.pause();
-  }, [at, sentence, playbackEnd, lessonView]);
+  }, [at, sentence, playbackEnd, lessonView, listeningMode, examPhase]);
+
+  useEffect(() => {
+    if (listeningMode !== "exam" || examPhase !== "playing") return;
+    const active = lesson.sentences.findIndex((item, position) => at >= item.start && at < (lesson.sentences[position + 1]?.start ?? item.end));
+    if (active >= 0 && active !== index) setIndex(active);
+    if (at >= lesson.seconds - 0.35) {
+      player.current?.pause();
+      setExamPhase("answering");
+      setPlaying(false);
+    }
+  }, [at, examPhase, listeningMode, lesson.sentences, lesson.seconds, index]);
 
   /** Phát đúng câu đang làm, từ đầu câu. */
   function playSentence() {
     if (!sentence || !player.current) return;
+    if (mode === "dictation") {
+      if (listeningMode === "exam") return;
+      const used = replays[sentence.index] ?? 0;
+      if (!canReplay(listeningMode, used)) return;
+      setReplays((current) => ({ ...current, [sentence.index]: used + 1 }));
+    }
     player.current.rate(rate);
     player.current.seek(target.start);
+    player.current.play();
+    setPlaying(true);
+  }
+
+  function startExam() {
+    if (!player.current || examPhase !== "ready") return;
+    setIndex(0);
+    setExamAnswer("");
+    setExamPhase("playing");
+    player.current.rate(1);
+    player.current.seek(lesson.sentences[0]?.start ?? 0);
     player.current.play();
     setPlaying(true);
   }
@@ -521,6 +566,9 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
     const position = { x: Math.max(12, anchor.left - (card?.left ?? anchor.left)), y: anchor.bottom - (card?.top ?? anchor.top) + 8 };
     setSavedWordId(null);
     setListMenuOpen(false);
+    setShadowStage("listen");
+    setShadowResponse("");
+    setShadowFeedback(null);
     setLookup({ word, ipa: ipaCache[word] ?? "", meaning: "Đang tra…", ...position });
     try {
       const data = (await fetchGlance(word)) as {
@@ -628,6 +676,36 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
     () => (checked && sentence ? (scoreDictation(sentence.text, typed) as { percent: number; matched: number; total: number; words: { word: string; ok: boolean }[] }) : null),
     [checked, sentence, typed],
   );
+  const examText = useMemo(() => lesson.sentences.map((item) => item.text).join(" "), [lesson.sentences]);
+  const examResult = useMemo(
+    () => examPhase === "checked" ? (scoreDictation(examText, examAnswer) as { percent: number; matched: number; total: number; words: { word: string; ok: boolean }[] }) : null,
+    [examPhase, examText, examAnswer],
+  );
+  const missedWordsNow = useMemo(() => {
+    const rows = listeningMode === "exam" ? examResult?.words : result?.words;
+    return [...new Set((rows ?? []).filter((item) => !item.ok).map((item) => item.word.toLowerCase().replace(/[^a-z'-]/g, "")).filter(Boolean))];
+  }, [listeningMode, examResult, result]);
+
+  async function addMissedToReview() {
+    if (!vocab) return;
+    const added = new Set(missedSaved);
+    const terms = missedWordsNow.filter((term) => !added.has(term));
+    const found = await Promise.all(terms.map(async (term) => {
+      try {
+        const data = (await fetchGlance(term)) as { ipa?: string; meaningVi?: string; senses?: { part?: string; meaningVi?: string; definition?: string }[] };
+        const sense = data.senses?.find((item) => item.meaningVi || item.definition);
+        return { term, ipa: data.ipa || "", meaning: data.meaningVi || sense?.meaningVi || "", partOfSpeech: sense?.part || "", definition: sense?.definition || "" };
+      } catch {
+        return { term, ipa: "", meaning: "", partOfSpeech: "", definition: "" };
+      }
+    }));
+    for (const word of found) {
+      vocab.saveWord(word);
+      const term = word.term;
+      added.add(term);
+    }
+    setMissedSaved(added);
+  }
   const shapes = useMemo(() => (sentence ? (wordShapes(sentence.text) as { word: string; letters: number }[]) : []), [sentence]);
   // Còn thiếu thứ đang bật thì tức là đang tra. Suy ra thay vì giữ state riêng:
   // state riêng sẽ kẹt ở "đang tra" mãi nếu lượt gọi mạng hỏng giữa chừng.
@@ -644,6 +722,50 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
     // nhìn mình sai chỗ nào.
     if (autoNext && (scoreDictation(sentence.text, typed) as { percent: number }).percent === 100) {
       window.setTimeout(() => go(1), 700);
+    }
+  }
+
+  async function checkOpenSpeaking(stage: "retell" | "free") {
+    const said = shadowResponse.trim();
+    if (!said || shadowChecking) return;
+    setShadowChecking(true);
+    try {
+      const goal = stage === "retell" ? "Tóm tắt đúng ý chính bằng lời của mình" : "Nêu một ý kiến hoặc trải nghiệm liên quan đến nội dung";
+      const response = await aiFetch("/api/ai/speaking", {
+        method: "POST",
+        body: JSON.stringify({
+          scenario: {
+            title: stage === "retell" ? "Retell" : "Free Speaking",
+            setting: `Câu gốc trong video: ${target.text}`,
+            partner: "an English speaking coach",
+            you: "a learner responding without reading the original sentence",
+            goals: [goal],
+            level: "B1",
+          },
+          history: [],
+          said,
+        }),
+      });
+      const data = (await response.json()) as { reply?: string; correction?: { type?: string; wrong?: string; right?: string; why?: string; rule?: string; example?: string } | null; error?: string };
+      if (!response.ok || data.error) throw new Error(data.error || "Không chấm được phần nói mở rộng.");
+      setShadowFeedback({ reply: data.reply || "Your meaning is clear.", correction: data.correction });
+      if (data.correction) logAttempt(makeAttempt({
+        term: `${lesson.title} · ${stage}`,
+        vietnamese: target.text,
+        answer: said,
+        reference: data.correction.right || "",
+        score: 0,
+        correct: false,
+        gradedBy: "llm",
+        issues: [{ ...data.correction, kind: "error", sourceSkill: "speaking" }],
+        assessedTypes: [data.correction.type || "grammar"],
+      }));
+      setShadowStage(stage === "retell" ? "free" : "feedback");
+      setShadowResponse("");
+    } catch (error) {
+      setMicNote(error instanceof Error ? error.message : "Không chấm được phần nói mở rộng.");
+    } finally {
+      setShadowChecking(false);
     }
   }
 
@@ -870,7 +992,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
   if (!sentence)
     return (
       <div className="page">
-        <button className="back" onClick={close}>← Chọn bài khác</button>
+        <BackButton destination="danh sách bài" onClick={close} />
         <p className="empty">Bài này chưa có câu nào.</p>
       </div>
     );
@@ -938,7 +1060,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
 
   const lessonTop = (
     <div className="lesson-top">
-      <button className="back is-icon" onClick={close} aria-label="Quay lại bài học khác">←</button>
+      <BackButton destination="danh sách bài" onClick={close} />
       <span className="lesson-level">B1</span>
       <div className="lesson-title">
         <b>{lesson.title}</b>
@@ -1097,19 +1219,42 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
           </div>
 
           {mode === "dictation" && (
+            <section className="listening-mode-picker" aria-label="Mức độ bài nghe">
+              <div><b>Mức độ nghe</b><span>{listeningMode === "exam" ? "Toàn bài" : `Câu ${index + 1}`}</span></div>
+              {(LISTENING_MODES as { value: ListeningMode; label: string; hint: string }[]).map((item) => (
+                <button
+                  type="button"
+                  key={item.value}
+                  className={listeningMode === item.value ? "active" : ""}
+                  disabled={examPhase === "playing"}
+                  onClick={() => {
+                    player.current?.pause();
+                    setListeningMode(item.value);
+                    setExamPhase("ready");
+                    setChecked(false);
+                    setRevealed(false);
+                  }}
+                ><b>{item.label}</b><small>{item.hint}</small></button>
+              ))}
+            </section>
+          )}
+
+          {mode === "dictation" && (
             <div className="lesson-controls">
               <span className="lesson-time">{clock(at)} / {clock(lesson.seconds)}</span>
               <div className="lesson-transport">
-                <button onClick={() => go(-1)} disabled={index === 0} aria-label="Câu trước">⏮</button>
-                <button onClick={playSentence} aria-label="Nghe lại câu này">↺</button>
-                <button className="primary" onClick={playSentence} aria-label="Phát">▶</button>
-                <button onClick={() => go(1)} disabled={index >= lesson.sentences.length - 1} aria-label="Câu sau">⏭</button>
+                <button onClick={() => go(-1)} disabled={index === 0 || listeningMode === "exam"} aria-label="Câu trước">⏮</button>
+                <button onClick={playSentence} disabled={listeningMode === "exam" || !canReplay(listeningMode, replays[sentence.index] ?? 0)} aria-label="Nghe lại câu này">↺</button>
+                <button className="primary" onClick={listeningMode === "exam" ? startExam : playSentence} disabled={listeningMode === "exam" ? examPhase !== "ready" : !canReplay(listeningMode, replays[sentence.index] ?? 0)} aria-label="Phát">▶</button>
+                <button onClick={() => go(1)} disabled={index >= lesson.sentences.length - 1 || listeningMode === "exam"} aria-label="Câu sau">⏭</button>
               </div>
               <div className="lesson-rates">
+                {listeningMode !== "easy" && <small>{listeningMode === "exam" ? "1 lượt toàn bài" : `Còn ${Math.max(0, replayLimit(listeningMode) - (replays[sentence.index] ?? 0))} lượt`}</small>}
                 {RATES.map((value) => (
                   <button
                     key={value}
                     className={value === rate ? "active" : ""}
+                    disabled={listeningMode === "exam"}
                     onClick={() => {
                       setRate(value);
                       player.current?.rate(value);
@@ -1123,7 +1268,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
           )}
 
           {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- bôi đen chữ để dịch cụm, không phải nút bấm */}
-          <div className="panel lesson-work" onMouseUp={onPhraseSelect}>
+          <div className={`panel lesson-work${mode === "shadowing" ? ` shadow-stage-${shadowStage}` : ""}`} onMouseUp={onPhraseSelect}>
             <div className="lesson-work-head">
               <b>#{sentence.index}{mode === "shadowing" && target.count > 1 ? "–" + (sentence.index + target.count - 1) : ""}</b>
               <span>
@@ -1161,7 +1306,7 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
                 </em>
               )}
               {mode === "dictation" && <em className={result?.percent === 100 ? "good" : ""}>Khớp: {result?.percent ?? 0}%</em>}
-              {mode === "dictation" && (
+              {mode === "dictation" && listeningMode !== "exam" && (
                 <span className="lesson-keys">
                   <kbd>Enter</kbd> sang câu tiếp <kbd>Ctrl</kbd> nghe lại
                 </span>
@@ -1199,6 +1344,27 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
 
             {mode === "dictation" ? (
               <>
+                {listeningMode === "exam" && (
+                  <section className="listening-exam">
+                    <div className="listening-exam-status">
+                      <b>{examPhase === "ready" ? "Sẵn sàng thi" : examPhase === "playing" ? "Đang phát liên tục" : examPhase === "answering" ? "Đã nghe xong" : `Kết quả ${examResult?.percent ?? 0}%`}</b>
+                      <span>{examPhase === "ready" ? "Bài chỉ phát một lượt. Không tua, không dừng và không hiện phụ đề." : examPhase === "playing" ? `Đang nghe câu ${index + 1}/${lesson.sentences.length}. Ghi lại những gì bạn nghe được.` : "Nhập toàn bộ nội dung bạn nhớ rồi chấm bài."}</span>
+                    </div>
+                    {examPhase === "ready" ? (
+                      <button className="primary" type="button" onClick={startExam}>Bắt đầu phát toàn bài</button>
+                    ) : (
+                      <textarea value={examAnswer} onChange={(event) => setExamAnswer(event.target.value)} disabled={examPhase === "playing" || examPhase === "checked"} placeholder={examPhase === "playing" ? "Ô trả lời mở sau khi audio kết thúc…" : "Nhập transcript bạn đã nghe…"} />
+                    )}
+                    {examPhase === "answering" && <button className="primary" type="button" disabled={!examAnswer.trim()} onClick={() => { setExamPhase("checked"); finish(); }}>Chấm bài thi</button>}
+                    {examPhase === "checked" && <p className="lesson-answer-text">{examText}</p>}
+                    {examPhase === "checked" && missedWordsNow.length > 0 && vocab && (
+                      <button type="button" className="listening-review-add" onClick={addMissedToReview} disabled={missedWordsNow.every((word) => missedSaved.has(word))}>
+                        {missedWordsNow.every((word) => missedSaved.has(word)) ? "✓ Đã thêm từ nghe sai vào ôn tập" : `+ Thêm ${missedWordsNow.length} từ nghe sai vào ôn tập`}
+                      </button>
+                    )}
+                  </section>
+                )}
+                {listeningMode !== "exam" && <>
                 {/* Ô nhập lên trước ô trống: người học gõ ngay được, ô trống chỉ
                     là thứ liếc xuống khi bí. */}
                 <form
@@ -1285,9 +1451,54 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
                     </button>
                   )}
                 </div>
+                {checked && missedWordsNow.length > 0 && vocab && (
+                  <button type="button" className="listening-review-add" onClick={addMissedToReview} disabled={missedWordsNow.every((word) => missedSaved.has(word))}>
+                    {missedWordsNow.every((word) => missedSaved.has(word)) ? "✓ Đã thêm từ nghe sai vào ôn tập" : `+ Thêm ${missedWordsNow.length} từ nghe sai vào ôn tập`}
+                  </button>
+                )}
+                </>}
               </>
             ) : (
               <>
+                <nav className="shadow-flow" aria-label="Các bước luyện nói">
+                  {([
+                    ["listen", "1", "Nghe"], ["shadow", "2", "Shadow"], ["retell", "3", "Kể lại"], ["free", "4", "Nói tự do"], ["feedback", "5", "Phản hồi"],
+                  ] as [ShadowStage, string, string][]).map(([value, number, label]) => (
+                    <button type="button" key={value} className={shadowStage === value ? "active" : ""} onClick={() => setShadowStage(value)}>
+                      <i>{number}</i><span>{label}</span>
+                    </button>
+                  ))}
+                </nav>
+
+                {shadowStage !== "shadow" && (
+                  <section className="shadow-open-stage">
+                    {shadowStage === "listen" && <>
+                      <span className="eyebrow">BƯỚC 1 · LISTEN</span>
+                      <h2>Nghe để nắm ý và nhịp nói</h2>
+                      <p>Chưa cần nhại ngay. Nghe trọn câu một lần và chú ý chỗ người nói nhấn hoặc ngắt hơi.</p>
+                      <button className="primary" type="button" onClick={playSentence}><Icon name="play" size={18} /> Phát câu mẫu</button>
+                    </>}
+                    {(shadowStage === "retell" || shadowStage === "free") && <>
+                      <span className="eyebrow">{shadowStage === "retell" ? "BƯỚC 3 · RETELL" : "BƯỚC 4 · FREE SPEAKING"}</span>
+                      <h2>{shadowStage === "retell" ? "Kể lại ý bằng lời của bạn" : "Liên hệ với ý kiến hoặc trải nghiệm của bạn"}</h2>
+                      <p>{shadowStage === "retell" ? "Không đọc lại câu gốc. Giữ đúng ý chính, nhưng đổi cách diễn đạt." : "Nói thêm 1–3 câu liên quan. Không có một đáp án mẫu duy nhất."}</p>
+                      <textarea value={shadowResponse} onChange={(event) => setShadowResponse(event.target.value)} placeholder="Gõ nội dung bạn vừa nói bằng tiếng Anh…" />
+                      <button className="primary" type="button" disabled={!shadowResponse.trim() || shadowChecking} onClick={() => void checkOpenSpeaking(shadowStage)}>{shadowChecking ? "AI đang phản hồi…" : "Gửi để nhận phản hồi"}</button>
+                    </>}
+                    {shadowStage === "feedback" && <>
+                      <span className="eyebrow">BƯỚC 5 · AI FEEDBACK</span>
+                      <h2>{shadowFeedback?.correction ? "Một điểm cần sửa trước" : "Bạn đã diễn đạt rõ ý"}</h2>
+                      <p>{shadowFeedback?.reply || "Hoàn thành Retell và Free Speaking để nhận phản hồi theo nội dung."}</p>
+                      {shadowFeedback?.correction && <div className="shadow-open-fix">
+                        {shadowFeedback.correction.wrong && <s>{shadowFeedback.correction.wrong}</s>}
+                        <b>{shadowFeedback.correction.right}</b>
+                        <span>{shadowFeedback.correction.why}</span>
+                        {shadowFeedback.correction.rule && <small>Quy tắc: {shadowFeedback.correction.rule}</small>}
+                        {shadowFeedback.correction.example && <small>Ví dụ: {shadowFeedback.correction.example}</small>}
+                      </div>}
+                    </>}
+                  </section>
+                )}
                 {/* Thẻ câu mẫu. Chữ đọc liền thành một câu, IPA thành một dòng
                     riêng bên dưới — trước đây mỗi từ là một ô có IPA xếp chồng
                     nên nhìn ra một dãy thẻ chứ không còn ra một câu. */}
@@ -1500,13 +1711,14 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
                 className="primary lesson-next"
                 disabled={listening}
                 onClick={() => {
+                  if (shadowStage === "listen") return setShadowStage("shadow");
+                  if (shadowStage === "shadow") return setShadowStage("retell");
+                  if (shadowStage === "retell" || shadowStage === "free") return;
                   finish();
-                  // Sang câu mới thì phát luôn câu mẫu — nói nhại là nghe rồi nhại
-                  // theo, không có lý do gì bắt bấm phát thêm một lần nữa.
                   if (index < lesson.sentences.length - 1) go(1, true);
                 }}
               >
-                {index < lesson.sentences.length - 1 ? "Câu tiếp theo" : "Hoàn thành"} <Icon name={index < lesson.sentences.length - 1 ? "arrow" : "check"} size={16} />
+                {shadowStage === "listen" ? "Bắt đầu Shadow" : shadowStage === "shadow" ? "Tiếp tục Kể lại" : shadowStage === "feedback" ? (index < lesson.sentences.length - 1 ? "Câu tiếp theo" : "Hoàn thành") : "Hoàn thành bước này ở phía trên"} <Icon name={shadowStage === "feedback" && index >= lesson.sentences.length - 1 ? "check" : "arrow"} size={16} />
               </button>
             ) : index < lesson.sentences.length - 1 ? (
               <button className="primary lesson-next" onClick={() => go(1)}>Câu tiếp theo <Icon name="arrow" size={16} /></button>
@@ -1540,9 +1752,11 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
                   {previewAll ? "Đang xem trước" : "Xem trước"}
                 </button>
               )}
-              <button className="lesson-list-visibility" onClick={() => setShowText((value) => !value)} aria-pressed={showText} aria-label={showText ? "Ẩn nội dung phụ đề" : "Hiện nội dung phụ đề"}>
-                <span>Hiện</span><i aria-hidden="true" />
-              </button>
+              {(mode !== "dictation" || listeningMode !== "exam") && (
+                <button className="lesson-list-visibility" onClick={() => setShowText((value) => !value)} aria-pressed={showText} aria-label={showText ? "Ẩn nội dung phụ đề" : "Hiện nội dung phụ đề"}>
+                  <span>Hiện</span><i aria-hidden="true" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -1562,9 +1776,9 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
               // đã chép xong, hoặc bật "Xem trước cả bài". Nói nhại thì luôn cho xem.
               const active = position === index;
               const open =
-                mode === "shadowing" ||
-                previewAll ||
-                (active ? checked : done.has(item.index));
+                listeningMode === "exam"
+                  ? examPhase === "checked"
+                  : mode === "shadowing" || previewAll || (active ? checked : done.has(item.index));
               return (
                 <li key={item.index}>
                   <button
@@ -1580,7 +1794,9 @@ export default function VideoLesson({ lesson, mode, close, onStudied, onMode, vo
                         <em className="at">{clock(item.start)}</em>
                       </span>
                       <span className="lesson-list-text">
-                        {!showText && !previewAll
+                        {listeningMode === "exam" && examPhase !== "checked"
+                          ? (wordShapes(item.text) as { letters: number }[]).map((shape) => "·".repeat(shape.letters || 1)).join(" ")
+                          : !showText && !previewAll
                           ? ""
                           : open
                             ? item.text

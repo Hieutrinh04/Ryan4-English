@@ -4,6 +4,7 @@ import {
   attemptAdvice,
   attemptsSince,
   makeAttempt,
+  practiceForError,
   summariseAttempts,
   trendOf,
   typesFromIssues,
@@ -23,7 +24,7 @@ function attempt(overrides = {}, offsetDays = 0) {
 
 test("typesFromNotes: đổi nhận xét so câu mẫu sang nhãn chuẩn", () => {
   const types = typesFromNotes([{ kind: "form" }, { kind: "article" }, { kind: "preposition" }, { kind: "target" }]);
-  assert.deepEqual(types, ["verb_form", "article", "preposition", "vocabulary"]);
+  assert.deepEqual(types, ["grammar", "article", "preposition", "vocabulary"]);
 });
 
 test("typesFromNotes: bỏ qua 'diff' vì viết khác câu mẫu không phải là sai", () => {
@@ -32,15 +33,40 @@ test("typesFromNotes: bỏ qua 'diff' vì viết khác câu mẫu không phải 
 });
 
 test("typesFromIssues: quy nhãn mô hình trả về và bỏ trùng", () => {
-  assert.deepEqual(typesFromIssues([{ type: "Articles" }, { type: "article" }, { type: "tense" }]), ["article", "verb_tense"]);
+  assert.deepEqual(typesFromIssues([{ type: "Articles" }, { type: "article" }, { type: "tense" }]), ["article", "tense"]);
 });
 
 test("makeAttempt: chuẩn hoá điểm, nhãn lỗi và cách chấm", () => {
   const entry = attempt({ score: 250, gradedBy: "linh tinh", errorTypes: ["Articles", "chưa rõ"] });
   assert.equal(entry.score, 100);
   assert.equal(entry.gradedBy, "reference");
-  assert.deepEqual(entry.errorTypes, ["article", "other"]);
+  assert.deepEqual(entry.errorTypes, ["article", "grammar"]);
   assert.equal(entry.day, "2026-08-19");
+});
+
+test("Sprint 1 · lưu tối đa ba lỗi kèm quy tắc và ví dụ để luyện lại", () => {
+  const issues = Array.from({ length: 5 }, (_, index) => ({
+    type: index ? "preposition" : "Articles",
+    wrong: `wrong ${index}`,
+    right: `right ${index}`,
+    why: `why ${index}`,
+    rule: `rule ${index}`,
+    example: `example ${index}`,
+  }));
+  const entry = attempt({ errorTypes: [], issues });
+  assert.equal(entry.issues.length, 3);
+  assert.equal(entry.issues[0].type, "article");
+  assert.equal(entry.issues[0].rule, "rule 0");
+  assert.equal(entry.issues[0].example, "example 0");
+  assert.deepEqual(entry.errorTypes, ["article", "preposition"]);
+  assert.deepEqual(entry.assessedTypes, ["article", "preposition"]);
+  assert.equal(practiceForError([entry], "article").right, "right 0");
+});
+
+test("Error Practice ghi rõ loại lỗi được kiểm tra", () => {
+  const entry = attempt({ practiceType: "Articles", assessedTypes: ["Articles"], errorTypes: [], correct: true, score: 100 });
+  assert.equal(entry.practiceType, "article");
+  assert.deepEqual(entry.assessedTypes, ["article"]);
 });
 
 test("attemptsSince: chỉ lấy các ngày trong quãng đang xét", () => {
@@ -64,7 +90,7 @@ test("summariseAttempts: đếm và xếp hạng nhãn lỗi", () => {
   assert.equal(summary.byType[0].type, "article");
   assert.equal(summary.byType[0].count, 3);
   assert.equal(summary.byType[0].share, 60);
-  assert.equal(summary.byType[1].type, "verb_tense");
+  assert.equal(summary.byType[1].type, "tense");
   assert.equal(summary.cleanRuns, 1);
   assert.equal(summary.correct, 1);
   assert.equal(summary.correctRate, 20);

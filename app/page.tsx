@@ -10,6 +10,7 @@ import Upgrade from "../components/Upgrade";
 import AdminPanel from "../components/AdminPanel";
 import AuthModal from "../components/AuthModal";
 import FeedbackModal from "../components/FeedbackModal";
+import ModalPortal from "../components/ModalPortal";
 import LandingPage from "../components/LandingPage";
 import { usePlan } from "../lib/use-plan";
 import Icon, { type IconName } from "../components/Icon";
@@ -18,6 +19,11 @@ import VideoLesson, { type LookupVocab } from "../components/VideoLesson";
 import LessonLibrary from "../components/LessonLibrary";
 import WritingPractice from "../components/WritingPractice";
 import SpeakingPractice from "../components/SpeakingPractice";
+import BackButton from "../components/BackButton";
+import WordListPicker from "../components/WordListPicker";
+import { DRILL_MODES, MIXED_POOL, deckSupports } from "../lib/vocab-drill.mjs";
+import { exampleUsesVocabulary } from "../lib/example-match.mjs";
+import { inferLexicalType, lexicalTypeLabel, lexicalTypeOptions } from "../lib/lexical-item.mjs";
 import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
 import { lessonFromHash, mergeLessonSources, promoteSystemLessons, readLessonProgress, readLessons, readSystemDrafts, saveLesson } from "../lib/lessons.mjs";
 import { addLessonsToCatalogue, videoProgress } from "../lib/catalogue.mjs";
@@ -33,18 +39,26 @@ type Folder = FolderStore["list"][number];
 import { alignTranscript } from "../lib/youtube.mjs";
 // Kết quả chấm bài của Gemini. Khác cách so câu mẫu: cách dịch đúng nhưng khác câu
 // mẫu vẫn được công nhận đúng.
-type AiGrade = { correct: boolean; score: number; suggestion: string; comment: string; issues: { type: string; wrong: string; right: string; why: string }[] };
+type GradeCriterion = "meaning" | "grammar" | "vocabulary" | "naturalness";
+type AiFeedbackItem = { kind: "error" | "improvement"; type: string; wrong: string; right: string; why: string; rule: string; example: string };
+type AiGrade = {
+  correct: boolean; score: number; criteria: Record<GradeCriterion, number>; suggestion: string; alternatives: string[];
+  good: string; comment: string; errors: AiFeedbackItem[]; improvements: AiFeedbackItem[];
+  chunks: { text: string; meaning: string }[]; issues: AiFeedbackItem[];
+};
 import { PASSAGE_SIZE, buildPassages, gradeTranslation } from "../lib/translation-check.mjs";
 import { SKILLS, logPractice, minutesInRange, minutesPerDay, readPractice, totalTime } from "../lib/practice-log.mjs";
 import { levelFor, xpBreakdown, xpFrom } from "../lib/level.mjs";
 import { LEADERBOARD_METRICS, LEADERBOARD_PERIODS, leaderboardSnapshot, rankLeaderboard, safeDisplayName } from "../lib/leaderboard.mjs";
 import { initialsFor } from "../lib/auth.mjs";
-import { attemptAdvice, attemptsSince, logAttempt, makeAttempt, readAttempts, summariseAttempts,
+import { MASTERY_LABELS, errorStats, weakestErrors } from "../lib/error-mastery.mjs";
+import { attemptAdvice, attemptsSince, logAttempt, makeAttempt, practiceForError, readAttempts, summariseAttempts,
   typesFromIssues, typesFromNotes } from "../lib/error-log.mjs";
 import { pushTranslationAttempt } from "../lib/cloud-sync";
 // Một dòng nhật ký bài dịch. lib/error-log.mjs là JavaScript nên kiểu khai báo ở đây.
 type TranslationAttempt = { at: string; day: string; term: string; vi: string; answer: string; reference: string;
-  score: number; correct: boolean; gradedBy: "llm" | "reference"; errorTypes: string[] };
+  score: number; correct: boolean; gradedBy: "llm" | "reference"; errorTypes: string[]; assessedTypes?: string[];
+  practiceType?: string | null; issues?: AiFeedbackItem[] };
 import { advice, byDay, entriesSince, summarise, weakest } from "../lib/review-log.mjs";
 // Lịch ôn và các phép tính ngày: nguồn duy nhất ở lib/srs.mjs, giao diện chỉ gọi.
 import { daysUntil, isDueForReview, localDateString, scheduleFor, streakFrom, weekdayIndex, wordState } from "../lib/srs.mjs";
@@ -55,7 +69,7 @@ import { clozeFor } from "../lib/cloze.mjs";
 // Kiểu dùng chung và tầng lưu trữ đã tách khỏi file này.
 import { detailsFrom, exampleFor, fallbackExample, fallbackExampleVi, isLegacyOwnerVocabulary, isPdfVocabulary, isSeedWord, withMeanings,
   type EnrichmentMap, type ExamGoal, type ExampleMap, type ImportedVocabulary, type Rating, type ReviewMode,
-  type UsageDetail, type UsageMap, type WeeklyVocabulary, type WordCard } from "../lib/types";
+  type LexicalType, type UsageDetail, type UsageMap, type WeeklyVocabulary, type WordCard } from "../lib/types";
 import { accountStorageKey, activeTabKey, composeVietnamese, logReview, markDeleted, markStudiedToday, mergeStoredWords, readAppNavigation, readDeletedIds,
   readExam, readLocalWords, readReviewLog, readSeenRelease, readSession, readSpeaking, readStudyDays, setStorageScope, speakingMinutes, weeklyImportKey, writeExam, writeLocalWords,
   writeSeenRelease,
@@ -63,16 +77,29 @@ import { accountStorageKey, activeTabKey, composeVietnamese, logReview, markDele
 
 // Mỗi chế độ nói rõ đầu vào và việc người học cần làm; "mixed" xoay vòng
 // các kiểu có chấm điểm để tránh học thuộc vị trí câu trả lời.
-const reviewModes: { value: ReviewMode; label: string; description: string; icon: IconName; badge?: string }[] = [
-  { value: "card", label: "Thẻ ghi nhớ", description: "Lật thẻ và tự đánh giá", icon: "cards" },
-  { value: "vi_en", label: "Nhớ từ", description: "Nghĩa Việt → gõ tiếng Anh", icon: "keyboard" },
-  { value: "listen", label: "Nghe – viết", description: "Nghe phát âm → gõ lại từ", icon: "volume" },
-  { value: "en_vi", label: "Nhớ nghĩa", description: "Tiếng Anh → nhớ nghĩa Việt", icon: "swap" },
-  { value: "quiz", label: "Chọn đáp án", description: "Chọn nghĩa đúng trong 4 đáp án", icon: "target" },
-  { value: "mixed", label: "Luyện tổng hợp", description: "Luân phiên nhiều kỹ năng", icon: "shuffle", badge: "Đề xuất" },
-];
-// "Trộn" chỉ đảo giữa các kiểu có chấm điểm; thẻ ghi nhớ là kiểu xem lại tự do nên đứng ngoài.
-const rotatingModes: ReviewMode[] = ["vi_en", "en_vi", "quiz", "listen"];
+const drillToReviewMode: Record<string, ReviewMode> = {
+  card: "card", type: "vi_en", listen: "listen", reverse: "en_vi", quiz: "quiz", mixed: "mixed",
+};
+// Chiều ngược lại, suy thẳng từ bảng trên để hai chiều không thể lệch nhau.
+const reviewToDrillMode = Object.fromEntries(
+  Object.entries(drillToReviewMode).map(([drill, review]) => [review, drill]),
+) as Record<ReviewMode, string>;
+// Dùng đúng một nguồn nhãn/mô tả cho cả màn "Luyện từ vựng" và phiên ôn.
+// Trước đây cùng một thao tác lại mang hai tên khác nhau (Gõ từ/Nhớ từ,
+// Trắc nghiệm/Chọn đáp án), khiến người dùng tưởng đây là hai luồng riêng.
+const reviewModes: { value: ReviewMode; label: string; description: string; icon: IconName; badge?: string }[] = DRILL_MODES.map((item) => ({
+  value: drillToReviewMode[item.value],
+  label: item.label,
+  description: item.hint,
+  icon: item.icon as IconName,
+  badge: item.badge,
+}));
+// "Luyện tổng hợp" phải xoay đúng những kiểu mà màn Luyện từ vựng xoay, và theo
+// đúng thứ tự đó. Trước đây chỗ này là một danh sách chép tay: cùng nội dung
+// nhưng khác thứ tự, nên cùng một lựa chọn lại cho ra hai chuỗi bài khác nhau —
+// và không có gì giữ cho hai bên khỏi trôi xa nhau khi thêm kiểu luyện mới.
+// (Thẻ ghi nhớ đứng ngoài vòng xoay vì nó tự đánh giá, không chấm được.)
+const rotatingModes: ReviewMode[] = (MIXED_POOL as string[]).map((value) => drillToReviewMode[value]);
 const PDF_DAILY_PREVIEW_LIMIT = 20;
 // Dùng chung cho mọi màn tạo ví dụ: người dùng chọn kiểu nào thì khi quay lại
 // vẫn giữ đúng kiểu đó, kể cả chuyển sang màn thêm từ hoặc luyện dịch.
@@ -105,7 +132,30 @@ const naturalExampleVi = (term: string) => `Tôi đang học cách dùng từ �
 function isGeneratedExample(word: WordCard) {
   const example = word.example?.trim();
   if (!example) return true;
-  return example === naturalExample(word.term) || example === fallbackExample(word.term);
+  return example === naturalExample(word.term)
+    || example === fallbackExample(word.term)
+    || !exampleUsesVocabulary(example, word.term, word.partOfSpeech);
+}
+
+// Những lỗi cũ đã được lưu trước khi bộ lọc dạng từ ra đời vẫn cần được sửa ngay
+// trên thẻ, không bắt người học chờ chạy lại toàn bộ kho từ.
+const verifiedExampleRepairs: Record<string, Pick<WordCard, "example" | "exampleVi">> = {
+  closet: { example: "She keeps her winter coats in the bedroom closet.", exampleVi: "Cô ấy cất áo khoác mùa đông trong tủ quần áo ở phòng ngủ." },
+  closets: { example: "The bedrooms have large closets for winter coats.", exampleVi: "Các phòng ngủ có tủ lớn để cất áo khoác mùa đông." },
+};
+
+function cardWithRelevantExample(card: WordCard): WordCard {
+  const repaired = verifiedExampleRepairs[card.term.trim().toLowerCase()];
+  // Với mục đã biết từng bị lẫn loại từ, ưu tiên kiểm tra dạng danh từ chính xác
+  // trước. Nhờ vậy metadata cũ ghi nhầm "verb" cũng không giữ lại "closeted".
+  if (repaired && !exampleUsesVocabulary(card.example, card.term)) {
+    return { ...card, ...repaired, cloze: clozeFor(card.term, repaired.example) };
+  }
+  if (exampleUsesVocabulary(card.example, card.term, card.partOfSpeech)) return card;
+  // Với từ chưa có bản sửa đã kiểm chứng, hiển thị một câu học tập trung thực còn
+  // tốt hơn giữ một câu từ điển sai nghĩa. Lần "Bổ sung" tiếp theo sẽ thay nó.
+  const example = `The word “${card.term}” appeared in today's English lesson.`;
+  return { ...card, example, exampleVi: `Từ “${card.term}” xuất hiện trong bài học tiếng Anh hôm nay.`, cloze: clozeFor(card.term, example) };
 }
 // Từ thêm từ trước khi có các trường mới (cụm, đồng/trái nghĩa, chủ đề IELTS…) sẽ thiếu dữ liệu.
 function missingFields(word: WordCard) {
@@ -361,6 +411,7 @@ export default function Home() {
   const wordsRef = useRef(words);
   wordsRef.current = words;
   const [showAdd, setShowAdd] = useState(false);
+  const [addOriginLabel, setAddOriginLabel] = useState("màn trước");
   const [showFeedback, setShowFeedback] = useState(false);
   const [showBulkAdd, setShowBulkAdd] = useState(false);
   // Chế độ luyện tập chọn thẳng từ thanh bên; null nghĩa là trang công cụ ngoài.
@@ -398,6 +449,7 @@ export default function Home() {
   // thẳng vào chế độ cũ một cách bất ngờ.
   const goTab = (next: typeof tab) => {
     if (reviewing) exitReview();
+    setShowAdd(false);
     if (next !== "practice") setLibraryLaunch(null);
     // Mở một công cụ cụ thể thì đóng màn tổng quan kỹ năng đang che nội dung.
     setSkillHub(null);
@@ -417,6 +469,7 @@ export default function Home() {
   /** Mở màn tổng quan của một kỹ năng. */
   const openSkill = (id: SkillId) => {
     if (reviewing) exitReview();
+    setShowAdd(false);
     setLibraryLaunch(null);
     // Viết chỉ có một cửa vào với ba lộ trình bên trong. Mở thẳng cửa đó để
     // không bắt người dùng đi qua thêm một màn "Luyện viết" trùng nội dung.
@@ -436,6 +489,7 @@ export default function Home() {
   /** Kho video riêng của người dùng — một mục đứng riêng ở cột trái. */
   const openMyVideos = () => {
     if (reviewing) exitReview();
+    setShowAdd(false);
     setSkillHub(null);
     setLessonLaunch(null);
     // Người dùng vừa chủ động chọn, nên không khôi phục bài/chế độ còn sót lại.
@@ -470,9 +524,18 @@ export default function Home() {
   const [detailWord, setDetailWord] = useState<WordCard | null>(null);
   // Từ được nạp sẵn khi mở trang Từ điển AI từ chỗ khác (ô tra nhanh trong bài học).
   const [dictionaryWord, setDictionaryWord] = useState("");
+  // Nơi người dùng đứng trước khi mở Từ điển. Không dùng history.back(): ứng
+  // dụng đổi màn bằng state nên URL không đổi, nút Back của trình duyệt không
+  // biết phải quay về bài video, phiên ôn hay kho từ nào.
+  const [dictionaryOrigin, setDictionaryOrigin] = useState<{
+    tab: "home" | "words" | "practice" | "stats" | "dictionary";
+    skillHub: SkillId | null;
+    reviewing: boolean;
+    label: string;
+  } | null>(null);
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState("");
-  const [reviewMode, setReviewMode] = useState<ReviewMode>("vi_en");
+  const [reviewMode, setReviewMode] = useState<ReviewMode>("mixed");
   const [choice, setChoice] = useState<string | null>(null);
   const [cloudStatus, setCloudStatus] = useState<"connecting" | "synced" | "demo">("connecting");
   const [userId, setUserId] = useState<string | null>(null);
@@ -827,6 +890,7 @@ export default function Home() {
             id: word.id,
             user_id: session.user.id,
             term: word.term,
+            lexical_type: word.lexicalType || inferLexicalType(word.term, word.partOfSpeech),
             part_of_speech: word.partOfSpeech || null,
             ipa: word.ipa,
             meaning_vi: word.meaning,
@@ -881,6 +945,7 @@ export default function Home() {
             return {
               id: row.id,
               term: row.term,
+              lexicalType: row.lexical_type || inferLexicalType(row.term, row.part_of_speech),
               ipa: row.ipa ?? "/…/",
               meaning: row.meaning_vi,
               example: row.example,
@@ -1246,7 +1311,7 @@ export default function Home() {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setShowAdd(true);
+        openAddWordForm();
       }
       if (!reviewing) return;
       if (event.key === "Escape") {
@@ -1289,7 +1354,9 @@ export default function Home() {
       return;
     }
     setReviewQueue(queue);
-    if (mode) setReviewMode(mode);
+    // Mọi lối vào trực tiếp (Trang chủ, từ đến hạn, folder, chủ đề) dùng cùng
+    // một mặc định. Không để kiểu vừa dùng ở một luồng rò sang luồng kế tiếp.
+    setReviewMode(mode ?? "mixed");
     setReviewing(true);
     setIndex(0);
     setRevealed(false);
@@ -1406,6 +1473,7 @@ export default function Home() {
       ipa: found.ipa,
       meaning: found.meaning,
       partOfSpeech: found.partOfSpeech,
+      lexicalType: found.lexicalType || (inferLexicalType(found.term, found.partOfSpeech) as LexicalType),
       definition: found.definition,
       example: fallbackExample(found.term),
       exampleVi: fallbackExampleVi(found.term),
@@ -1476,6 +1544,7 @@ export default function Home() {
       id: word.id,
       user_id: user.id,
       term: word.term,
+      lexical_type: word.lexicalType || inferLexicalType(word.term, word.partOfSpeech),
       part_of_speech: word.partOfSpeech,
       ipa: word.ipa,
       meaning_vi: word.meaning,
@@ -1505,7 +1574,7 @@ export default function Home() {
       // Một số dự án Supabase cũ chưa chạy migration cho các trường enrichment.
       // Lưu phần cốt lõi trước để từ không chỉ nằm trên một máy; nội dung mở rộng
       // vẫn được giữ trong localStorage và có thể đồng bộ sau khi nâng schema.
-      const optionalColumns = new Set(["synonym_details", "antonym_details", "related_details", "enrichment_checked_at"]);
+      const optionalColumns = new Set(["synonym_details", "antonym_details", "related_details", "enrichment_checked_at", "lexical_type"]);
       const compatibleWord = Object.fromEntries(Object.entries(cloudWord).filter(([column]) => !optionalColumns.has(column)));
       ({ error } = await supabase.from("words").insert(compatibleWord));
     }
@@ -1559,12 +1628,39 @@ export default function Home() {
 
   // Tên màn đang mở. Một nguồn duy nhất cho thanh trên cùng và cho góp ý, nhờ
   // vậy góp ý không bao giờ khai sai màn so với thứ người dùng đang nhìn.
-  const screenLabel = skillHub
+  const screenLabel = showAdd ? "Thêm từ"
+    : skillHub
     ? (SKILL_SPACES.find((item) => item.id === skillHub)?.label ?? "Kỹ năng")
     : tab === "home" ? "Tổng quan hôm nay"
       : tab === "words" ? "Kho từ vựng"
         : tab === "practice" ? (libraryLaunch ? "Video của tôi" : practiceNav.find((item) => item.value === practiceIntent)?.label ?? "Luyện tập")
           : tab === "stats" ? "Tiến độ học tập" : "Từ điển AI";
+
+  function openAddWordForm() {
+    setAddOriginLabel(screenLabel);
+    setShowAdd(true);
+  }
+
+  function openDictionaryPage(term = "") {
+    if (tab !== "dictionary" || reviewing || skillHub) {
+      setDictionaryOrigin({ tab, skillHub, reviewing, label: reviewing ? "phiên học" : screenLabel });
+    }
+    setDictionaryWord(term);
+    // Tạm ẩn phiên học nhưng giữ nguyên queue/index/đáp án. Khi quay lại, người
+    // học tiếp tục đúng thẻ đang đứng chứ không khởi tạo một phiên mới.
+    if (reviewing) setReviewing(false);
+    setSkillHub(null);
+    setTab("dictionary");
+  }
+
+  function returnFromDictionary() {
+    if (!dictionaryOrigin) return;
+    setTab(dictionaryOrigin.tab);
+    setSkillHub(dictionaryOrigin.skillHub);
+    setReviewing(dictionaryOrigin.reviewing);
+    setDictionaryWord("");
+    setDictionaryOrigin(null);
+  }
 
   // Trang công khai là cổng vào của ứng dụng. Chỉ dựng workspace học sau khi đã
   // có phiên Supabase; nhờ vậy khách không nhìn thấy sidebar rồi mới được hỏi đăng nhập.
@@ -1582,7 +1678,7 @@ export default function Home() {
   }
 
   return (
-    <LookupActionsContext.Provider value={{ saveWord: saveFoundWord, openDictionary: (term: string) => { setDictionaryWord(term); goTab("dictionary"); } }}>
+    <LookupActionsContext.Provider value={{ saveWord: saveFoundWord, openDictionary: openDictionaryPage }}>
     <main className="app-shell lexilo-workspace" data-section={tab} data-practice={practiceIntent ?? undefined}>
       <a className="skip-link" href="#workspace-content">Bỏ qua điều hướng</a>
       <aside className="sidebar">
@@ -1594,7 +1690,7 @@ export default function Home() {
             riêng chứa đủ công cụ của nó — xem SKILLS. Không mất chức năng nào,
             chỉ đổi cách tìm tới chúng. */}
         <nav aria-label="Điều hướng chính" className="skill-nav">
-          <button className={tab === "home" && !skillHub ? "nav-item active" : "nav-item"} onClick={() => goTab("home")}>
+          <button className={tab === "home" && !skillHub && !showAdd ? "nav-item active" : "nav-item"} onClick={() => goTab("home")}>
             <Icon name="home" /> Trang chủ
           </button>
 
@@ -1609,7 +1705,7 @@ export default function Home() {
                   ? tab === "practice" && practiceIntent === tool.value && !libraryLaunch
                   : tab === tool.value,
               );
-            const active = skillHub === item.id || insideTool;
+            const active = showAdd ? item.id === "vocab" : skillHub === item.id || insideTool;
             return (
               <button
                 key={item.id}
@@ -1677,6 +1773,7 @@ export default function Home() {
           ) : (
             <ReviewView
               card={card}
+              deck={reviewQueue}
               index={index}
               total={reviewQueue.length}
               revealed={revealed}
@@ -1692,7 +1789,12 @@ export default function Home() {
               toggleStar={() => toggleStar(card.id)}
               mode={activeMode}
               modeSetting={reviewMode}
-              setMode={setReviewMode}
+              setMode={(nextMode) => {
+                setReviewMode(nextMode);
+                setRevealed(false);
+                setAnswer("");
+                setChoice(null);
+              }}
               choices={quizChoices}
               choice={choice}
               pickChoice={(id) => { setChoice(id); setRevealed(true); }}
@@ -1707,8 +1809,8 @@ export default function Home() {
           </div>
           <div className="workspace-quick-actions">
             <button onClick={() => setShowFeedback(true)}><Icon name="flag" size={16} /><span>Góp ý</span></button>
-            <button onClick={() => goTab("dictionary")}><Icon name="search" size={16} /><span>Tra từ</span></button>
-            <button className="primary" onClick={() => setShowAdd(true)}><Icon name="plus" size={16} /><span>Thêm từ</span></button>
+            <button onClick={() => openDictionaryPage()}><Icon name="search" size={16} /><span>Tra từ</span></button>
+            <button className="primary" onClick={openAddWordForm}><Icon name="plus" size={16} /><span>Thêm từ</span></button>
           </div>
         </header>
         {imported && (
@@ -1760,7 +1862,7 @@ export default function Home() {
             >
               <Icon name={themeById(theme).mode === "dark" ? "sun" : "moon"} size={18} />
             </button>
-            <button onClick={() => setShowAdd(true)} aria-label="Thêm từ">＋</button>
+            <button onClick={openAddWordForm} aria-label="Thêm từ">＋</button>
           </div>
         </header>
         {pendingSession && resumableQueue.length > 0 && tab === "home" && (
@@ -1801,11 +1903,11 @@ export default function Home() {
           startReview={() => launchReview(words.filter(isDueAgain))}
           extra={skillHub === "vocab" ? <DailyStudy words={words} startReview={startReview} startTopicReview={startTopicReview} /> : null}
         />}
-        {!skillHub && tab === "home" && <Dashboard openVideoAdd={() => setShowVideoAdd(true)} addMenu={<AddMenu onManual={() => setShowAdd(true)} onPaste={() => setShowBulkAdd(true)} onDictionary={() => goTab("dictionary")} />} words={words} lessons={lessons} openLesson={openVideoLesson} userId={userId} userName={userName} openSignIn={() => openAuth("signin")} openPractice={(mode) => {
+        {!skillHub && tab === "home" && <Dashboard openVideoAdd={() => setShowVideoAdd(true)} addMenu={<AddMenu onManual={openAddWordForm} onPaste={() => setShowBulkAdd(true)} onDictionary={() => openDictionaryPage()} />} words={words} lessons={lessons} openLesson={openVideoLesson} userId={userId} userName={userName} openSignIn={() => openAuth("signin")} openPractice={(mode) => {
           setPracticeIntent(mode ?? "vocab");
           setPracticeLaunch((value) => value + 1);
           setTab("practice");
-        }} exam={exam} setExam={(goal) => { setExam(goal); writeExam(goal); }} streak={streakFrom(studyDays)}
+        }} openErrors={() => { setSkillHub(null); setTab("stats"); }} exam={exam} setExam={(goal) => { setExam(goal); writeExam(goal); }} streak={streakFrom(studyDays)}
           startReview={startReview} startDueReview={() => launchReview(words.filter(isDueAgain))} openFeedback={() => setShowFeedback(true)} />}
         {!skillHub && tab === "words" && (
           <Words
@@ -1814,9 +1916,9 @@ export default function Home() {
             query={query}
             setQuery={setQuery}
             toggleStar={toggleStar}
-            add={() => setShowAdd(true)}
+            add={openAddWordForm}
             bulkAdd={() => setShowBulkAdd(true)}
-            openDictionary={() => goTab("dictionary")}
+            openDictionary={() => openDictionaryPage()}
             folders={folders}
             updateFolders={updateFolders}
             collectionFilter={wordsView}
@@ -1868,13 +1970,14 @@ export default function Home() {
             },
             setStudyDay: setWordStudyDay,
             saveWord: saveFoundWord,
-            openDictionary: (term) => { setDictionaryWord(term); goTab("dictionary"); },
+            openDictionary: openDictionaryPage,
           }} />}
         {/* Thống kê tính trên toàn bộ thư viện, cùng phạm vi với các ô ở trang chủ. */}
         {!skillHub && tab === "stats" && <Stats words={words} scopeLabel="toàn bộ thư viện" streak={streakFrom(studyDays)} />}
         {!skillHub && tab === "dictionary" && (
           <Dictionary
-            onExitTool={toolOrigin ? () => openSkill(toolOrigin) : undefined}
+            onExitTool={dictionaryOrigin ? returnFromDictionary : toolOrigin ? () => openSkill(toolOrigin) : undefined}
+            backDestination={dictionaryOrigin?.label}
             initialWord={dictionaryWord}
             legacyCollections={legacyCollections}
             wordId={(term) => words.find((word) => word.term.trim().toLowerCase() === term.trim().toLowerCase())?.id ?? null}
@@ -1919,9 +2022,12 @@ export default function Home() {
       {showAdd && (
         <AddWord
           legacyCollections={legacyCollections}
+          folders={folders}
+          updateFolders={updateFolders}
+          backDestination={addOriginLabel}
           existingWords={words.filter((word) => !isPdfVocabulary(word) && !isSeedWord(word))}
           close={() => setShowAdd(false)}
-          save={(word) => {
+          save={(word, folderIds) => {
             const created = {
               ...word,
               id: crypto.randomUUID(),
@@ -1930,6 +2036,13 @@ export default function Home() {
             };
             setWords((current) => [created, ...current]);
             void persistWord(created);
+            if (folderIds.length) {
+              const nextFolders = folderIds.reduce(
+                (current, folderId) => addWords(current, folderId, [created.id]),
+                folders,
+              );
+              updateFolders(nextFolders);
+            }
             setShowAdd(false);
           }}
         />
@@ -2204,7 +2317,7 @@ function Changelog({ openFeedback }: { openFeedback: () => void }) {
   );
 }
 
-function Dashboard({ words, lessons, openLesson, openPractice, exam, setExam, streak, addMenu, openVideoAdd, userId, userName, openSignIn, startReview, startDueReview, openFeedback }: { words: WordCard[]; lessons: VideoLesson[]; openLesson: (videoId: string, mode?: "dictation" | "shadow") => void; addMenu?: ReactNode; openVideoAdd: () => void; openPractice: (mode?: Exclude<PracticeMode, "menu">) => void; exam: ExamGoal | null; setExam: (goal: ExamGoal | null) => void; streak: { current: number; best: number; studiedToday: boolean }; userId: string | null; userName: string; openSignIn: () => void; startReview: (dayIndex?: number | "pdf") => void; startDueReview: () => void; openFeedback: () => void }) {
+function Dashboard({ words, lessons, openLesson, openPractice, openErrors, exam, setExam, streak, addMenu, openVideoAdd, userId, userName, openSignIn, startReview, startDueReview, openFeedback }: { words: WordCard[]; lessons: VideoLesson[]; openLesson: (videoId: string, mode?: "dictation" | "shadow") => void; addMenu?: ReactNode; openVideoAdd: () => void; openPractice: (mode?: Exclude<PracticeMode, "menu">) => void; openErrors: () => void; exam: ExamGoal | null; setExam: (goal: ExamGoal | null) => void; streak: { current: number; best: number; studiedToday: boolean }; userId: string | null; userName: string; openSignIn: () => void; startReview: (dayIndex?: number | "pdf") => void; startDueReview: () => void; openFeedback: () => void }) {
   // Ngày và lời chào chỉ có thể tính trên máy người dùng — cập nhật sau khi hydrate để không lệch với HTML dựng sẵn.
   const dateRef = useRef<HTMLDivElement>(null);
   const greetingRef = useRef<HTMLSpanElement>(null);
@@ -2227,6 +2340,12 @@ function Dashboard({ words, lessons, openLesson, openPractice, exam, setExam, st
     setLessonProgress(readLessonProgress() as Record<string, unknown>);
   }, []);
   const attemptCount = attempts.length;
+  const todayAttemptCount = useMemo(() => attempts.filter((attempt) => attempt.day === localDateString()).length, [attempts]);
+  const weakestError = useMemo(() => weakestErrors(attempts, 1)[0] as { label: string; occurrenceCount: number; status: string } | undefined, [attempts]);
+  const minutesToday = useMemo(() => {
+    const row = practice[localDateString()] ?? {};
+    return Math.round(Object.values(row).reduce((sum, seconds) => sum + Number(seconds || 0), 0) / 60);
+  }, [practice]);
   const time = useMemo(() => totalTime(practice), [practice]);
   // XP được TÍNH LẠI từ nhật ký chứ không cộng dồn riêng, nên luôn khớp dữ liệu thật.
   const xpCounts = useMemo(
@@ -2343,7 +2462,12 @@ function Dashboard({ words, lessons, openLesson, openPractice, exam, setExam, st
           <button className="primary" onClick={startDueReview}>Ôn ngay {plan.dueAgain.length} từ →</button>
         </section>
       )}
-      <LearningPlan reviewCount={plan.reviewCount} newCount={plan.newCount} startVocabulary={() => startReview(plan.onlyPdf ? "pdf" : undefined)} openPractice={openPractice} />
+      <section className="daily-guidance" aria-label="Tóm tắt học tập cá nhân">
+        <div><span>Hôm nay đã làm gì?</span><b>{minutesToday > 0 ? `${minutesToday} phút luyện tập` : "Chưa bắt đầu"}</b><small>{todayAttemptCount ? `${todayAttemptCount} bài dùng ngôn ngữ hôm nay` : "Bắt đầu bằng một phiên ôn ngắn"}</small></div>
+        <div><span>Đang yếu ở đâu?</span><b>{weakestError ? weakestError.label : "Chưa đủ dữ liệu"}</b><small>{weakestError ? `${weakestError.occurrenceCount} lần xuất hiện · ${MASTERY_LABELS[weakestError.status as keyof typeof MASTERY_LABELS]}` : "AI sẽ xác định sau vài bài nói/viết"}</small></div>
+        <div><span>Nên làm gì tiếp?</span><b>{weakestError ? `Luyện lại ${weakestError.label.toLowerCase()}` : plan.dueAgain.length ? `Ôn ${plan.dueAgain.length} từ đến hạn` : "Luyện nghe một đoạn ngắn"}</b><small>Gợi ý dựa trên lịch ôn và lỗi cá nhân</small></div>
+      </section>
+      <LearningPlan reviewCount={plan.reviewCount} newCount={plan.newCount} weakness={weakestError?.label} startVocabulary={() => startReview(plan.onlyPdf ? "pdf" : undefined)} openPractice={openPractice} openErrors={openErrors} />
       <h2 className="screen-group">Bạn đang ở đâu</h2>
       <div className="home-stats">
         <div className={streak.studiedToday ? "home-stat is-live" : "home-stat"}>
@@ -2496,6 +2620,7 @@ function Dashboard({ words, lessons, openLesson, openPractice, exam, setExam, st
       <Changelog openFeedback={openFeedback} />
 
       {editingExam && (
+        <ModalPortal>
         <div className="modal-backdrop" onMouseDown={() => setEditingExam(false)}>
           <form
             className="modal exam-modal"
@@ -2539,6 +2664,7 @@ function Dashboard({ words, lessons, openLesson, openPractice, exam, setExam, st
             </div>
           </form>
         </div>
+        </ModalPortal>
       )}
     </div>
   );
@@ -2571,29 +2697,31 @@ function buildCollectionQueue(words: WordCard[]) {
  * "Nói/viết" lại rơi vào Nghe chép. Nay mỗi bước tự khai chế độ nó cần, và thẻ
  * có đủ bốn bước đúng như tiêu đề "4 kỹ năng" của chính nó.
  */
-function LearningPlan({ reviewCount, newCount, startVocabulary, openPractice }: {
+function LearningPlan({ reviewCount, newCount, weakness, startVocabulary, openPractice, openErrors }: {
   reviewCount: number;
   newCount: number;
+  weakness?: string;
   startVocabulary: () => void;
   openPractice: (mode: Exclude<PracticeMode, "menu">) => void;
+  openErrors: () => void;
 }) {
   const steps: { mode: Exclude<PracticeMode, "menu">; label: string; time: string; note: string }[] = [
-    { mode: "dictation", label: "Nghe chép", time: "7–10 phút", note: "3–5 câu đúng trình độ; nghe, gõ rồi sửa" },
-    { mode: "speak", label: "Luyện nói", time: "4–5 phút", note: "Nói lại bằng từ vừa học, AI nghe và chấm" },
-    { mode: "translate", label: "Viết", time: "4–5 phút", note: "Dịch vài câu về chính mình, AI chỉ lỗi" },
+    { mode: "dictation", label: "Listening", time: "7–10 phút", note: "Chọn Dễ, Bình thường hoặc Thi IELTS" },
+    { mode: "shadow", label: "Shadowing", time: "6–8 phút", note: "Nghe → nhại → kể lại → nói tự do" },
+    { mode: "speak", label: "Speaking", time: "4–6 phút", note: "Hoàn thành mục tiêu trong tình huống thật" },
   ];
   return (
     <section className="learning-plan panel">
       <div className="panel-title">
         <div>
-          <h3>Học đủ 4 kỹ năng trong 25–35 phút</h3>
-          <p>Ôn đúng hạn trước, tiếp nhận ít nội dung mới, rồi dùng lại ngay trong ngữ cảnh.</p>
+          <h3>Lộ trình cá nhân hôm nay · 30–45 phút</h3>
+          <p>Review → Listening → Shadowing → Speaking → Error Practice; Writing là bước vận dụng cuối.</p>
         </div>
         <span className="plan-rule">5 ngày học · 1 ngày ôn nhẹ · 1 ngày nghỉ</span>
       </div>
       <div className="plan-steps">
         <button onClick={startVocabulary} disabled={!reviewCount && !newCount}>
-          <span>01</span><b>Từ vựng · 10–15 phút</b>
+          <span>01</span><b>Review · 10–15 phút</b>
           <small>{reviewCount} từ đến hạn trước · tối đa {DAILY_NEW_LIMIT} từ mới</small>
           <i>Bắt đầu phiên →</i>
         </button>
@@ -2605,6 +2733,16 @@ function LearningPlan({ reviewCount, newCount, startVocabulary, openPractice }: 
             <i>Mở {step.label.toLowerCase()} →</i>
           </button>
         ))}
+        <button onClick={openErrors}>
+          <span>05</span><b>Error Practice · 5 phút</b>
+          <small>{weakness ? `Luyện lại điểm yếu: ${weakness}` : "Xem hệ thống lỗi cá nhân và trạng thái thành thạo"}</small>
+          <i>Mở luyện lỗi →</i>
+        </button>
+        <button onClick={() => openPractice("translate")}>
+          <span>06</span><b>Writing · 5–8 phút</b>
+          <small>Viết hoặc dịch, nhận phản hồi theo 4 tiêu chí</small>
+          <i>Mở luyện viết →</i>
+        </button>
       </div>
     </section>
   );
@@ -2830,6 +2968,10 @@ function EnglishText({ text, className }: { text: string; className?: string }) 
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
   }
 
+  // Từ lưu từ các bản cũ có thể thiếu hẳn một trường (cloze, definition, câu ví
+  // dụ). Thiếu dòng này thì một ô trống làm SẬP cả phiên học chứ không chỉ ẩn đi
+  // một dòng chữ — người dùng thấy màn trắng ngay giữa buổi ôn.
+  if (!text) return null;
   // Tách theo khoảng trắng để giữ nguyên dấu câu dính liền từ.
   const pieces = text.split(/(\s+)/);
   return (
@@ -2968,6 +3110,7 @@ function WordListModal({ title, note, words, close }: { title: string; note: str
   }, [words, query]);
   const speak = (text: string) => window.speechSynthesis?.speak(new SpeechSynthesisUtterance(text));
   return (
+    <ModalPortal>
     <div className="modal-backdrop" onMouseDown={close}>
       <section className="modal word-list-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-head">
@@ -3003,6 +3146,7 @@ function WordListModal({ title, note, words, close }: { title: string; note: str
         {detail && <WordDetail word={detail} close={() => setDetail(null)} speak={speak} />}
       </section>
     </div>
+    </ModalPortal>
   );
 }
 
@@ -3282,7 +3426,7 @@ function Words({ words, legacyCollections, query, setQuery, toggleStar, add, bul
   return (
     <div className="page words-page">
       {onExitTool && atRoot && (
-        <button className="back" onClick={onExitTool}>← Quay lại không gian kỹ năng</button>
+        <BackButton destination="Từ vựng" onClick={onExitTool} />
       )}
       <div className="section-head">
         <div>
@@ -3469,6 +3613,7 @@ function Words({ words, legacyCollections, query, setQuery, toggleStar, add, bul
       )}
       </>}
       {(creating || editing) && (
+        <ModalPortal>
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeFolderForm(); }}>
           <section className="modal wordlist-form" role="dialog" aria-modal="true" aria-labelledby="wordlist-form-title">
             <div className="modal-head">
@@ -3506,8 +3651,10 @@ function Words({ words, legacyCollections, query, setQuery, toggleStar, add, bul
             </form>
           </section>
         </div>
+        </ModalPortal>
       )}
       {folderToDelete && (
+        <ModalPortal>
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFolderToDelete(null); }}>
           <section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="folder-delete-title">
             <span className="confirm-icon">▤</span>
@@ -3522,8 +3669,10 @@ function Words({ words, legacyCollections, query, setQuery, toggleStar, add, bul
             </div>
           </section>
         </div>
+        </ModalPortal>
       )}
       {deleteCandidate && (
+        <ModalPortal>
         <div className="modal-backdrop" onMouseDown={() => setDeleteCandidate(null)}>
           <section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" onMouseDown={(event) => event.stopPropagation()}>
             <span className="confirm-icon">♲</span>
@@ -3538,18 +3687,22 @@ function Words({ words, legacyCollections, query, setQuery, toggleStar, add, bul
             </div>
           </section>
         </div>
+        </ModalPortal>
       )}
     </div>
   );
 }
 
-function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, flip, rate, step, shuffle, close, speak, toggleStar, mode, modeSetting, setMode, choices, choice, pickChoice }: { card: WordCard; index: number; total: number; revealed: boolean; answer: string; setAnswer: (s: string) => void; reveal: () => void; flip: () => void; rate: (r: Rating) => void; step: (delta: number) => void; shuffle: () => void; close: () => void; speak: (s: string) => void; toggleStar: () => void; mode: ReviewMode; modeSetting: ReviewMode; setMode: (m: ReviewMode) => void; choices: WordCard[]; choice: string | null; pickChoice: (id: string) => void }) {
+function ReviewView({ card, deck, index, total, revealed, answer, setAnswer, reveal, flip, rate, step, shuffle, close, speak, toggleStar, mode, modeSetting, setMode, choices, choice, pickChoice }: { card: WordCard; deck: WordCard[]; index: number; total: number; revealed: boolean; answer: string; setAnswer: (s: string) => void; reveal: () => void; flip: () => void; rate: (r: Rating) => void; step: (delta: number) => void; shuffle: () => void; close: () => void; speak: (s: string) => void; toggleStar: () => void; mode: ReviewMode; modeSetting: ReviewMode; setMode: (m: ReviewMode) => void; choices: WordCard[]; choice: string | null; pickChoice: (id: string) => void }) {
+  const displayCard = cardWithRelevantExample(card);
   // Trắc nghiệm cần ít nhất 2 lựa chọn, hàng đợi quá ngắn thì lùi về thẻ Việt → Anh.
   const shownMode: ReviewMode = mode === "quiz" && choices.length < 2 ? "vi_en" : mode;
   const [autoplay, setAutoplay] = useState(false);
   // Bật theo dõi tiến độ thì thẻ ghi nhớ chấm điểm luôn: "Đã biết" = Được, "Đang học"
   // = Quên, để lịch Leitner được cập nhật. Tắt thì chỉ xem lại, không đụng vào lịch.
-  const [tracking, setTracking] = useState(false);
+  // Đây là phiên học/ôn chính, nên mặc định phải ghi nhận đánh giá giống luồng
+  // Luyện từ vựng. Người dùng vẫn có thể tắt nếu chỉ muốn xem tự do.
+  const [tracking, setTracking] = useState(true);
   const stageRef = useRef<HTMLDivElement>(null);
   const classify = (known: boolean) => rate(known ? "good" : "again");
   const selectedMode = reviewModes.find((item) => item.value === modeSetting) ?? reviewModes[0];
@@ -3639,42 +3792,44 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
           {card.starred ? "★" : "☆"}
         </button>
       </header>
-      <section className="review-mode-picker" aria-labelledby="review-mode-title">
-        <div className="review-mode-heading">
-          <div>
-            <span>CÁCH ÔN</span>
-            <strong id="review-mode-title">Bạn muốn luyện kỹ năng nào?</strong>
-          </div>
-          <p aria-live="polite">
-            <Icon name={selectedMode.icon} size={18} />
-            <span><b>{selectedMode.label}</b>{selectedMode.description}</span>
-          </p>
-        </div>
-        <div className="review-modes" role="group" aria-label="Chọn chế độ ôn tập">
+      <section className="review-mode-tabs" aria-labelledby="review-mode-title">
+        <span id="review-mode-title" className="sr-only">Chọn cách học</span>
+        <div className="review-modes" role="group" aria-label="Chọn cách học">
           {reviewModes.map((item) => (
             <button
               key={item.value}
               type="button"
               className={modeSetting === item.value ? "active" : ""}
               aria-pressed={modeSetting === item.value}
+              disabled={!deckSupports(deck, reviewToDrillMode[item.value])}
               onClick={() => {
                 // Đổi kiểu thẻ thì dừng tự động phát, không để nó chạy ngầm ở kiểu khác.
                 setAutoplay(false);
                 setMode(item.value);
               }}
+              title={deckSupports(deck, reviewToDrillMode[item.value])
+                ? `${item.label}: ${item.description}`
+                : `${item.label}: bộ từ này chưa đủ dữ liệu cho cách luyện đó`}
             >
-              <span className="review-mode-icon"><Icon name={item.icon} size={18} /></span>
-              <span className="review-mode-copy"><b>{item.label}</b><small>{item.description}</small></span>
+              <span className="review-mode-icon"><Icon name={item.icon} size={15} /></span>
+              <span className="review-mode-copy"><b>{item.label}</b></span>
               {item.badge && <em>{item.badge}</em>}
             </button>
           ))}
         </div>
+        <p className="review-mode-note" aria-live="polite">
+          <b>{selectedMode.label}</b>
+          <span>{selectedMode.description}</span>
+          {/* Nhãn "Đề xuất" trên tab chỉ còn là một chấm nhỏ để khỏi cắt mất tên
+              kiểu luyện; chữ đầy đủ hiện ở đây, đúng lúc kiểu đó đang được chọn. */}
+          {selectedMode.badge && <i className="review-mode-flag">{selectedMode.badge}</i>}
+        </p>
       </section>
       {shownMode === "card" ? (
         // Dùng chung thẻ lật với Flashcards bên Luyện tập, kể cả nút loa góc phải.
         <div className="review-task-frame review-flash-frame">
           <div className="flash-stage" ref={stageRef}>
-            <FlipCard card={card} flipped={revealed} flip={flip} onSwipe={tracking ? classify : undefined} />
+            <FlipCard card={displayCard} flipped={revealed} flip={flip} onSwipe={tracking ? classify : undefined} />
             <div className="flash-tools">
               {/* Không lặp nút sao ở đây: header của phiên ôn đã có sẵn một nút cho mọi kiểu thẻ. */}
               <button onClick={() => speak(card.term)} aria-label={`Phát âm ${card.term}`}>
@@ -3693,7 +3848,7 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
               <>
                 <span className="card-label">VIỆT → ANH</span>
                 <h1>{card.meaning}</h1>
-                <p className="cloze"><EnglishText text={card.cloze} /></p>
+                <p className="cloze"><EnglishText text={displayCard.cloze} /></p>
                 <label className="answer">
                   <input
                     value={answer}
@@ -3778,8 +3933,8 @@ function ReviewView({ card, index, total, revealed, answer, setAnswer, reveal, f
               </div>
             )}
             <p className="example">
-              <EnglishText text={card.example} />
-              {card.exampleVi && <em>{card.exampleVi}</em>}
+              <EnglishText text={displayCard.example} />
+              {displayCard.exampleVi && <em>{displayCard.exampleVi}</em>}
             </p>
             <p className="definition"><EnglishText text={card.definition} /></p>
           </>
@@ -3876,7 +4031,7 @@ function WordDetail({ word, close, study, speak, folders, updateFolders, onLevel
     <div className="modal-backdrop word-detail-backdrop" onMouseDown={close}>
       <article className="word-detail" onMouseDown={(event) => event.stopPropagation()}>
         <header>
-          <div><span className="eyebrow">THẺ TỪ VỰNG ĐẦY ĐỦ</span><h2>{word.term}{cefr && <span className="word-cefr" title="Cấp độ CEFR ước lượng">{cefr}</span>}</h2><p>{word.ipa} · {word.partOfSpeech || "chưa xác định loại từ"}</p></div>
+          <div><span className="eyebrow">THẺ TỪ VỰNG ĐẦY ĐỦ</span><h2>{word.term}{cefr && <span className="word-cefr" title="Cấp độ CEFR ước lượng">{cefr}</span>}</h2><p><span className="lexical-type-badge">{lexicalTypeLabel(word.lexicalType || inferLexicalType(word.term, word.partOfSpeech))}</span> {word.ipa} · {word.partOfSpeech || "chưa xác định loại từ"}</p></div>
           <button onClick={close} aria-label="Đóng">×</button>
         </header>
         <button className="detail-speak" onClick={() => speak(word.term)}><Icon name="volume" size={14} /> Nghe phát âm</button>
@@ -3994,7 +4149,7 @@ function SessionSummary({ total, ratings, streak, close, restart }: { total: num
       <section className="flashcard">
         <span className={excellent ? "summary-mark cheer" : "summary-mark"}>{excellent ? "🎉" : "✓"}</span>
         <span className="card-label">{excellent ? "XUẤT SẮC!" : "HOÀN THÀNH PHIÊN HỌC"}</span>
-        <h1>{total} thẻ đã ôn</h1>
+        <h1>{total} thẻ đã hoàn thành</h1>
         {!!graded && (
           <div className="summary-stats">
             <div>
@@ -4016,7 +4171,7 @@ function SessionSummary({ total, ratings, streak, close, restart }: { total: num
         <p className="definition">
           {/* Thẻ ghi nhớ không chấm điểm nên không có thẻ nào vào lịch ôn — đừng hứa nhầm. */}
           {!graded
-            ? `Bạn vừa xem lại ${total} thẻ. Chuyển sang kiểu có chấm điểm để lịch ôn được cập nhật.`
+            ? `Bạn vừa học ${total} thẻ ở chế độ xem tự do. Chọn theo dõi tiến độ để cập nhật lịch ôn.`
             : excellent
               ? streak.current > 1
                 ? `Giữ chuỗi ${streak.current} ngày rồi — kỷ lục của bạn là ${streak.best} ngày.`
@@ -4024,9 +4179,9 @@ function SessionSummary({ total, ratings, streak, close, restart }: { total: num
               : "Những thẻ bạn còn quên sẽ quay lại sớm hơn trong lịch ôn."}
         </p>
         <div className="summary-actions">
-          <button onClick={close}>Về trang chủ</button>
+          <button onClick={close}>Hoàn tất</button>
           <button className="primary" onClick={restart}>
-            Ôn lại
+            Học lại
           </button>
         </div>
       </section>
@@ -4484,7 +4639,7 @@ function Practice({ words, intent, launch, openLesson, initialLibraryFilter, les
           <h1>Thêm vài từ để bắt đầu luyện tập</h1>
           <p>Chỉ cần lưu từ đầu tiên. Lexilo sẽ dùng chính kho từ của bạn để tạo thẻ ghi nhớ, bài nghe, nói và luyện viết có ngữ cảnh.</p>
           <div className="practice-empty-actions">
-            <button className="back" onClick={onExitTool}>← Quay lại không gian kỹ năng</button>
+            <BackButton destination="Từ vựng" onClick={onExitTool} />
             <button className="primary" onClick={() => lookupVocab?.openDictionary("")}><Icon name="search" size={17} /> Tra và lưu từ</button>
             <button onClick={onAddVideo}><Icon name="play" size={17} /> Thêm video luyện nghe</button>
           </div>
@@ -4513,7 +4668,7 @@ function Practice({ words, intent, launch, openLesson, initialLibraryFilter, les
     return (
       <FolderPicker
         mode={pendingMode}
-        backLabel={translating ? "Viết" : undefined}
+        backLabel={translating ? "Viết" : "Từ vựng"}
         personalWords={personalWords}
         pdfWords={pdfWords}
         choose={chooseFolder}
@@ -4714,7 +4869,7 @@ function FolderPicker({ mode, personalWords, pdfWords, choose, close, backLabel 
   const topicFolders = (setsFor(pdfWords, "topic") as { label: string; words: WordCard[] }[]).map((folder) => ({ name: folder.label, words: folder.words }));
   return (
     <div className="page folder-picker-page">
-      <button className="back" onClick={close}>← {backLabel ?? "Chọn chức năng khác"}</button>
+      <BackButton destination={backLabel ?? "Từ vựng"} onClick={close} />
       {/* Không đánh số bước nữa: cùng màn này vào từ Luyện viết là bước 2 trong
           ba bước, vào từ chỗ khác lại là bước cuối. Đếm kiểu nào cũng sai một
           đường, mà tên bước thì luôn đúng. */}
@@ -5057,6 +5212,10 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
       correct: grade ? grade.correct : local.matchesReference,
       gradedBy,
       errorTypes,
+      issues: grade?.issues,
+      assessedTypes: errorTypes,
+      // Bài dịch thường, không phải bài luyện một lỗi cụ thể.
+      practiceType: null,
     });
     logAttempt(attempt);
     markStudiedToday();
@@ -5117,7 +5276,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
   if (!pool.length && !choosing)
     return (
       <div className="page practice-session">
-        <button className="back" onClick={back}>← Chọn chế độ khác</button>
+        <BackButton destination="chọn chế độ" onClick={back} />
         <div className="panel practice-card">
           <h2>Folder này chưa có câu ví dụ kèm bản dịch</h2>
           <p className="page-sub">Bài dịch cần cả câu tiếng Anh lẫn nghĩa tiếng Việt của câu đó. Hãy bấm “Bổ sung từ thiếu” ở trang Từ vựng rồi quay lại.</p>
@@ -5129,7 +5288,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
   if (choosing)
     return (
       <div className="page practice-session">
-        <button className="back" onClick={back}>← Chọn chế độ khác</button>
+        <BackButton destination="chọn chế độ" onClick={back} />
         <div className="eyebrow">BƯỚC CHỌN TỪ</div>
         <h1>Chọn từ để luyện dịch</h1>
         <p className="page-sub">Folder có {usable.length} từ đủ dữ liệu. Chọn từ muốn học rồi quyết định luyện từng câu riêng hay ghép thành đoạn liền mạch.</p>
@@ -5191,7 +5350,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
   if (!passages.length)
     return (
       <div className="page practice-session">
-        <button className="back" onClick={backToPicker}>← Chọn từ khác</button>
+        <BackButton destination="chọn từ" onClick={backToPicker} />
         <div className="panel practice-card">
           <h2>Những từ đã chọn chưa dùng được</h2>
           <p className="page-sub">Câu ví dụ của chúng là câu khuôn nói về chính từ đó nên không hợp để luyện dịch. Hãy chọn từ khác hoặc bổ sung lại ví dụ.</p>
@@ -5342,7 +5501,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
           )}
           {swapNote && <p className="story-note">{swapNote}</p>}
           <div className="translate-actions">
-            <button className="back" onClick={backToPicker}>← Chọn từ</button>
+            <BackButton destination="chọn từ" onClick={backToPicker} />
             {/* Câu không hay thì xin câu khác cho chính từ này, bài làm dở được xoá. */}
             <button disabled={swapping} onClick={() => void swapSentence()} title="Viết câu khác cho từ này">
               {swapping ? "◌ Đang đổi…" : "↻ Câu khác"}
@@ -5402,25 +5561,46 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
                 {aiGrade && (
                   <section className={aiGrade.correct ? "ai-grade correct" : "ai-grade"}>
                     <div className="ai-grade-head">
-                      <b>{aiGrade.correct ? "✓ Câu của bạn đúng" : "Cần sửa"}</b>
-                      <span>{aiGrade.score}/100</span>
+                      <div><small>ĐIỂM TỔNG</small><b>{aiGrade.correct ? "✓ Truyền đạt đúng ý" : "Cần sửa trước khi tiếp tục"}</b></div>
+                      <strong>{aiGrade.score}<small>/100</small></strong>
                     </div>
-                    {aiGrade.suggestion && <p className="ai-grade-suggestion"><span>Gợi ý:</span> <EnglishText text={aiGrade.suggestion} /></p>}
-                    {aiGrade.issues.length > 0 && (
-                      <ul className="translate-notes">
-                        {aiGrade.issues.map((issue, position) => (
-                          <li key={position} className="form">
-                            {issue.wrong && issue.right && (
-                              <>
-                                <b>{issue.wrong}</b> → <b>{issue.right}</b> ·{" "}
-                              </>
-                            )}
-                            {issue.why}
-                          </li>
-                        ))}
-                      </ul>
+                    <div className="ai-criteria" aria-label="Điểm theo bốn tiêu chí">
+                      {([['meaning', 'Đúng nghĩa'], ['grammar', 'Ngữ pháp'], ['vocabulary', 'Từ vựng'], ['naturalness', 'Tự nhiên']] as [GradeCriterion, string][]).map(([key, label]) => (
+                        <div key={key}><span>{label}</span><b>{aiGrade.criteria?.[key] ?? 0}</b></div>
+                      ))}
+                    </div>
+                    {aiGrade.comment && <div className="ai-feedback-block"><h4>Nhận xét chung</h4><p>{aiGrade.comment}</p></div>}
+                    {aiGrade.good && <div className="ai-feedback-block is-good"><h4>✓ Bạn đã làm tốt</h4><p>{aiGrade.good}</p></div>}
+                    {aiGrade.errors?.length > 0 && (
+                      <div className="ai-feedback-block is-error">
+                        <h4>Lỗi cần sửa <span>{aiGrade.errors.length}/3</span></h4>
+                        <ol className="ai-feedback-list">
+                          {aiGrade.errors.map((issue, position) => (
+                            <li key={position}>
+                              <div><em>LỖI</em><span>{issue.type.replaceAll('_', ' ')}</span></div>
+                              {issue.wrong && issue.right && <p className="ai-correction"><b>{issue.wrong}</b><span>→</span><strong>{issue.right}</strong></p>}
+                              <p>{issue.why}</p>
+                              {issue.rule && <small><b>Quy tắc:</b> {issue.rule}</small>}
+                              {issue.example && <small><b>Ví dụ:</b> <EnglishText text={issue.example} /></small>}
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
                     )}
-                    {aiGrade.comment && <p className="ai-grade-comment">{aiGrade.comment}</p>}
+                    {aiGrade.improvements?.length > 0 && (
+                      <div className="ai-feedback-block is-improvement">
+                        <h4>Gợi ý diễn đạt hay hơn</h4>
+                        {aiGrade.improvements.map((issue, position) => (
+                          <p key={position}><em>GỢI Ý</em> {issue.wrong && issue.right ? <><b>{issue.wrong}</b> → <strong>{issue.right}</strong> · </> : null}{issue.why}</p>
+                        ))}
+                      </div>
+                    )}
+                    {aiGrade.errors?.[0] && <div className="ai-priority"><span>Ưu tiên cần nhớ</span><b>{aiGrade.errors[0].rule || aiGrade.errors[0].why}</b></div>}
+                    {aiGrade.suggestion && <div className="ai-feedback-block"><h4>Câu gợi ý</h4><p className="ai-grade-suggestion"><EnglishText text={aiGrade.suggestion} /></p></div>}
+                    {aiGrade.alternatives?.length > 0 && <div className="ai-feedback-block"><h4>Cách nói tự nhiên khác</h4><ul>{aiGrade.alternatives.map((text, position) => <li key={position}><EnglishText text={text} /></li>)}</ul></div>}
+                    {aiGrade.chunks?.length > 0 && <div className="ai-feedback-block"><h4>Cụm nên học</h4><div className="ai-chunks">{aiGrade.chunks.slice(0, 3).map((chunk, position) => <span key={position}><b>{chunk.text}</b><small>{chunk.meaning}</small></span>)}</div></div>}
+                    {aiGrade.errors?.some((issue) => issue.wrong && issue.right) && <div className="ai-feedback-block"><h4>Đối chiếu từ/cụm từ</h4><div className="ai-word-comparison">{aiGrade.errors.filter((issue) => issue.wrong && issue.right).map((issue, position) => <span key={position}><del>{issue.wrong}</del><b>→ {issue.right}</b></span>)}</div></div>}
+                    {aiGrade.errors?.length > 0 && <div className="ai-error-tags" aria-label="Nhãn lỗi">{[...new Set(aiGrade.errors.map((issue) => issue.type))].map((type) => <span key={type}>#{type}</span>)}</div>}
                   </section>
                 )}
                 {/* Phần đối chiếu luôn hiện đầy đủ sau khi chấm để người học xem ngay.
@@ -5471,7 +5651,7 @@ function TranslateMode({ words, back }: { words: WordCard[]; back: () => void })
                     </p>
                   </>
                 )}
-                <p className="translate-caveat">App chấm bằng cách so với câu mẫu, không phải bằng mô hình ngôn ngữ, nên một cách dịch đúng khác vẫn có thể bị báo là lệch.</p>
+                {!aiGrade && <p className="translate-caveat">Chưa kết nối được AI nên lượt này chỉ so với câu mẫu; một cách dịch đúng khác vẫn có thể bị báo là lệch.</p>}
               </>
             )
           )}
@@ -5976,9 +6156,7 @@ function TestMode({ words, setMode, onResult }: { words: WordCard[]; setMode: (m
   return (
     <div className="page practice-session">
       <PracticeModeBar mode="test" setMode={setMode} />
-      <button className="back" onClick={() => setStarted(false)}>
-        ← Đổi thiết lập
-      </button>
+      <BackButton destination="thiết lập bài kiểm tra" onClick={() => setStarted(false)} />
       {submitted && (
         <div className={score === questions.length ? "test-score perfect" : "test-score"}>
           <strong>
@@ -6139,9 +6317,7 @@ function MatchGame({ words, close, onResult }: { words: WordCard[]; close: () =>
   }
   return (
     <div className="page match-page">
-      <button className="back" onClick={close}>
-        ← Chọn chế độ khác
-      </button>
+      <BackButton destination="Từ vựng" onClick={close} />
       <div className="match-head">
         <div>
           <div className="eyebrow">NỐI CẶP</div>
@@ -6233,6 +6409,22 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
   const scopedAttempts: TranslationAttempt[] = useMemo(() => attemptsSince(attempts, days), [attempts, days]);
   const errorSummary = useMemo(() => summariseAttempts(scopedAttempts), [scopedAttempts]);
   const errorTips = useMemo(() => attemptAdvice(errorSummary, scopedAttempts), [errorSummary, scopedAttempts]);
+  // Lỗi lặp nhiều nhất theo hai quãng, để thấy được mình đang đỡ dần hay nặng thêm.
+  const recurring = useMemo(() => {
+    const rank = (list: TranslationAttempt[]) => {
+      const counts = new Map<string, number>();
+      for (const entry of list) for (const type of entry.errorTypes ?? []) counts.set(type, (counts.get(type) ?? 0) + 1);
+      return counts;
+    };
+    const week = rank(attemptsSince(attempts, 7) as TranslationAttempt[]);
+    const month = rank(attemptsSince(attempts, 30) as TranslationAttempt[]);
+    // Trạng thái xét trên TOÀN BỘ nhật ký: cắt theo quãng thì số ngày sạch bị mất.
+    return (errorStats(attempts) as { type: string; label: string; occurrenceCount: number; status: string }[])
+      .map((row) => ({ ...row, week: week.get(row.type) ?? 0, month: month.get(row.type) ?? 0 }))
+      .filter((row) => row.month > 0)
+      .sort((a, b) => b.month - a.month || b.week - a.week)
+      .slice(0, 5);
+  }, [attempts]);
   const scoped: ReviewEntry[] = useMemo(() => entriesSince(log, days), [log, days]);
   const summary = useMemo(() => summarise(scoped), [scoped]);
   const weakWords = useMemo(() => weakest(scoped, 5), [scoped]);
@@ -6244,6 +6436,7 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
   const allTimeReviews = words.reduce((total, word) => total + (word.reviewCount ?? 0), 0);
   const allTimeLapses = words.reduce((total, word) => total + (word.lapses ?? 0), 0);
   const [statList, setStatList] = useState<{ title: string; note: string; words: WordCard[] } | null>(null);
+  const [errorPractice, setErrorPractice] = useState<{ type: string; label: string } | null>(null);
   // Nhật ký chỉ giữ id, phải tra ngược lại thẻ từ để dựng danh sách xem được.
   const byId = useMemo(() => new Map(words.map((word) => [word.id, word])), [words]);
   const openIds = (title: string, note: string, ids: Set<string>) => {
@@ -6362,6 +6555,23 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
                 ))}
               </div>
             )}
+            {recurring.length > 0 && (
+              <div className="recurring">
+                <div className="recurring-head">
+                  <b>Lỗi lặp nhiều nhất</b>
+                  <span>7 ngày · 30 ngày</span>
+                </div>
+                {recurring.map((row) => (
+                  <div key={row.type} className={`recurring-row is-${row.status}`}>
+                    <b>{row.label}</b>
+                    <em>{MASTERY_LABELS[row.status as keyof typeof MASTERY_LABELS]}</em>
+                    <span>{row.week}</span>
+                    <span>{row.month}</span>
+                    <button type="button" onClick={() => setErrorPractice({ type: row.type, label: row.label })}>Luyện lỗi này →</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <ul className="shadowing-notes error-notes">
               {errorTips.map((tip: { kind: string; text: string }, position: number) => (
                 <li key={position} className={tip.kind}>{tip.text}</li>
@@ -6388,7 +6598,89 @@ function Stats({ words, scopeLabel, streak }: { words: WordCard[]; scopeLabel: s
             ))}
         </section>
       </div>
+      {errorPractice && (
+        <ErrorPractice
+          error={errorPractice}
+          detail={practiceForError(attempts, errorPractice.type)}
+          close={() => setErrorPractice(null)}
+          onLogged={(entry) => setAttempts((current) => [...current, entry] as TranslationAttempt[])}
+        />
+      )}
       {statList && <WordListModal title={statList.title} note={statList.note} words={statList.words} close={() => setStatList(null)} />}
+    </div>
+  );
+}
+
+function ErrorPractice({ error, detail, close, onLogged }: {
+  error: { type: string; label: string };
+  detail: { wrong?: string; right?: string; why?: string; rule?: string; example?: string; vietnamese?: string; reference?: string } | null;
+  close: () => void;
+  onLogged: (entry: unknown) => void;
+}) {
+  const [answer, setAnswer] = useState("");
+  const [checked, setChecked] = useState(false);
+  const expected = detail?.right || detail?.reference || "";
+  const normal = (text: string) => text.toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9']+/g, " ").trim();
+  const correct = Boolean(expected && normal(answer) === normal(expected));
+
+  function submit() {
+    if (!answer.trim() || !expected) return;
+    setChecked(true);
+    const entry = makeAttempt({
+      term: error.label,
+      vietnamese: detail?.vietnamese || `Viết lại câu để sửa lỗi ${error.label.toLowerCase()}.`,
+      answer,
+      reference: expected,
+      score: correct ? 100 : 45,
+      correct,
+      gradedBy: "reference",
+      errorTypes: correct ? [] : [error.type],
+      assessedTypes: [error.type],
+      practiceType: error.type,
+      issues: correct ? [] : [{ type: error.type, wrong: answer, right: expected, why: detail?.why, rule: detail?.rule, example: detail?.example }],
+    });
+    logAttempt(entry);
+    markStudiedToday();
+    onLogged(entry);
+  }
+
+  return (
+    <div className="modal-backdrop error-practice-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+      <section className="modal error-practice-modal" role="dialog" aria-modal="true" aria-labelledby="error-practice-title">
+        <div className="modal-head">
+          <div><span className="eyebrow">ERROR PRACTICE · {error.label.toUpperCase()}</span><h2 id="error-practice-title">Sửa lại lỗi bạn hay mắc</h2></div>
+          <button type="button" onClick={close} aria-label="Đóng">×</button>
+        </div>
+        {!detail ? (
+          <p className="period-empty">Nhật ký cũ chỉ có nhãn lỗi, chưa có câu sửa chi tiết. Hãy làm thêm một bài Dịch Việt → Anh để Lexilo tạo bài luyện cho lỗi này.</p>
+        ) : (
+          <>
+            {detail.vietnamese && <div className="error-practice-source"><small>CÂU CẦN DIỄN ĐẠT</small><p>{detail.vietnamese}</p></div>}
+            {detail.wrong && <div className="error-practice-wrong"><small>CÂU TRƯỚC CỦA BẠN</small><del>{detail.wrong}</del></div>}
+            <label>Viết lại câu đúng
+              <textarea
+                ref={(node) => node?.focus()}
+                value={answer}
+                onChange={(event) => { setAnswer(event.target.value); setChecked(false); }}
+                placeholder="Nhập câu đã sửa…"
+              />
+            </label>
+            {checked && (
+              <div className={correct ? "error-practice-result correct" : "error-practice-result"}>
+                <b>{correct ? "✓ Chính xác — một lượt sạch đã được ghi" : "Chưa khớp, hãy sửa rồi thử lại"}</b>
+                {!correct && <p><span>Đáp án cần đạt:</span> <EnglishText text={expected} /></p>}
+                {detail.why && <p>{detail.why}</p>}
+                {detail.rule && <p><b>Quy tắc:</b> {detail.rule}</p>}
+                {detail.example && <p><b>Ví dụ:</b> <EnglishText text={detail.example} /></p>}
+              </div>
+            )}
+          </>
+        )}
+        <div className="modal-actions">
+          <button type="button" onClick={close}>Đóng</button>
+          {detail && <button type="button" className="primary" disabled={!answer.trim()} onClick={submit}>{checked ? "Chấm lại" : "Kiểm tra"}</button>}
+        </div>
+      </section>
     </div>
   );
 }
@@ -6488,7 +6780,7 @@ function BulkAddWords({ close, save, existingWords, legacyCollections }: { close
   return (
     <div className="full-screen-form">
       <form className="modal bulk-add-modal form-screen" onSubmit={submit}>
-        <button type="button" className="back" onClick={close}>← Quay lại danh sách từ</button>
+        <BackButton destination="danh sách từ" onClick={close} />
         <div className="form-screen-head">
           <span className="eyebrow">THÊM TỪ</span>
           <h1>Dán danh sách từ</h1>
@@ -6534,7 +6826,7 @@ function BulkAddWords({ close, save, existingWords, legacyCollections }: { close
   );
 }
 
-function AddWord({ close, save, existingWords, legacyCollections }: { close: () => void; save: (w: Omit<WordCard, "id" | "box" | "lapses">) => void; existingWords: WordCard[]; legacyCollections: boolean }) {
+function AddWord({ close, save, existingWords, legacyCollections, folders, updateFolders, backDestination }: { close: () => void; save: (w: Omit<WordCard, "id" | "box" | "lapses">, folderIds: string[]) => void; existingWords: WordCard[]; legacyCollections: boolean; folders: FolderStore; updateFolders: (next: FolderStore) => void; backDestination?: string }) {
   const [term, setTerm] = useState("");
   const [meaning, setMeaning] = useState("");
   const [example, setExample] = useState("");
@@ -6542,6 +6834,8 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
   const [topic, setTopic] = useState("Từ vựng chung");
   const [ipa, setIpa] = useState("");
   const [partOfSpeech, setPartOfSpeech] = useState("");
+  const [lexicalType, setLexicalType] = useState<LexicalType>("word");
+  const [lexicalTypeChosen, setLexicalTypeChosen] = useState(false);
   const [definition, setDefinition] = useState("");
   const [collocation, setCollocation] = useState("");
   const [collocationVi, setCollocationVi] = useState("");
@@ -6554,6 +6848,7 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
   const [paraphrases, setParaphrases] = useState("");
   const [ieltsTopics, setIeltsTopics] = useState("");
   const [studyDay, setStudyDay] = useState(() => weekdayIndex());
+  const [folderIds, setFolderIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [lookupMessage, setLookupMessage] = useState("");
   // Các nghĩa từ điển của từ đang tra, đã xếp theo nghĩa người dùng nhập.
@@ -6571,6 +6866,7 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
 
   function chooseSuggestion(word: string) {
     setTerm(word);
+    if (!lexicalTypeChosen) setLexicalType(inferLexicalType(word, partOfSpeech) as LexicalType);
     setSuggestions([]);
     setHighlight(-1);
     setPickedSuggestion(true);
@@ -6698,6 +6994,7 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
       if (requestId !== lookupRequest.current || data.term?.toLowerCase() !== word.toLowerCase()) return;
       setIpa(data.ipa || "");
       setPartOfSpeech(data.part_of_speech || "");
+      if (!lexicalTypeChosen) setLexicalType(inferLexicalType(word, data.part_of_speech || "") as LexicalType);
       setMeaning((current) => current.trim() || data.meaning_vi || "");
       setSenses(data.senses || []);
       // Kết quả đầu tiên chỉ là gợi ý tự động của từ điển. Chỉ đánh dấu một
@@ -6766,6 +7063,7 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
       cloze: (example || naturalExample(safeTerm)).replace(new RegExp(escapedTerm, "i"), "_____"),
       ipa: ipa || "/…/",
       partOfSpeech,
+      lexicalType,
       definition: definition || "Bổ sung định nghĩa Anh–Anh sau.",
       collocation,
       collocationVi,
@@ -6782,12 +7080,12 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
       studyDay: legacyCollections ? studyDay : undefined,
       status: "new",
       reviewCount: 0,
-    });
+    }, folderIds);
   }
   return (
-    <div className="full-screen-form">
+    <div className="full-screen-form" role="dialog" aria-modal="true" aria-label="Thêm từ mới">
       <form className="modal form-screen" onSubmit={submit}>
-        <button type="button" className="back" onClick={close}>← Quay lại danh sách từ</button>
+        <BackButton destination={backDestination || "màn trước"} onClick={close} />
         <div className="form-screen-head">
           <span className="eyebrow">THÊM TỪ</span>
           <h1>Từ mới của bạn</h1>
@@ -6804,6 +7102,7 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
               setLoading(false);
               setLookupMessage("");
               setTerm(e.target.value);
+              if (!lexicalTypeChosen) setLexicalType(inferLexicalType(e.target.value, partOfSpeech) as LexicalType);
               setSenses([]);
               setChosenSense(undefined);
               setPickedSuggestion(false);
@@ -6856,6 +7155,23 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
           )}
         </label>
         {duplicate && <p className="duplicate-warning">⚠ Từ “{duplicate.term}” đã được thêm trước đó{duplicate.addedDate ? ` vào ngày ${duplicate.addedDate}` : ""}{duplicate.topic ? ` · Chủ đề: ${duplicate.topic}` : ""}.</p>}
+        <fieldset className="lexical-type-picker">
+          <legend>Đây là loại đơn vị nào?</legend>
+          <p>Chọn đúng loại để ví dụ, lịch ôn và bài luyện dùng đúng ngữ cảnh.</p>
+          <div>
+            {(lexicalTypeOptions as { value: LexicalType; label: string; hint: string }[]).map((item) => (
+              <button
+                type="button"
+                key={item.value}
+                className={lexicalType === item.value ? "active" : ""}
+                aria-pressed={lexicalType === item.value}
+                onClick={() => { setLexicalType(item.value); setLexicalTypeChosen(true); }}
+              >
+                <b>{item.label}</b><small>{item.hint}</small>
+              </button>
+            ))}
+          </div>
+        </fieldset>
         {/* Hai việc hay dùng nhất để ngay đây, đừng chôn dưới đáy form dài. */}
         <div className="ai-actions">
           <button className="ai-fill" type="button" disabled={loading || !term} onClick={() => void enrich()}>
@@ -6874,37 +7190,16 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
             {exampleVi && <small>{exampleVi}</small>}
           </section>
         )}
-        <div className="form-grid">
-          <label>
+        <section className="add-word-block">
+          <header className="add-word-block-head">
+            <b>Thông tin cơ bản</b>
+            <span>Kiểm tra nghĩa chính trước khi lưu</span>
+          </header>
+          <div className="form-grid add-word-basics">
+          <label className="field-wide">
             Nghĩa tiếng Việt
             <input value={meaning} onChange={(e) => setMeaning(e.target.value)} placeholder="Tự động điền nghĩa..." />
           </label>
-          {senses.length > 1 && (
-            // Một từ có thể mang nhiều nghĩa xa nhau. Đây chỉ là các lối tắt để
-            // tự điền lại biểu mẫu; người dùng luôn được giữ nghĩa họ tự nhập.
-            <section className="sense-picker">
-              <header>
-                <b>Gợi ý {senses.length} nghĩa từ từ điển</b>
-                <span>Không bắt buộc chọn — bạn có thể nhập nghĩa riêng ở ô trên.</span>
-              </header>
-              <div>
-                {senses.map((item) => (
-                  <button
-                    type="button"
-                    key={item.index}
-                    className={item.index === chosenSense ? "active" : ""}
-                    disabled={loading}
-                    onClick={() => void enrich(term, item.index)}
-                  >
-                    <span>{item.part_of_speech}</span>
-                    <b>{item.definition_vi || item.definition_en}</b>
-                    {item.definition_vi && <small>{item.definition_en}</small>}
-                    {item.example && <em>{item.example}</em>}
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
           {legacyCollections && <label>
             Ngày học
             <select value={studyDay} onChange={(e) => setStudyDay(Number(e.target.value))}>
@@ -6937,21 +7232,58 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
             Phát âm IPA
             <input value={ipa} onChange={(e) => setIpa(e.target.value)} placeholder="/…/" />
           </label>
-        </div>
-        <label>
-          Định nghĩa Anh–Anh
-          <textarea value={definition} onChange={(e) => setDefinition(e.target.value)} placeholder="English definition" />
-        </label>
-        <div className="form-grid collocation-fields">
+          </div>
+          {senses.length > 1 && (
+            // Một từ có thể mang nhiều nghĩa xa nhau. Thu gọn mặc định để kết quả
+            // tra không làm cả biểu mẫu nhảy xuống hàng trăm pixel.
+            <details className="sense-picker">
+              <summary>
+                <span><b>Gợi ý {senses.length} nghĩa từ từ điển</b><small>Không bắt buộc chọn — bạn có thể nhập nghĩa riêng ở ô trên.</small></span>
+                <em>Mở để đổi nghĩa</em>
+              </summary>
+              <div>
+                {senses.map((item) => (
+                  <button
+                    type="button"
+                    key={item.index}
+                    className={item.index === chosenSense ? "active" : ""}
+                    disabled={loading}
+                    onClick={() => void enrich(term, item.index)}
+                  >
+                    <span>{item.part_of_speech}</span>
+                    <b>{item.definition_vi || item.definition_en}</b>
+                    {item.definition_vi && <small>{item.definition_en}</small>}
+                    {item.example && <em>{item.example}</em>}
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
+        </section>
+        {!legacyCollections && <WordListPicker
+          folders={folders}
+          updateFolders={updateFolders}
+          selectedFolderIds={folderIds}
+          onSelectedFolderIdsChange={setFolderIds}
+          compact
+        />}
+        <section className="add-word-block">
+          <header className="add-word-block-head"><b>Cách dùng</b><span>Định nghĩa và cụm từ đi cùng</span></header>
           <label>
-            Cụm nên học <small>(không bắt buộc)</small>
-            <input value={collocation} onChange={(e) => setCollocation(e.target.value)} placeholder="Ví dụ: pull out weeds" />
+            Định nghĩa Anh–Anh
+            <textarea value={definition} onChange={(e) => setDefinition(e.target.value)} placeholder="English definition" />
           </label>
-          <label>
-            Nghĩa của cụm <small>(không bắt buộc)</small>
-            <input value={collocationVi} onChange={(e) => setCollocationVi(e.target.value)} placeholder="Ví dụ: nhổ cỏ dại" />
-          </label>
-        </div>
+          <div className="form-grid collocation-fields">
+            <label>
+              Cụm nên học <small>(không bắt buộc)</small>
+              <input value={collocation} onChange={(e) => setCollocation(e.target.value)} placeholder="Ví dụ: pull out weeds" />
+            </label>
+            <label>
+              Nghĩa của cụm <small>(không bắt buộc)</small>
+              <input value={collocationVi} onChange={(e) => setCollocationVi(e.target.value)} placeholder="Ví dụ: nhổ cỏ dại" />
+            </label>
+          </div>
+        </section>
         <section className="ielts-word-family">
           <b>Mở rộng từ vựng IELTS</b>
           <div className="form-grid">
@@ -6968,14 +7300,17 @@ function AddWord({ close, save, existingWords, legacyCollections }: { close: () 
           <label>Cách paraphrase<textarea value={paraphrases} onChange={(e) => setParaphrases(e.target.value)} placeholder="Các cách diễn đạt cách nhau bằng dấu chấm phẩy" /></label>
           <label>Chủ đề IELTS có thể áp dụng<input value={ieltsTopics} onChange={(e) => setIeltsTopics(e.target.value)} placeholder="Environment, Education, Technology…" /></label>
         </section>
-        <label>
-          Câu ví dụ
-          <textarea value={example} onChange={(e) => setExample(e.target.value)} placeholder="Một câu trong ngữ cảnh tự nhiên" />
-        </label>
-        <label>
-          Nghĩa câu ví dụ
-          <textarea value={exampleVi} onChange={(e) => setExampleVi(e.target.value)} placeholder="Bản dịch tiếng Việt của câu ví dụ" />
-        </label>
+        <section className="add-word-block">
+          <header className="add-word-block-head"><b>Câu ví dụ</b><span>Ngữ cảnh giúp nhớ và dùng đúng từ</span></header>
+          <label>
+            Câu tiếng Anh
+            <textarea value={example} onChange={(e) => setExample(e.target.value)} placeholder="Một câu trong ngữ cảnh tự nhiên" />
+          </label>
+          <label>
+            Nghĩa tiếng Việt
+            <textarea value={exampleVi} onChange={(e) => setExampleVi(e.target.value)} placeholder="Bản dịch tiếng Việt của câu ví dụ" />
+          </label>
+        </section>
         <div className="modal-actions">
           <button type="button" onClick={close}>
             Hủy

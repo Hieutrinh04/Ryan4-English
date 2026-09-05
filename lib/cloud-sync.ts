@@ -10,7 +10,7 @@ import { supabase } from "./supabase";
 // Lược đồ ở supabase/schema.sql. Chưa áp dụng lược đồ thì các lệnh dưới đây trả về
 // lỗi và bị bỏ qua — app vẫn chạy bình thường.
 
-type Issue = { type?: string; wrong?: string; right?: string; why?: string };
+type Issue = { type?: string; kind?: "error" | "improvement"; wrong?: string; right?: string; why?: string; rule?: string; example?: string; sourceSkill?: string };
 
 export type AttemptPayload = {
   term: string;
@@ -24,6 +24,8 @@ export type AttemptPayload = {
   comment?: string;
   issues?: Issue[];
   errorTypes: string[];
+  /** Kỹ năng sinh ra lượt này. Bỏ trống thì coi là bài viết. */
+  sourceSkill?: string;
 };
 
 async function currentUserId() {
@@ -77,7 +79,11 @@ export async function pushTranslationAttempt(payload: AttemptPayload): Promise<s
 
     // Mỗi lỗi một dòng. Khi mô hình chấm thì có kèm chỗ sai và giải thích; khi chỉ
     // so câu mẫu thì chỉ có nhãn, nên các cột kia để trống thay vì bịa ra nội dung.
-    const events = payload.issues?.length
+    const events: {
+      user_id: string; attempt_id: string; error_type: string;
+      wrong_text: string | null; correct_text: string | null; explanation: string | null;
+      source_skill: string; rule: string | null; example: string | null;
+    }[] = payload.issues?.length
       ? payload.issues.map((issue) => ({
           user_id: userId,
           attempt_id: attempt.id,
@@ -85,10 +91,30 @@ export async function pushTranslationAttempt(payload: AttemptPayload): Promise<s
           wrong_text: issue.wrong ?? null,
           correct_text: issue.right ?? null,
           explanation: issue.why ?? null,
+          source_skill: issue.sourceSkill ?? payload.sourceSkill ?? "writing",
+          rule: issue.rule ?? null,
+          example: issue.example ?? null,
         }))
-      : payload.errorTypes.map((type) => ({ user_id: userId, attempt_id: attempt.id, error_type: type }));
+      : payload.errorTypes.map((type) => ({
+          user_id: userId,
+          attempt_id: attempt.id,
+          error_type: type,
+          wrong_text: null,
+          correct_text: null,
+          explanation: null,
+          source_skill: payload.sourceSkill ?? "writing",
+          rule: null,
+          example: null,
+        }));
 
-    if (events.length) await supabase.from("error_events").insert(events);
+    if (events.length) {
+      const { error } = await supabase.from("error_events").insert(events);
+      // Dự án chưa chạy migration V2 vẫn lưu được các cột lõi.
+      if (error) {
+        const legacyEvents = events.map(({ source_skill: _source, rule: _rule, example: _example, ...event }) => event);
+        await supabase.from("error_events").insert(legacyEvents);
+      }
+    }
     return attempt.id;
   } catch {
     // Mạng hỏng, chưa áp lược đồ, hoặc RLS chặn — đều không phải việc người học

@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Caller } from "./ai-guard";
 import { chunkRagText, formatRagContext, normalizeRagText, normalizeVector } from "./rag-core.mjs";
+import { normaliseErrorType } from "./error-taxonomy.mjs";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -282,12 +283,12 @@ export async function rememberTranslationFeedback(caller: Caller, input: {
   term?: string;
   score: number;
   suggestion?: string;
-  issues: { type: string; wrong: string; right: string; why: string }[];
+  issues: { type: string; wrong: string; right: string; why: string; rule?: string; example?: string }[];
 }) {
   if (!caller.userId || !input.issues.length || input.score >= 95) return 0;
   try {
     const sourceId = `grade:${(await sha256(`${input.vietnamese}\u0000${input.answer}`)).slice(0, 32)}`;
-    const fixes = input.issues.map((issue) => `${issue.type}: “${issue.wrong}” → “${issue.right}” (${issue.why})`).join("; ");
+    const fixes = input.issues.map((issue) => `${issue.type}: “${issue.wrong}” → “${issue.right}” (${issue.why})${issue.rule ? ` Quy tắc: ${issue.rule}.` : ""}${issue.example ? ` Ví dụ: ${issue.example}.` : ""}`).join("; ");
     return await upsertDocuments(caller, [{
       sourceType: "translation_error",
       sourceId,
@@ -301,7 +302,7 @@ export async function rememberTranslationFeedback(caller: Caller, input: {
   }
 }
 
-export async function rememberSpeakingFeedback(caller: Caller, input: { scenario: string; said: string; wrong: string; right: string; why: string }) {
+export async function rememberSpeakingFeedback(caller: Caller, input: { scenario: string; said: string; wrong: string; right: string; why: string; rule?: string; example?: string }) {
   if (!caller.userId || !input.right) return 0;
   try {
     const sourceId = `speaking:${(await sha256(`${input.scenario}\u0000${input.said}`)).slice(0, 32)}`;
@@ -309,9 +310,45 @@ export async function rememberSpeakingFeedback(caller: Caller, input: { scenario
       sourceType: "speaking_feedback",
       sourceId,
       title: input.scenario,
-      content: `Trong tình huống ${input.scenario}, người học nói: ${input.said}. Phần cần sửa: “${input.wrong}” → “${input.right}”. Giải thích: ${input.why}.`,
+      content: `Trong tình huống ${input.scenario}, người học nói: ${input.said}. Phần cần sửa: “${input.wrong}” → “${input.right}”. Giải thích: ${input.why}.${input.rule ? ` Quy tắc: ${input.rule}.` : ""}${input.example ? ` Ví dụ chuyển giao: ${input.example}.` : ""}`,
       metadata: { title: input.scenario },
     }]);
+  } catch {
+    return 0;
+  }
+}
+
+/** Ghi lỗi Nói vào cùng kho lỗi với Viết. RAG là ký ức diễn giải; error_events là
+ * nguồn số liệu có cấu trúc cho Dashboard, Error Practice và trạng thái mastery. */
+export async function rememberPersonalError(caller: Caller, input: {
+  sourceSkill: "speaking" | "listening" | "writing" | "vocab";
+  type?: string;
+  wrong?: string;
+  right?: string;
+  why?: string;
+  rule?: string;
+  example?: string;
+}) {
+  const client = clientFor(caller);
+  if (!client || !caller.userId || (!input.right && !input.why)) return 0;
+  const event = {
+    user_id: caller.userId,
+    attempt_id: null,
+    error_type: normaliseErrorType(input.type),
+    wrong_text: input.wrong?.trim() || null,
+    correct_text: input.right?.trim() || null,
+    explanation: input.why?.trim() || null,
+    source_skill: input.sourceSkill,
+    rule: input.rule?.trim() || null,
+    example: input.example?.trim() || null,
+  };
+  try {
+    const { error } = await client.from("error_events").insert(event);
+    if (!error) return 1;
+    // Cho phép app tiếp tục hoạt động trong giai đoạn database chưa chạy migration V2.
+    const { source_skill: _skill, rule: _rule, example: _example, ...legacy } = event;
+    const fallback = await client.from("error_events").insert(legacy);
+    return fallback.error ? 0 : 1;
   } catch {
     return 0;
   }

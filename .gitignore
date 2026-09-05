@@ -67,3 +67,6 @@ scripts/node_modules/
 
 # trạng thái cục bộ của Supabase CLI (project-ref, pooler-url…)
 /supabase/.temp/
+
+# ảnh render tài liệu khi đọc file .docx — sản phẩm phụ, không phải mã nguồn
+/.codex-doc-review/

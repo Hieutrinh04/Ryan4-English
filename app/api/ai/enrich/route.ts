@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import ieltsAreaData from "../../../../lib/ielts-areas.json";
 import { topicalWords } from "../../../../lib/topical-words.mjs";
 import { normalizeIpa } from "../../../../lib/arpabet.mjs";
+import { exampleUsesVocabulary } from "../../../../lib/example-match.mjs";
 
 type DictionaryEntry = { word?:string; phonetic?:string; phonetics?:{text?:string}[]; meanings?:{partOfSpeech?:string;synonyms?:string[];antonyms?:string[];definitions?:{definition?:string;example?:string;synonyms?:string[];antonyms?:string[]}[]}[] };
 type DatamuseEntry = {word?:string;tags?:string[];defs?:string[]};
@@ -41,6 +42,9 @@ async function cached<T>(key:string,make:()=>Promise<T>):Promise<T>{
 // Cụm từ đời thường được ưu tiên hơn câu trích từ điển. Một từ nên được học cùng
 // những từ thường đứng cạnh nó để người học có thể dùng ngay trong câu thật.
 const practicalPhrases:Record<string,{phrase:string;meaning:string;example:string;exampleVi:string}>={
+  closet:{phrase:"a bedroom closet",meaning:"tủ quần áo trong phòng ngủ",example:"She keeps her winter coats in the bedroom closet.",exampleVi:"Cô ấy cất áo khoác mùa đông trong tủ quần áo ở phòng ngủ."},
+  closets:{phrase:"bedroom closets",meaning:"những tủ quần áo trong phòng ngủ",example:"The bedrooms have large closets for winter coats.",exampleVi:"Các phòng ngủ có tủ lớn để cất áo khoác mùa đông."},
+  "ears scratched":{phrase:"have one's ears scratched",meaning:"được gãi tai",example:"The dog loves having his ears scratched.",exampleVi:"Chú chó rất thích được gãi tai."},
   weed:{phrase:"pull out weeds",meaning:"nhổ cỏ dại",example:"I need to pull out the weeds in the garden.",exampleVi:"Tôi cần nhổ cỏ dại trong vườn."},
   weeds:{phrase:"pull out weeds",meaning:"nhổ cỏ dại",example:"I need to pull out the weeds in the garden.",exampleVi:"Tôi cần nhổ cỏ dại trong vườn."},
   decision:{phrase:"make a decision",meaning:"đưa ra quyết định",example:"We need to make a decision today.",exampleVi:"Hôm nay chúng ta cần đưa ra quyết định."},
@@ -352,14 +356,12 @@ function isSentenceShape(text:string) {
   if(!/^["'“]?[A-Z]/.test(text)||!/[.!?]["'”]?$/.test(text)) return false;
   return !/[.!?]["'”]?\s+["'“]?[A-Z]/.test(text);
 }
-// Câu lấy từ kho ngữ liệu còn phải chứa chính từ đang học, vì không có gì bảo đảm
-// nó nói về từ đó. Câu đi kèm một nghĩa trong từ điển thì không cần kiểm tra này:
-// nó vốn thuộc về nghĩa đó, và thường dùng dạng gốc ("fixed" → "…had the vet fix him").
-function isUsableSentence(text:string,word:string) {
+// Câu phải chứa đúng từ/cụm từ đang học (hoặc biến thể hợp lệ theo loại từ).
+// Không khớp theo tiền tố: "closets" và "closeted" giống chữ nhưng khác ngữ pháp,
+// và trong từ điển có thể thuộc hai nghĩa hoàn toàn khác nhau.
+function isUsableSentence(text:string,word:string,partOfSpeech="") {
   if(!isSentenceShape(text)) return false;
-  const stem=word.replace(/(ies|es|s)$/,"");
-  const pattern=new RegExp(`\\b${(stem.length>=3?stem:word).replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}`,"i");
-  return pattern.test(text);
+  return exampleUsesVocabulary(text,word,partOfSpeech);
 }
 function sentenceScore(text:string) {
   const count=text.split(/\s+/).length;
@@ -370,24 +372,21 @@ function sentenceScore(text:string) {
 // Chỉ nhận câu hoàn chỉnh có chứa chính từ đang học, để không lấy phải mẩu cụm rời rạc.
 type Meaning=NonNullable<DictionaryEntry["meanings"]>[number];
 function pickDictionaryExample(entries:DictionaryEntry[], word:string, chosenMeaning?:Meaning, preferredPart?:string) {
-  const stem=word.replace(/(ies|es|s)$/,"");
   const scored=entries
     .flatMap(entry=>(entry.meanings??[]).flatMap(meaning=>(meaning.definitions??[]).map(definition=>({text:definition.example?cleanExample(definition.example):"",part:meaning.partOfSpeech??"",sameMeaning:meaning===chosenMeaning}))))
     .filter(item=>item.text)
     .map(item=>{
-      const lower=item.text.toLowerCase();
-      const exact=lower.includes(word);
-      const viaStem=stem.length>=3&&lower.includes(stem);
+      const exact=exampleUsesVocabulary(item.text,word,preferredPart);
       const count=item.text.split(/\s+/).length;
       const wholeSentence=/^["'“]?[A-Z]/.test(item.text)&&/[.!?]["'”]?$/.test(item.text);
       if(!wholeSentence) return null;
       // Một số mục từ điển nhét cả đoạn hai ba câu ("The ambassador has been closeted…
       // We're all worried…"). Người học chỉ cần đúng một câu chứa từ.
       if(/[.!?]["'”]?\s+["'“]?[A-Z]/.test(item.text)) return null;
-      if(!exact&&!(viaStem&&count>=6)) return null;
+      if(!exact) return null;
       if(count<5||count>28) return null;
       // Cùng nghĩa với định nghĩa đang hiển thị được ưu tiên cao nhất, để định nghĩa và ví dụ không lệch nghĩa nhau.
-      const score=(item.sameMeaning?4:0)+(exact?3:2)+(preferredPart&&item.part===preferredPart?2:0)+(count<=18?1:0);
+      const score=(item.sameMeaning?4:0)+3+(preferredPart&&item.part===preferredPart?2:0)+(count<=18?1:0);
       return {text:item.text,score};
     })
     .filter((item):item is {text:string;score:number}=>item!==null)
@@ -518,12 +517,14 @@ export async function POST(request:Request) {
         .join("\n");
       // Cụm từ cũng ưu tiên câu thật; hết cách mới dùng khung câu dựng sẵn.
       // Dịch máy sẽ dịch luôn cụm từ trong ngoặc kép, làm mất chính thứ cần học — nên khung câu có sẵn bản tiếng Việt.
-      const corpus=await tatoebaSentence(word);
+      const practical=practicalPhrases[word];
+      const corpus=practical?undefined:await tatoebaSentence(word);
       const frame=studyFrameFor(word);
-      const example=corpus?.text??frame.example;
-      const exampleVi=corpus?(corpus.vi??await translate(corpus.text)):frame.exampleVi;
-      if(!meaningVi&&!glossary) return NextResponse.json({error:"Không tra được cụm từ này. Vui lòng nhập nội dung thủ công."},{status:404});
-      return NextResponse.json({term:word,ipa,part_of_speech:"phrase",meaning_vi:meaningVi,definition_en:glossary,example,example_vi:exampleVi,collocation:word,collocation_vi:meaningVi,topic:topicFor(word,glossary,meaningVi),partial:true,example_source:corpus?"corpus":"template"});
+      const example=practical?.example??corpus?.text??frame.example;
+      const exampleVi=practical?.exampleVi??(corpus?(corpus.vi??await translate(corpus.text)):frame.exampleVi);
+      const resolvedMeaning=practical?.meaning??meaningVi;
+      if(!resolvedMeaning&&!glossary) return NextResponse.json({error:"Không tra được cụm từ này. Vui lòng nhập nội dung thủ công."},{status:404});
+      return NextResponse.json({term:word,ipa,part_of_speech:"phrase",meaning_vi:resolvedMeaning,definition_en:glossary,example,example_vi:exampleVi,collocation:practical?.phrase??word,collocation_vi:resolvedMeaning,topic:topicFor(word,glossary,resolvedMeaning),partial:true,example_source:practical?"practical":corpus?"corpus":"template"});
     }
     const definitionEn=definition?.definition||`The meaning of ${word}.`;
     const [datamuseSynonyms,datamuseAntonyms,triggerRaw]=await Promise.all([relatedWords(word,"rel_syn"),antonymsFor(word),triggerCandidates(word)]);
@@ -541,7 +542,8 @@ export async function POST(request:Request) {
     // Ưu tiên câu ví dụ thật trong từ điển; hết cách mới dùng khung câu ghi chú.
     const practical=practicalPhrases[word];
     const generated=generatedPhraseFor(word,meaning?.partOfSpeech||"");
-    const senseExample=ranked?.example&&isSentenceShape(ranked.example)?ranked.example:undefined;
+    const examplePart=ranked?.part||preferredPart||meaning?.partOfSpeech||"";
+    const senseExample=ranked?.example&&isUsableSentence(ranked.example,word,examplePart)?ranked.example:undefined;
     // Đã chốt một nghĩa thì tuyệt đối không mượn ví dụ của nghĩa khác: chọn "to mend,
     // to repair" mà đưa câu "She fixed dinner for the kids." là sai hẳn ngữ cảnh.
     // Không có câu của chính nghĩa đó thì để Tatoeba lo, và Tatoeba cũng được chấm

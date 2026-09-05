@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon, { type IconName } from "./Icon";
+import BackButton from "./BackButton";
 import { aiFetch } from "../lib/supabase";
 import { createRecogniser, hasRecognition, micError, type Recognition } from "../lib/speech";
 import { LEVELS, SCENARIOS, filterScenarios, isComplete, makeSession, mergeGoals, readSessions, saveSession, summarise } from "../lib/speaking.mjs";
+import { logAttempt, makeAttempt } from "../lib/error-log.mjs";
 
 // Luyện nói theo tình huống: người học đóng một vai, mô hình đóng vai còn lại.
 //
@@ -26,7 +28,7 @@ type Scenario = {
 };
 
 type Turn = { who: "you" | "partner"; text: string };
-type Correction = { wrong: string; right: string; why: string };
+type Correction = { type?: string; wrong: string; right: string; why: string; rule?: string; example?: string };
 type Session = { at: string; scenarioId: string; title: string; goalsDone: number; goalsTotal: number };
 
 /** Đọc câu của đối phương bằng giọng máy — nghe rồi mới đáp mới giống nói thật. */
@@ -123,7 +125,20 @@ export default function SpeakingPractice({ close, onStudied }: { close: () => vo
       const done = mergeGoals(goalsDone, data.goalsDone, scenario.goals.length) as number[];
       setGoalsDone(done);
       const fixes = data.correction ? [...corrections, data.correction] : corrections;
-      if (data.correction) setCorrections(fixes);
+      if (data.correction) {
+        setCorrections(fixes);
+        logAttempt(makeAttempt({
+          term: scenario.title,
+          vietnamese: scenario.setting,
+          answer: said,
+          reference: data.correction.right,
+          score: 0,
+          correct: false,
+          gradedBy: "llm",
+          issues: [{ ...data.correction, kind: "error", sourceSkill: "speaking" }],
+          assessedTypes: [data.correction.type || "grammar"],
+        }));
+      }
 
       if (data.ended || isComplete(done, scenario.goals.length)) {
         setEnded(true);
@@ -165,7 +180,7 @@ export default function SpeakingPractice({ close, onStudied }: { close: () => vo
     const total = scenario.goals.length;
     return (
       <div className="page speaking-room">
-        <button className="back" onClick={() => setScenario(null)}>← Chọn tình huống khác</button>
+        <BackButton destination="chọn tình huống" onClick={() => setScenario(null)} />
 
         <div className="speaking-layout">
           <div className="speaking-main">
@@ -256,14 +271,16 @@ export default function SpeakingPractice({ close, onStudied }: { close: () => vo
 
             {corrections.length > 0 && (
               <section className="panel">
-                <h3>Chỗ nên sửa</h3>
-                {/* Chỉ hiện lỗi đáng sửa: sửa mọi thứ sẽ làm người học ngại nói. */}
+                <h3>2–3 điểm cần sửa trước</h3>
+                {/* Chỉ hiện tối đa ba lỗi đáng sửa: sửa mọi thứ sẽ làm người học ngại nói. */}
                 <ul className="speaking-fixes">
-                  {corrections.map((fix, at) => (
+                  {corrections.slice(-3).map((fix, at) => (
                     <li key={at}>
                       {fix.wrong && <s>{fix.wrong}</s>}
                       <strong>{fix.right}</strong>
                       <span>{fix.why}</span>
+                      {fix.rule && <small>Quy tắc: {fix.rule}</small>}
+                      {fix.example && <small>Ví dụ: {fix.example}</small>}
                     </li>
                   ))}
                 </ul>
@@ -278,7 +295,7 @@ export default function SpeakingPractice({ close, onStudied }: { close: () => vo
   // ── Màn chọn tình huống ───────────────────────────────────────────────────
   return (
     <div className="page speaking-library">
-      <button className="back" onClick={close}>← Quay lại không gian kỹ năng</button>
+      <BackButton destination="Nói" onClick={close} />
 
       <header className="writing-hero">
         <span className="writing-hero-icon"><Icon name="volume" size={20} /></span>

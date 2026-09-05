@@ -3,16 +3,18 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import Icon from "./Icon";
+import BackButton from "./BackButton";
 import WordListPicker from "./WordListPicker";
 import { fetchGlance } from "../lib/glance.mjs";
 import { foldersOf } from "../lib/folders.mjs";
 import { accountStorageKey } from "../lib/storage";
+import type { LexicalType } from "../lib/types";
 
 type Sense = { part: string; definition: string; meaningVi: string; synonyms: string[] };
 type Collocation = { en: string; vi: string };
 type Upgrade = { word: string; vi: string; level: string };
 type Lookup = { term: string; ipa: string; meaningVi: string; isPhrase: boolean; level: string | null; senses: Sense[]; collocations: Collocation[]; upgrades: Upgrade[] };
-export type NewWord = { term: string; ipa: string; meaning: string; partOfSpeech: string; definition: string };
+export type NewWord = { term: string; ipa: string; meaning: string; partOfSpeech: string; definition: string; lexicalType?: LexicalType };
 type FolderStore = Parameters<typeof foldersOf>[0];
 
 const historyKey = "lexilo:dictionary-history:v1";
@@ -37,9 +39,10 @@ function speak(text: string, region: "US" | "UK") {
   window.speechSynthesis?.speak(utterance);
 }
 
-export default function Dictionary({ onSave, wordId, collectionOf, studyDayOf, setStudyDay, folders, updateFolders, initialWord, legacyCollections = false, onExitTool }: {
+export default function Dictionary({ onSave, wordId, collectionOf, studyDayOf, setStudyDay, folders, updateFolders, initialWord, legacyCollections = false, onExitTool, backDestination }: {
   /** Có mặt khi màn này được mở từ không gian kỹ năng, để lùi lên đúng một cấp. */
   onExitTool?: () => void;
+  backDestination?: string;
   onSave: (word: NewWord) => string;
   wordId: (term: string) => string | null;
   collectionOf: (term: string) => "mine" | "pdf";
@@ -165,7 +168,7 @@ export default function Dictionary({ onSave, wordId, collectionOf, studyDayOf, s
   return (
     <div className="page dictionary-page">
       {onExitTool && (
-        <button className="back" onClick={onExitTool}>← Quay lại không gian kỹ năng</button>
+        <BackButton destination={backDestination || "Từ vựng"} onClick={onExitTool} />
       )}
       <form className="dictionary-search" onSubmit={(event) => { event.preventDefault(); void lookup(query); }}>
         <Icon name="search" size={18} />

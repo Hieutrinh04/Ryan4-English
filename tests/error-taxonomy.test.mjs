@@ -27,17 +27,17 @@ test("normaliseErrorType: nhãn hợp lệ giữ nguyên", () => {
 test("normaliseErrorType: quy các biến thể hay gặp về nhãn chuẩn", () => {
   assert.equal(normaliseErrorType("Articles"), "article");
   assert.equal(normaliseErrorType("word order"), "word_order");
-  assert.equal(normaliseErrorType("subject-verb agreement"), "agreement");
-  assert.equal(normaliseErrorType("tense"), "verb_tense");
-  assert.equal(normaliseErrorType("typo"), "spelling");
+  assert.equal(normaliseErrorType("subject-verb agreement"), "grammar");
+  assert.equal(normaliseErrorType("tense"), "tense");
+  assert.equal(normaliseErrorType("typo"), "grammar");
   assert.equal(normaliseErrorType("word choice"), "vocabulary");
 });
 
-test("normaliseErrorType: nhãn lạ rơi về other thay vì làm hỏng lượt ghi", () => {
-  assert.equal(normaliseErrorType("chưa hay lắm"), "other");
-  assert.equal(normaliseErrorType(""), "other");
-  assert.equal(normaliseErrorType(undefined), "other");
-  assert.equal(normaliseErrorType(null), "other");
+test("normaliseErrorType: nhãn lạ rơi về grammar thay vì tạo taxonomy rác", () => {
+  assert.equal(normaliseErrorType("chưa hay lắm"), "grammar");
+  assert.equal(normaliseErrorType(""), "grammar");
+  assert.equal(normaliseErrorType(undefined), "grammar");
+  assert.equal(normaliseErrorType(null), "grammar");
 });
 
 test("taxonomyPrompt: liệt kê đủ nhãn để mô hình chọn đúng", () => {
