@@ -1374,3 +1374,41 @@ button:disabled{cursor:not-allowed;opacity:.48}
     width: min(100%, calc(30vh * 16 / 9));
   }
 }
+
+/* ── Ba vùng cuộn độc lập trong bài Nghe chép ────────────────────────────────
+   Trước đây cả trang là một khối cuộn: kéo chuột ở danh sách câu thì video, ô
+   gõ và mọi thứ khác trôi theo. Muốn xem câu #40 là mất luôn video khỏi màn.
+
+   Nay bài học cao đúng bằng khung nhìn và KHÔNG cuộn. Bên trong chia ba vùng,
+   mỗi vùng tự cuộn phần của mình:
+     · video + mức nghe + hàng điều khiển — đứng yên, luôn thấy
+     · vùng làm việc (ô gõ, gợi ý, nút) — cuộn riêng
+     · danh sách câu — cuộn riêng
+
+   Chiều cao tính bằng flex chứ không trừ tay một con số: thanh tiêu đề bài học
+   có thể xuống dòng ở màn hẹp, trừ cứng là sai ngay. */
+@media (min-width: 1181px) {
+  .lexilo-workspace .video-lesson-v2.dictation-layout {
+    height: calc(100dvh - var(--ui-chrome-top));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .lexilo-workspace .video-lesson-v2.dictation-layout .lesson-body {
+    flex: 1;
+    min-height: 0;
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  }
+  /* min-height:0 là bắt buộc: mặc định ô lưới không co nhỏ hơn nội dung, nên
+     thiếu nó thì overflow-y:auto chẳng bao giờ có tác dụng. */
+  .lexilo-workspace .video-lesson-v2.dictation-layout .lesson-work {
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .lexilo-workspace .video-lesson-v2.dictation-layout .lesson-list {
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+  }
+}
