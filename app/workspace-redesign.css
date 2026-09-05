@@ -1314,3 +1314,41 @@ button:disabled{cursor:not-allowed;opacity:.48}
   .lexilo-workspace .recurring-row { grid-template-columns: minmax(0, 1fr) auto 36px 36px; gap: 7px; padding: 9px 11px; }
   .lexilo-workspace .recurring-row > button { grid-column: 1 / -1; width: 100%; }
 }
+
+/* ── Màn Nghe chép: thấy được video và mọi nút chính cùng lúc ────────────────
+   Đo ở 1440×900: cột trái cần 1005px nhưng khung chỉ còn ~728px, nên ô gõ nằm ở
+   y=683 — dưới mép màn hình. Người học phải cuộn lên nghe rồi cuộn xuống gõ,
+   cho từng câu một.
+
+   KHÔNG bỏ chức năng nào. Chỗ trống lấy từ ba nguồn:
+
+   1. Cột trái đang bị ép 50/50 với danh sách câu, chỉ rộng 548px. Danh sách câu
+      là thanh tra cứu chứ không phải nội dung chính — cho nó rãnh 380px. Cột
+      trái rộng ra ~660px, nhờ đó khung chấm-chấm từng từ và hàng "#1 · 11 từ ·
+      khớp 0% · phím tắt" thôi phải xuống dòng, tự tiết kiệm hơn 100px.
+   2. Video 308px là quá to cho một khung 900px. Hạ trần xuống 30vh — vẫn xem
+      thoải mái, mà nhường chỗ cho phần đang phải làm.
+   3. Bộ chọn mức nghe giữ NGUYÊN cả nhãn lẫn mô tả, chỉ bớt đệm dọc. */
+@media (min-width: 1181px) {
+  .lexilo-workspace .video-lesson-v2.dictation-layout .lesson-body {
+    grid-template-columns: minmax(0, 1fr) 380px;
+    column-gap: 16px;
+  }
+  /* Ép chiều cao trên một khung rộng 700px khiến trình phát tự viền đen trên
+     dưới — mất chỗ mà chẳng để làm gì. Giữ đúng 16:9 rồi căn giữa: video nhỏ
+     lại theo cả hai chiều, phần tiết kiệm được trả cho ô gõ. */
+  .lexilo-workspace .video-lesson-v2.dictation-layout .yt-player {
+    aspect-ratio: 16 / 9;
+    width: min(100%, calc(22vh * 16 / 9));
+    height: auto;
+    margin-inline: auto;
+  }
+  /* Danh sách câu cuộn trong rãnh của nó, không kéo dài cả trang. */
+  .lexilo-workspace .video-lesson-v2.dictation-layout .lesson-list {
+    max-height: calc(100dvh - var(--ui-chrome-top) - 110px);
+    overflow-y: auto;
+  }
+}
+/* Bớt đệm, giữ đủ chữ. Nhãn và mô tả từng mức vẫn hiện nguyên. */
+.lexilo-workspace .listening-mode-picker { padding: 8px 16px; gap: 7px; }
+.lexilo-workspace .listening-mode-picker button { padding: 6px 11px; }
