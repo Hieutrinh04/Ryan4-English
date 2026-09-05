@@ -24,6 +24,7 @@ import WordListPicker from "../components/WordListPicker";
 import { DRILL_MODES, MIXED_POOL, deckSupports } from "../lib/vocab-drill.mjs";
 import { exampleUsesVocabulary } from "../lib/example-match.mjs";
 import { inferLexicalType, lexicalTypeLabel, lexicalTypeOptions } from "../lib/lexical-item.mjs";
+import { parsePaste } from "../lib/paste-parse.mjs";
 import { DEFAULT_THEME, THEMES, applyTheme, readTheme, themeById, themeGroups, writeTheme } from "../lib/themes.mjs";
 import { lessonFromHash, mergeLessonSources, promoteSystemLessons, readLessonProgress, readLessons, readSystemDrafts, saveLesson } from "../lib/lessons.mjs";
 import { addLessonsToCatalogue, videoProgress } from "../lib/catalogue.mjs";
@@ -6691,11 +6692,13 @@ function BulkAddWords({ close, save, existingWords, legacyCollections }: { close
   const normalizedExisting = useMemo(() => new Set(existingWords.map((word) => word.term.trim().toLowerCase().replace(/\s+/g, " "))), [existingWords]);
   const preview = useMemo(() => {
     const seen = new Set<string>();
-    return text.split(/\r?\n/).map((line) => line.replace(/^[-•*\d.)\s]+/, "").trim()).filter(Boolean).slice(0, 200).map((term) => {
-      const normalized = term.toLowerCase().replace(/\s+/g, " ");
+    // Tách "từ (loại từ): nghĩa" đúng như ô nhập hứa. Trước đây cả dòng thành tên
+    // từ, nên "mitigate (v): giảm nhẹ" không nhận ra trùng với "mitigate" đã có.
+    return (parsePaste(text) as { term: string; partOfSpeech: string; meaning: string }[]).map((item) => {
+      const normalized = item.term.toLowerCase().replace(/s+/g, " ");
       const duplicate = normalizedExisting.has(normalized) || seen.has(normalized);
       seen.add(normalized);
-      return { term: term.replace(/\s+/g, " "), duplicate };
+      return { ...item, duplicate };
     });
   }, [text, normalizedExisting]);
   const valid = preview.filter((item) => !item.duplicate);
@@ -6750,14 +6753,17 @@ function BulkAddWords({ close, save, existingWords, legacyCollections }: { close
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!valid.length) return;
-    save(valid.map(({ term }) => {
+    save(valid.map(({ term, partOfSpeech, meaning }) => {
       const made = written[term];
       const example = made?.en ?? naturalExample(term);
       return {
         term,
-        meaning: "Chưa bổ sung nghĩa",
+        // Người dán có ghi nghĩa thì dùng; không thì để trống đúng như cũ, và
+        // lượt "Bổ sung" sau sẽ điền.
+        meaning: meaning || "Chưa bổ sung nghĩa",
         ipa: "/…/",
-        partOfSpeech: "",
+        partOfSpeech,
+        lexicalType: inferLexicalType(term, partOfSpeech) as LexicalType,
         definition: "",
         example,
         exampleVi: made?.vi ?? naturalExampleVi(term),
@@ -6784,7 +6790,7 @@ function BulkAddWords({ close, save, existingWords, legacyCollections }: { close
         <div className="form-screen-head">
           <span className="eyebrow">THÊM TỪ</span>
           <h1>Dán danh sách từ</h1>
-          <p>Mỗi dòng một từ. App tự tách nghĩa và bỏ qua từ đã có trong danh sách.</p>
+          <p>Mỗi dòng một từ. Ghi kèm nghĩa theo dạng <b>từ (loại từ): nghĩa</b> thì app tự tách; chỉ dán từ trần cũng được, phần nghĩa để lượt “Bổ sung” điền sau. Từ đã có trong kho sẽ bị bỏ qua.</p>
         </div>
         <p className="bulk-help">Mỗi dòng là một từ hoặc cụm từ. Có thể giữ nguyên dấu “/”, ví dụ: <b>shopping cart / trolley</b>.</p>
         <label>Danh sách của bạn<textarea autoFocus value={text} onChange={(event) => setText(event.target.value)} placeholder={"grocery shopping\nshopping cart / trolley\nbuggy\ndepartment/section\naisle"} /></label>
