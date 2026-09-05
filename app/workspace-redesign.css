@@ -1352,3 +1352,25 @@ button:disabled{cursor:not-allowed;opacity:.48}
 /* Bớt đệm, giữ đủ chữ. Nhãn và mô tả từng mức vẫn hiện nguyên. */
 .lexilo-workspace .listening-mode-picker { padding: 8px 16px; gap: 7px; }
 .lexilo-workspace .listening-mode-picker button { padding: 6px 11px; }
+
+/* ── Trong bài học thì bỏ thanh chung, nhường chỗ cho video ──────────────────
+   Thanh "KHÔNG GIAN HỌC / <tên màn>" cao 72px cộng phần đệm .content chừa cho
+   nó. Trong một bài nghe chép, ba nút của nó đều không phải việc đang làm — mà
+   bài học lại đã có thanh riêng mang nút lùi, tên bài và hai tab Nghe chép /
+   Nói nhại. Giữ cả hai là hai thanh tiêu đề chồng nhau ăn mất 134px chiều cao.
+
+   Dùng :has() để bắt đúng lúc có bài học đang mở, thay vì gắn theo tab — tab
+   "practice" còn gồm cả luyện từ vựng và luyện viết, hai màn đó vẫn cần thanh. */
+@media (min-width: 901px) {
+  .lexilo-workspace:has(.video-lesson-v2) .workspace-topbar { display: none; }
+  .lexilo-workspace:has(.video-lesson-v2) .content { padding-top: 0; }
+  /* Không còn thanh trên thì cũng không còn phần vỏ phải trừ đi. */
+  .lexilo-workspace:has(.video-lesson-v2) { --ui-chrome-top: 0px; }
+}
+
+/* Có thêm 72px thì trả cho video, vì đó là lý do bỏ thanh. */
+@media (min-width: 1181px) {
+  .lexilo-workspace .video-lesson-v2.dictation-layout .yt-player {
+    width: min(100%, calc(30vh * 16 / 9));
+  }
+}
