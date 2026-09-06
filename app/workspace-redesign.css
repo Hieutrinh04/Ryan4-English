@@ -1412,3 +1412,36 @@ button:disabled{cursor:not-allowed;opacity:.48}
     overflow-y: auto;
   }
 }
+
+/* ── Nói nhại: cùng ba vùng cuộn độc lập như Nghe chép ───────────────────────
+   Khung của nó khác: video và danh sách câu ở cột trái, vùng làm việc chiếm
+   trọn cột phải. Nhưng bệnh thì y hệt — .lesson-work bị ép
+   min-height:calc(100vh - 62px), tức luôn cao hơn chỗ nó có, nên cả trang phải
+   cuộn. Kéo ở đâu cũng làm video trôi mất.
+
+   Hai con số cứng 62px và 336px trong luật cũ cũng đã sai từ lúc thanh chung
+   được ẩn trong bài học: chúng trừ theo một bố cục không còn nữa. Dùng flex để
+   khỏi trừ tay. */
+@media (min-width: 1181px) {
+  .lexilo-workspace .video-lesson-v2.shadowing-layout {
+    height: calc(100dvh - var(--ui-chrome-top));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .lexilo-workspace .video-lesson-v2.shadowing-layout .lesson-body {
+    flex: 1;
+    min-height: 0;
+  }
+  /* Bỏ chiều cao tối thiểu ép trang giãn ra; cho nó tự cuộn phần của mình. */
+  .lexilo-workspace .video-lesson-v2.shadowing-layout .lesson-work {
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .lexilo-workspace .video-lesson-v2.shadowing-layout .lesson-list {
+    min-height: 0;
+    max-height: none;
+    height: 100%;
+    overflow-y: auto;
+  }
+}
